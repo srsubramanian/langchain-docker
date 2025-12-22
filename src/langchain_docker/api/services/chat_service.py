@@ -126,7 +126,7 @@ class ChatService:
                 "data": json.dumps({
                     "session_id": session.session_id,
                     "conversation_length": len(session.messages),
-                    "message": MessageSchema.from_langchain(ai_message).model_dump(),
+                    "message": MessageSchema.from_langchain(ai_message).model_dump(mode='json'),
                 }),
             }
 

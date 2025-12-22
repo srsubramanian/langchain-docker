@@ -137,14 +137,14 @@ async def main(message: cl.Message):
                 # Finalize message
                 message_count = event.get("message_count", 0)
                 await msg.update()
-                break
+                # Don't break - let the generator finish naturally
 
             elif event_type == "error":
                 # Handle error
                 error_msg = event.get("message", "Unknown error occurred")
                 await msg.stream_token(f"\n\nError: {error_msg}")
                 await msg.update()
-                break
+                # Don't break - let the generator finish naturally
 
     except Exception as e:
         error_message = f"Error communicating with API: {str(e)}"

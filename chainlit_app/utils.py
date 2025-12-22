@@ -95,12 +95,18 @@ class APIClient:
                 json=payload,
             ) as response:
                 response.raise_for_status()
+                current_event = None
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
+                    line = line.strip()
+                    if line.startswith("event: "):
+                        current_event = line[7:]  # Remove "event: " prefix
+                    elif line.startswith("data: "):
                         import json
 
                         try:
                             data = json.loads(line[6:])  # Remove "data: " prefix
+                            if current_event:
+                                data["event"] = current_event
                             yield data
                         except json.JSONDecodeError:
                             continue
