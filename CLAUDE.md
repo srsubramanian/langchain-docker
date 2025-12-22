@@ -76,14 +76,11 @@ Once running:
 # Terminal 1: Start FastAPI backend
 uv run langchain-docker serve
 
-# Terminal 2: Start Chainlit UI
-uv run chainlit run chainlit_app/app.py
+# Terminal 2: Start Chainlit UI on port 8001
+uv run chainlit run chainlit_app/app.py --port 8001
 
 # With watch mode (auto-reload on file changes)
-uv run chainlit run chainlit_app/app.py -w
-
-# With custom port
-uv run chainlit run chainlit_app/app.py --port 8002
+uv run chainlit run chainlit_app/app.py --port 8001 -w
 ```
 
 Once running:
@@ -350,8 +347,8 @@ curl http://localhost:8000/api/v1/sessions/{session_id}
    # Terminal 1: FastAPI with reload
    uv run langchain-docker serve --reload
 
-   # Terminal 2: Chainlit with watch mode
-   uv run chainlit run chainlit_app/app.py -w
+   # Terminal 2: Chainlit with watch mode on port 8001
+   uv run chainlit run chainlit_app/app.py --port 8001 -w
    ```
 
 2. **Modify the UI**:

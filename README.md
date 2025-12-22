@@ -222,11 +222,11 @@ The project includes a fully-featured chat interface built with Chainlit.
 # Terminal 1: Start the FastAPI backend
 uv run langchain-docker serve
 
-# Terminal 2: Start the Chainlit UI
-uv run chainlit run chainlit_app/app.py
+# Terminal 2: Start the Chainlit UI on port 8001
+uv run chainlit run chainlit_app/app.py --port 8001
 
 # Or with watch mode (auto-reload on changes)
-uv run chainlit run chainlit_app/app.py -w
+uv run chainlit run chainlit_app/app.py --port 8001 -w
 ```
 
 Once running:
