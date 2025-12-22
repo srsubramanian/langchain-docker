@@ -134,6 +134,124 @@ docker-compose down -v
 - **Scalability**: Easy to scale services independently
 - **No Local Setup**: No need to install Python, uv, or dependencies
 
+## Phoenix Tracing & Observability
+
+Monitor, debug, and evaluate your LLM applications with Phoenix from Arize.
+
+### What is Phoenix?
+
+Phoenix provides:
+- **LLM Tracing**: Track every LLM call with detailed spans
+- **Performance Monitoring**: Latency, token usage, and cost tracking
+- **Debugging Tools**: Inspect inputs, outputs, and intermediate steps
+- **Evaluation Framework**: Test and evaluate LLM responses
+- **Visualization**: Beautiful UI to explore your traces
+
+### Running with Phoenix
+
+**With Docker Compose** (Recommended):
+
+Phoenix is included automatically when using Docker:
+
+```bash
+docker-compose up
+```
+
+Access Phoenix at: http://localhost:6006
+
+**Without Docker** (Local Development):
+
+1. Install and start Phoenix:
+```bash
+# Install Phoenix
+pip install arize-phoenix
+
+# Start Phoenix server
+python -m phoenix.server.main serve
+```
+
+2. Phoenix will start on http://localhost:6006
+
+3. Run your application:
+```bash
+# FastAPI backend
+uv run langchain-docker serve
+
+# Chainlit UI
+uv run chainlit run chainlit_app/app.py --port 8001
+```
+
+### Accessing Phoenix UI
+
+Open http://localhost:6006 in your browser to:
+- View real-time traces of your LLM calls
+- Analyze performance metrics
+- Debug issues with detailed span information
+- Export traces for analysis
+
+### Features Available
+
+**Automatic Instrumentation:**
+- All LangChain operations are automatically traced
+- Model invocations (invoke, stream)
+- Agent executions
+- Tool calls
+- Message history
+
+**Trace Information:**
+- Model name and parameters
+- Input prompts and output responses
+- Token counts and costs
+- Execution time
+- Error details
+
+### Configuration
+
+Control Phoenix tracing via environment variables:
+
+```bash
+# Enable/disable tracing (default: true)
+PHOENIX_ENABLED=true
+
+# Phoenix endpoint (default: http://localhost:6006/v1/traces)
+PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
+
+# Debug: print traces to console (default: false)
+PHOENIX_CONSOLE_EXPORT=false
+```
+
+### Disabling Tracing
+
+To disable Phoenix tracing:
+
+```bash
+# In .env file
+PHOENIX_ENABLED=false
+```
+
+Or temporarily:
+
+```bash
+PHOENIX_ENABLED=false uv run langchain-docker serve
+```
+
+### Docker Compose Architecture
+
+When using Docker Compose, the stack includes:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Phoenix    │     │  FastAPI    │     │  Chainlit   │
+│  Port: 6006 │◄────│  Port: 8000 │◄────│  Port: 8001 │
+│  (Tracing)  │     │  (Backend)  │     │  (Frontend) │
+└─────────────┘     └─────────────┘     └─────────────┘
+       │                    │                    │
+       └────────────────────┴────────────────────┘
+                   Docker Network
+```
+
+Phoenix traces are automatically sent from the API backend and visualized in the Phoenix UI.
+
 ## Usage
 
 ### Command Line Interface

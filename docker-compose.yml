@@ -1,4 +1,24 @@
 services:
+  # Phoenix Tracing Server
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: langchain-phoenix
+    ports:
+      - "6006:6006"
+    environment:
+      - PHOENIX_WORKING_DIR=/phoenix
+    volumes:
+      - phoenix-data:/phoenix
+    restart: unless-stopped
+    networks:
+      - langchain-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # FastAPI Backend
   api:
     build:
@@ -12,7 +32,11 @@ services:
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - PHOENIX_ENDPOINT=http://phoenix:6006/v1/traces
     command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
+    depends_on:
+      phoenix:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -46,3 +70,7 @@ services:
 networks:
   langchain-network:
     driver: bridge
+
+volumes:
+  phoenix-data:
+    driver: local

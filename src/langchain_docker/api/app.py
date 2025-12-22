@@ -9,9 +9,13 @@ from fastapi.responses import JSONResponse
 from langchain_docker.api.middleware import register_exception_handlers
 from langchain_docker.api.routers import chat, models, sessions
 from langchain_docker.core.config import load_environment
+from langchain_docker.core.tracing import setup_phoenix_tracing
 
 # Load environment variables
 load_environment()
+
+# Initialize Phoenix tracing
+setup_phoenix_tracing()
 
 
 def create_app() -> FastAPI:

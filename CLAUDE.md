@@ -115,6 +115,32 @@ docker-compose down
 - API keys loaded from `.env` file
 - Chainlit automatically connects to API via `http://api:8000` (internal network)
 
+### Running with Phoenix Tracing
+
+**Phoenix is automatically included when using Docker Compose:**
+
+```bash
+docker-compose up
+```
+
+**Services running:**
+- Phoenix UI: http://localhost:6006
+- FastAPI Backend: http://localhost:8000
+- Chainlit UI: http://localhost:8001
+
+**For local development without Docker:**
+
+```bash
+# Terminal 1: Start Phoenix server
+python -m phoenix.server.main serve
+
+# Terminal 2: Start FastAPI
+uv run langchain-docker serve
+
+# Terminal 3: Start Chainlit
+uv run chainlit run chainlit_app/app.py --port 8001
+```
+
 ### Package Management
 ```bash
 # Add a dependency
@@ -157,7 +183,8 @@ src/langchain_docker/
 ├── core/
 │   ├── __init__.py            # Core module exports
 │   ├── config.py              # Environment variable handling and configuration
-│   └── models.py              # Model initialization utilities and factory functions
+│   ├── models.py              # Model initialization utilities and factory functions
+│   └── tracing.py             # Phoenix tracing configuration and setup
 ├── examples/
 │   ├── __init__.py            # Example module exports
 │   ├── basic_invocation.py   # Basic model initialization and invocation
@@ -424,6 +451,11 @@ All API keys and configuration are loaded from `.env` file:
 - `SESSION_TTL_HOURS` (default: 24)
 - `MODEL_CACHE_SIZE` (default: 10)
 - `FASTAPI_BASE_URL` (default: http://localhost:8000) - For Chainlit UI to connect to backend
+
+**Phoenix Tracing:**
+- `PHOENIX_ENABLED` (default: true) - Enable/disable tracing
+- `PHOENIX_ENDPOINT` (default: http://localhost:6006/v1/traces) - Phoenix collector endpoint
+- `PHOENIX_CONSOLE_EXPORT` (default: false) - Export traces to console for debugging
 
 ### Model Initialization
 ```python
