@@ -43,15 +43,11 @@ Thumbs.db
 .gitattributes
 
 # Documentation
-*.md
-!README.md
 CLAUDE.md
+*.test.md
 
 # Environment files (will be mounted as volume)
 .env
-
-# Lock files (already copied in Dockerfile)
-uv.lock
 
 # Test files
 tests/

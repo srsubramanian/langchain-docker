@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for LangChain Docker application
 # Supports both FastAPI backend and Chainlit UI
 
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 # Set working directory
 WORKDIR /app
@@ -16,12 +16,21 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir uv
 
 # Copy project files
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml ./
+COPY README.md ./
 COPY src/ ./src/
 COPY chainlit_app/ ./chainlit_app/
 
+# Copy lock file if it exists
+COPY uv.lock* ./
+
 # Install dependencies
-RUN uv sync --frozen
+# Use --frozen if lock file exists, otherwise create it
+RUN if [ -f uv.lock ]; then \
+        uv sync --frozen; \
+    else \
+        uv sync; \
+    fi
 
 # Copy environment file (template)
 COPY .env.example .env.example
