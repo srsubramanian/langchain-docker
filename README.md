@@ -523,6 +523,94 @@ uv run langchain-docker stream
 - `gemini-1.5-pro` - Production
 - `gemini-1.5-flash` - Fast
 
+### AWS Bedrock
+
+#### Prerequisites
+- AWS account with Bedrock access enabled
+- AWS CLI configured (`aws configure` or `aws sso login`)
+- IAM permissions for Bedrock model invocation
+
+#### Setup
+
+1. **Configure AWS credentials** (choose one method):
+   ```bash
+   # Option A: AWS CLI
+   aws configure
+
+   # Option B: AWS SSO
+   aws sso login --profile your-profile
+
+   # Option C: Environment variables
+   export AWS_ACCESS_KEY_ID=your-key
+   export AWS_SECRET_ACCESS_KEY=your-secret
+   ```
+
+2. **Enable Bedrock models**:
+   - Visit https://console.aws.amazon.com/bedrock/
+   - Navigate to "Model access"
+   - Request access to desired models (Claude, Llama, Titan, etc.)
+
+3. **Configure model ARNs** in `.env`:
+   ```bash
+   AWS_DEFAULT_REGION=us-east-1
+   BEDROCK_MODEL_ARNS=anthropic.claude-3-5-sonnet-20241022-v2:0,anthropic.claude-3-5-haiku-20241022-v1:0
+   ```
+
+4. **Test Bedrock access**:
+   ```bash
+   # Run a simple test
+   uv run langchain-docker basic --provider bedrock
+   ```
+
+#### Supported Models
+Configure any Bedrock foundation model or inference profile ARN:
+- **Anthropic Claude**: `anthropic.claude-3-5-sonnet-20241022-v2:0`
+- **Meta Llama**: `meta.llama3-1-70b-instruct-v1:0`
+- **Amazon Titan**: `amazon.titan-text-premier-v1:0`
+- **Custom Inference Profiles**: Your own inference profile ARNs
+
+#### IAM Permissions Required
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+#### Using with Docker
+
+To use AWS Bedrock with Docker, mount your AWS credentials:
+
+```yaml
+# Add to docker-compose.yml
+api:
+  environment:
+    - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    - BEDROCK_MODEL_ARNS=${BEDROCK_MODEL_ARNS}
+  volumes:
+    - ~/.aws:/root/.aws:ro  # Mount AWS credentials (read-only)
+```
+
+Or pass credentials as environment variables:
+```yaml
+api:
+  environment:
+    - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - BEDROCK_MODEL_ARNS=${BEDROCK_MODEL_ARNS}
+```
+
 ## Project Structure
 
 ```

@@ -73,7 +73,7 @@ def get_setup_instructions(provider: str) -> str:
     """Get setup instructions for a specific provider.
 
     Args:
-        provider: Model provider name (openai, anthropic, google)
+        provider: Model provider name (openai, anthropic, google, bedrock)
 
     Returns:
         Setup instructions string
@@ -98,6 +98,20 @@ def get_setup_instructions(provider: str) -> str:
             "2. Sign in with your Google account\n"
             "3. Create a new API key"
         ),
+        "bedrock": (
+            "Set up AWS Bedrock access:\n"
+            "1. Configure AWS credentials:\n"
+            "   Option A: Run 'aws configure' to set up CLI credentials\n"
+            "   Option B: Set environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)\n"
+            "   Option C: Use IAM role (if running on AWS)\n"
+            "2. Ensure IAM permissions include:\n"
+            "   - bedrock:InvokeModel\n"
+            "   - bedrock:InvokeModelWithResponseStream\n"
+            "   - bedrock:ListFoundationModels\n"
+            "3. Enable model access in AWS Bedrock console\n"
+            "4. Set AWS_DEFAULT_REGION in .env (default: us-east-1)\n"
+            "5. Configure BEDROCK_MODEL_ARNS in .env with your inference profile ARNs"
+        ),
     }
 
     return instructions.get(
@@ -110,7 +124,7 @@ def get_setup_url(provider: str) -> str:
     """Get setup URL for a specific provider.
 
     Args:
-        provider: Model provider name (openai, anthropic, google)
+        provider: Model provider name (openai, anthropic, google, bedrock)
 
     Returns:
         Setup URL string
@@ -119,5 +133,6 @@ def get_setup_url(provider: str) -> str:
         "openai": "https://platform.openai.com/api-keys",
         "anthropic": "https://console.anthropic.com/",
         "google": "https://aistudio.google.com/app/apikey",
+        "bedrock": "https://console.aws.amazon.com/bedrock/",
     }
     return urls.get(provider.lower(), "")

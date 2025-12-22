@@ -14,7 +14,7 @@ def get_supported_providers() -> list[str]:
     Returns:
         List of provider names
     """
-    return ["openai", "anthropic", "google"]
+    return ["openai", "anthropic", "google", "bedrock"]
 
 
 def init_model(
@@ -26,21 +26,24 @@ def init_model(
     """Initialize a chat model with the specified provider and configuration.
 
     Args:
-        provider: Model provider (openai, anthropic, google)
+        provider: Model provider (openai, anthropic, google, bedrock)
         model: Model name/identifier
-        temperature: Temperature for response generation (0.0-1.0)
+        temperature: Temperature for response generation (0.0-2.0)
         **kwargs: Additional provider-specific parameters
+            - For bedrock: region_name, credentials_profile_name, etc.
 
     Returns:
         Initialized chat model instance
 
     Raises:
-        APIKeyMissingError: If API key for provider is not configured
+        APIKeyMissingError: If API key/credentials for provider are not configured
         ModelInitializationError: If model initialization fails
     """
     validate_api_key(provider)
 
     try:
+        # For Bedrock, LangChain expects model_provider="bedrock"
+        # and boto3 will automatically use default credential chain
         chat_model = init_chat_model(
             model=model,
             model_provider=provider,
@@ -116,3 +119,41 @@ def get_google_model(
         ModelInitializationError: If model initialization fails
     """
     return init_model("google", model, temperature, **kwargs)
+
+
+def get_bedrock_model(
+    model: str | None = None,
+    temperature: float = 0.0,
+    **kwargs: Any,
+) -> BaseChatModel:
+    """Get a pre-configured AWS Bedrock model.
+
+    Args:
+        model: Bedrock model ID or ARN. If None, uses first configured model.
+        temperature: Sampling temperature (0.0-1.0)
+        **kwargs: Additional arguments for ChatBedrock
+
+    Returns:
+        Configured ChatBedrock instance
+
+    Raises:
+        APIKeyMissingError: If AWS credentials are not configured
+        ModelInitializationError: If model initialization fails
+    """
+    from langchain_docker.core.config import get_bedrock_models, get_bedrock_region
+
+    # Get default model if not specified
+    if model is None:
+        available_models = get_bedrock_models()
+        model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
+    # Pass region as kwarg
+    region = get_bedrock_region()
+
+    return init_model(
+        provider="bedrock",
+        model=model,
+        temperature=temperature,
+        region_name=region,
+        **kwargs
+    )

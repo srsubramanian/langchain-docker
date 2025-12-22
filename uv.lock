@@ -435,6 +435,34 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.42.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/72/e236ca627bc0461710685f5b7438f759ef3b4106e0e08dda08513a6539ab/boto3-1.42.14.tar.gz", hash = "sha256:a5d005667b480c844ed3f814a59f199ce249d0f5669532a17d06200c0a93119c", size = 112825, upload-time = "2025-12-19T20:27:15.325Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/ba/c657ea6f6d63563cc46748202fccd097b51755d17add00ebe4ea27580d06/boto3-1.42.14-py3-none-any.whl", hash = "sha256:bfcc665227bb4432a235cb4adb47719438d6472e5ccbf7f09512046c3f749670", size = 140571, upload-time = "2025-12-19T20:27:13.316Z" },
+]
+
+[[package]]
+name = "botocore"
+version = "1.42.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jmespath" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/35/3f/50c56f093c2c6ce6de1f579726598db1cf9a9cccd3bf8693f73b1cf5e319/botocore-1.42.14.tar.gz", hash = "sha256:cf5bebb580803c6cfd9886902ca24834b42ecaa808da14fb8cd35ad523c9f621", size = 14910547, upload-time = "2025-12-19T20:27:04.431Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/94/67a78a8d08359e779894d4b1672658a3c7fcce216b48f06dfbe1de45521d/botocore-1.42.14-py3-none-any.whl", hash = "sha256:efe89adfafa00101390ec2c371d453b3359d5f9690261bc3bd70131e0d453e8e", size = 14583247, upload-time = "2025-12-19T20:27:00.54Z" },
+]
+
+[[package]]
 name = "cachetools"
 version = "6.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1477,6 +1505,21 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain-aws"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "langchain-core" },
+    { name = "numpy" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/1d/bb306951b1c394b7a27effb8eb6c9ee65dd77fcc4be7c20f76e3299a9e1e/langchain_aws-1.1.0.tar.gz", hash = "sha256:1e2f8570328eae4907c3cf7e900dc68d8034ddc865d9dc96823c9f9d8cccb901", size = 393899, upload-time = "2025-11-24T14:35:24.216Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/33/91b8d2a7570657b371382b45054142c54165a51706990a5c1b4cc40c0e9a/langchain_aws-1.1.0-py3-none-any.whl", hash = "sha256:8ec074615b42839e035354063717374c32c63f5028ef5221ba073fd5f3ef5e37", size = 152432, upload-time = "2025-11-24T14:35:23.004Z" },
+]
+
+[[package]]
 name = "langchain-core"
 version = "1.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1501,11 +1544,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "arize-phoenix" },
+    { name = "boto3" },
     { name = "chainlit" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
+    { name = "langchain-aws" },
     { name = "langchain-google-genai" },
     { name = "langchain-openai" },
     { name = "openinference-instrumentation-langchain" },
@@ -1519,11 +1564,13 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "arize-phoenix", specifier = ">=12.25.1" },
+    { name = "boto3", specifier = ">=1.34.0" },
     { name = "chainlit", specifier = ">=2.9.3" },
     { name = "fastapi", specifier = ">=0.127.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain", specifier = ">=1.2.0" },
     { name = "langchain-anthropic", specifier = ">=1.3.0" },
+    { name = "langchain-aws", specifier = ">=0.2.8" },
     { name = "langchain-google-genai", specifier = ">=4.1.2" },
     { name = "langchain-openai", specifier = ">=1.1.6" },
     { name = "openinference-instrumentation-langchain", specifier = ">=0.1.56" },
@@ -3711,6 +3758,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/da/8a/22b7beea3ee0d44b1916c0c1cb0ee3af23b700b6da9f04991899d0c555d4/rsa-4.9.1.tar.gz", hash = "sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75", size = 29034, upload-time = "2025-04-16T09:51:18.218Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl", hash = "sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762", size = 34696, upload-time = "2025-04-16T09:51:17.142Z" },
+]
+
+[[package]]
+name = "s3transfer"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/04/74127fc843314818edfa81b5540e26dd537353b123a4edc563109d8f17dd/s3transfer-0.16.0.tar.gz", hash = "sha256:8e990f13268025792229cd52fa10cb7163744bf56e719e0b9cb925ab79abf920", size = 153827, upload-time = "2025-12-01T02:30:59.114Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/51/727abb13f44c1fcf6d145979e1535a35794db0f6e450a0cb46aa24732fe2/s3transfer-0.16.0-py3-none-any.whl", hash = "sha256:18e25d66fed509e3868dc1572b3f427ff947dd2c56f844a5bf09481ad3f3b2fe", size = 86830, upload-time = "2025-12-01T02:30:57.729Z" },
 ]
 
 [[package]]

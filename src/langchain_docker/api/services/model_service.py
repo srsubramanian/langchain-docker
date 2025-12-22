@@ -91,11 +91,19 @@ class ModelService:
         Returns:
             Default model name
         """
+        from langchain_docker.core.config import get_bedrock_models
+
         defaults = {
             "openai": "gpt-4o-mini",
             "anthropic": "claude-3-5-sonnet-20241022",
             "google": "gemini-2.0-flash-exp",
         }
+
+        # For Bedrock, use first configured model
+        if provider == "bedrock":
+            bedrock_models = get_bedrock_models()
+            return bedrock_models[0] if bedrock_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
         return defaults.get(provider, "gpt-4o-mini")
 
     def get_provider_info(self, provider: str) -> ProviderInfo:
@@ -145,10 +153,34 @@ class ModelService:
         Raises:
             InvalidProviderError: If provider is invalid
         """
+        from langchain_docker.core.config import get_bedrock_models
+
         valid_providers = get_supported_providers()
         if provider not in valid_providers:
             raise InvalidProviderError(provider, valid_providers)
 
+        # Special handling for Bedrock
+        if provider == "bedrock":
+            bedrock_arns = get_bedrock_models()
+            available_models = []
+
+            for arn in bedrock_arns:
+                # Extract readable name from ARN
+                model_name = arn.split("/")[-1] if "/" in arn else arn
+                description = self._generate_bedrock_description(model_name)
+
+                available_models.append(
+                    ModelInfo(name=arn, description=description)
+                )
+
+            return ProviderDetails(
+                name="bedrock",
+                configured=self._is_bedrock_configured(),
+                available_models=available_models,
+                default_model=bedrock_arns[0] if bedrock_arns else "",
+            )
+
+        # Standard providers
         api_key = get_api_key(provider)
         configured = api_key is not None
 
@@ -177,6 +209,42 @@ class ModelService:
             available_models=models_map.get(provider, []),
             default_model=self._get_default_model(provider),
         )
+
+    def _generate_bedrock_description(self, model_id: str) -> str:
+        """Generate human-readable description from Bedrock model ID.
+
+        Args:
+            model_id: Bedrock model ID or ARN
+
+        Returns:
+            Description string
+        """
+        # Simple mapping - can be enhanced
+        if "claude-3-5-sonnet" in model_id:
+            return "Claude 3.5 Sonnet - Balanced performance"
+        elif "claude-3-5-haiku" in model_id:
+            return "Claude 3.5 Haiku - Fast and efficient"
+        elif "claude-3-opus" in model_id:
+            return "Claude 3 Opus - Most capable"
+        elif "llama3" in model_id.lower():
+            return "Meta Llama 3 - Open source"
+        elif "titan" in model_id.lower():
+            return "Amazon Titan - AWS native"
+        else:
+            return "AWS Bedrock model"
+
+    def _is_bedrock_configured(self) -> bool:
+        """Check if Bedrock is properly configured.
+
+        Returns:
+            True if Bedrock credentials are configured
+        """
+        try:
+            from langchain_docker.core.config import validate_bedrock_access
+            validate_bedrock_access()
+            return True
+        except:
+            return False
 
     def clear_cache(self) -> int:
         """Clear the model cache.

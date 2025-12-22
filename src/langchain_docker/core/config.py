@@ -51,18 +51,63 @@ def load_environment() -> None:
         load_dotenv()
 
 
-def validate_api_key(provider: str) -> str:
-    """Validate that API key exists for the given provider.
-
-    Args:
-        provider: Provider name (openai, anthropic, google)
+def validate_bedrock_access() -> bool:
+    """Validate AWS Bedrock access using boto3 default credentials.
 
     Returns:
-        The API key value
+        True if credentials are available and valid
 
     Raises:
-        APIKeyMissingError: If the API key is not found in environment
+        APIKeyMissingError: If AWS credentials are not configured
     """
+    try:
+        import boto3
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Get region from environment or boto3 default
+        region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION")
+
+        # Create Bedrock client - will use boto3 credential chain
+        session = boto3.Session(region_name=region)
+        bedrock = session.client("bedrock-runtime")
+
+        # Simple validation: list foundation models (doesn't cost anything)
+        bedrock.list_foundation_models(maxResults=1)
+
+        return True
+
+    except NoCredentialsError:
+        raise APIKeyMissingError(
+            "bedrock",
+            "AWS credentials not found. Run 'aws configure' or set up IAM role."
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'UnauthorizedOperation':
+            raise APIKeyMissingError(
+                "bedrock",
+                "AWS credentials found but no access to Bedrock. Check IAM permissions."
+            )
+        raise
+
+
+def validate_api_key(provider: str) -> str:
+    """Validate that API key/credentials exist for the given provider.
+
+    Args:
+        provider: Provider name (openai, anthropic, google, bedrock)
+
+    Returns:
+        The API key value (or "AWS_CREDENTIALS_VALID" for Bedrock)
+
+    Raises:
+        APIKeyMissingError: If the API key/credentials are not found
+    """
+    # Special handling for Bedrock (uses AWS credentials, not API key)
+    if provider.lower() == "bedrock":
+        validate_bedrock_access()
+        return "AWS_CREDENTIALS_VALID"  # Not an actual key, just a flag
+
+    # Existing logic for other providers
     provider_key_map = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -84,11 +129,19 @@ def get_api_key(provider: str) -> str | None:
     """Get API key for provider without raising an error.
 
     Args:
-        provider: Provider name (openai, anthropic, google)
+        provider: Provider name (openai, anthropic, google, bedrock)
 
     Returns:
         API key if found, None otherwise
     """
+    # Special handling for Bedrock
+    if provider.lower() == "bedrock":
+        try:
+            validate_bedrock_access()
+            return "AWS_CREDENTIALS_VALID"
+        except:
+            return None
+
     provider_key_map = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -100,3 +153,30 @@ def get_api_key(provider: str) -> str | None:
         return None
 
     return os.getenv(env_var)
+
+
+def get_bedrock_models() -> list[str]:
+    """Get list of Bedrock model ARNs from environment.
+
+    Returns:
+        List of model ARNs or inference profile ARNs
+    """
+    models_env = os.getenv("BEDROCK_MODEL_ARNS", "")
+    if not models_env:
+        # Default models if not configured
+        return [
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+        ]
+
+    # Parse comma-separated list
+    return [model.strip() for model in models_env.split(",") if model.strip()]
+
+
+def get_bedrock_region() -> str:
+    """Get AWS region for Bedrock.
+
+    Returns:
+        Region name (defaults to us-east-1 if not set)
+    """
+    return os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION") or "us-east-1"
