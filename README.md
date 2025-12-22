@@ -80,6 +80,7 @@ Once running:
 - **Chainlit UI**: http://localhost:8001
 - **FastAPI Backend**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+- **Phoenix Tracing**: http://localhost:6006
 
 ### Docker Commands
 
