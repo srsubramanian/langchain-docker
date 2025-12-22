@@ -54,6 +54,86 @@ Get your API keys from:
 - **Anthropic**: https://console.anthropic.com/
 - **Google**: https://aistudio.google.com/app/apikey
 
+## Docker Setup (Recommended for Production)
+
+Run the entire stack with Docker Compose:
+
+### Prerequisites
+- Docker and Docker Compose installed
+- API keys configured in `.env` file
+
+### Quick Start
+
+```bash
+# 1. Copy and configure environment file
+cp .env.example .env
+# Edit .env and add your API keys
+
+# 2. Build and start all services
+docker-compose up --build
+
+# Or run in detached mode
+docker-compose up -d --build
+```
+
+Once running:
+- **Chainlit UI**: http://localhost:8001
+- **FastAPI Backend**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+### Docker Commands
+
+```bash
+# Start services
+docker-compose up
+
+# Start in background
+docker-compose up -d
+
+# Stop services
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# View logs for specific service
+docker-compose logs -f api
+docker-compose logs -f ui
+
+# Rebuild after code changes
+docker-compose up --build
+
+# Remove containers and volumes
+docker-compose down -v
+```
+
+### Architecture
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│  Chainlit UI    │         │  FastAPI API    │
+│  Container      │◄────────┤  Container      │
+│  Port: 8001     │         │  Port: 8000     │
+└─────────────────┘         └─────────────────┘
+         │                           │
+         │    Docker Network         │
+         └───────────────────────────┘
+                    │
+         ┌──────────▼──────────┐
+         │   LLM Providers     │
+         │  (OpenAI/Anthropic/ │
+         │      Google)        │
+         └─────────────────────┘
+```
+
+### Benefits of Docker
+
+- **Consistent Environment**: Same setup across dev, staging, and production
+- **Easy Deployment**: Single command to deploy the entire stack
+- **Isolation**: Services run in isolated containers
+- **Scalability**: Easy to scale services independently
+- **No Local Setup**: No need to install Python, uv, or dependencies
+
 ## Usage
 
 ### Command Line Interface

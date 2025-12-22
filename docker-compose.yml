@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langchain-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - langchain-network
+
+  # Chainlit UI
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langchain-ui
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - FASTAPI_BASE_URL=http://api:8000
+    command: uv run chainlit run chainlit_app/app.py --host 0.0.0.0 --port 8001
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - langchain-network
+
+networks:
+  langchain-network:
+    driver: bridge

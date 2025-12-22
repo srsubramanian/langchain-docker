@@ -87,6 +87,34 @@ Once running:
 - Chainlit UI: http://localhost:8001
 - FastAPI Backend: http://localhost:8000
 
+### Running with Docker
+
+**For production deployments or consistent environments:**
+
+```bash
+# Build and start all services
+docker-compose up --build
+
+# Run in detached mode (background)
+docker-compose up -d --build
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+**Docker Compose Services:**
+- `api`: FastAPI backend on port 8000
+- `ui`: Chainlit UI on port 8001
+- Shared network: `langchain-network`
+- Health checks enabled for automatic dependency management
+
+**Environment:**
+- API keys loaded from `.env` file
+- Chainlit automatically connects to API via `http://api:8000` (internal network)
+
 ### Package Management
 ```bash
 # Add a dependency
@@ -153,6 +181,9 @@ chainlit_app/                   # Chainlit UI application
 .env                           # User's API keys (git-ignored)
 pyproject.toml                 # Project metadata and dependencies
 uv.lock                        # Locked dependency versions
+Dockerfile                     # Docker image definition
+docker-compose.yml             # Multi-container orchestration
+.dockerignore                  # Files to exclude from Docker build
 CLAUDE.md                      # This file
 README.md                      # User-facing documentation
 ```
