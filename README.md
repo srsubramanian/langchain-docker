@@ -18,6 +18,14 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Session Management**: Create, retrieve, list, and delete conversation sessions
 - **CORS Support**: Ready for Chainlit and other frontend integrations
 
+### Chainlit UI
+- **Interactive Chat Interface**: Modern web-based chat UI powered by Chainlit
+- **Real-time Streaming**: See AI responses as they're being generated
+- **Provider Selection**: Switch between OpenAI, Anthropic, and Google models on the fly
+- **Temperature Control**: Adjust response creativity with a simple slider
+- **Persistent Sessions**: Conversation history automatically maintained
+- **Settings Panel**: Easy configuration without restarting the app
+
 ## Installation
 
 ```bash
@@ -202,26 +210,70 @@ curl "http://localhost:8000/api/v1/sessions?limit=10&offset=0"
 curl -X DELETE http://localhost:8000/api/v1/sessions/{session_id}
 ```
 
-### Chainlit Integration
+## Chainlit UI
 
-The API is ready for Chainlit integration:
+The project includes a fully-featured chat interface built with Chainlit.
 
-```python
-# In your Chainlit app
-import httpx
+### Starting the Chainlit UI
 
-async def send_message(message: str, session_id: str = None):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "http://localhost:8000/api/v1/chat",
-            json={
-                "message": message,
-                "session_id": session_id,
-                "provider": "openai"
-            }
-        )
-        return response.json()
+**You need to run both the FastAPI backend and Chainlit UI:**
+
+```bash
+# Terminal 1: Start the FastAPI backend
+uv run langchain-docker serve
+
+# Terminal 2: Start the Chainlit UI
+uv run chainlit run chainlit_app/app.py
+
+# Or with watch mode (auto-reload on changes)
+uv run chainlit run chainlit_app/app.py -w
 ```
+
+Once running:
+- **Chainlit UI**: http://localhost:8001
+- **API Backend**: http://localhost:8000
+
+### Using the Chat Interface
+
+1. **Welcome Screen**: When you first open the app, you'll see a welcome message with available providers
+2. **Settings Panel**: Click the settings icon to:
+   - Select your provider (OpenAI, Anthropic, or Google)
+   - Adjust temperature (0.0 = focused, 2.0 = creative)
+3. **Start Chatting**: Type your message and press Enter
+4. **Streaming Responses**: Watch the AI response appear in real-time
+5. **Session Persistence**: Your conversation history is automatically saved
+
+### Features
+
+- **Multiple Providers**: Switch between OpenAI, Anthropic, and Google models
+- **Real-time Streaming**: See responses as they're generated
+- **Temperature Control**: Adjust creativity with a slider (0.0 - 2.0)
+- **Persistent Sessions**: Conversations are automatically maintained
+- **Error Handling**: Clear error messages if the backend is unavailable
+
+### Architecture
+
+The Chainlit UI communicates with the FastAPI backend via HTTP:
+
+```
+┌─────────────┐      HTTP/SSE      ┌──────────────┐      LangChain      ┌─────────────┐
+│  Chainlit   │ ◄─────────────────► │   FastAPI    │ ◄──────────────────► │  LLM APIs   │
+│     UI      │   (localhost:8001)  │   Backend    │  (OpenAI/Anthropic)  │  (OpenAI/   │
+│             │                     │              │                      │  Anthropic/ │
+│ (Frontend)  │                     │ (Backend)    │                      │   Google)   │
+└─────────────┘                     └──────────────┘                      └─────────────┘
+```
+
+### Configuration
+
+The Chainlit app uses environment variables:
+
+```bash
+# Optional: Override default API backend URL
+FASTAPI_BASE_URL=http://localhost:8000
+```
+
+All other configuration (API keys, models) is handled by the FastAPI backend through the shared `.env` file.
 
 ## Available Examples
 

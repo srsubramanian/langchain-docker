@@ -68,6 +68,28 @@ Once running:
 - Health Check: http://localhost:8000/health
 - Status: http://localhost:8000/api/v1/status
 
+### Running the Chainlit UI
+
+**Note: The Chainlit UI requires the FastAPI backend to be running.**
+
+```bash
+# Terminal 1: Start FastAPI backend
+uv run langchain-docker serve
+
+# Terminal 2: Start Chainlit UI
+uv run chainlit run chainlit_app/app.py
+
+# With watch mode (auto-reload on file changes)
+uv run chainlit run chainlit_app/app.py -w
+
+# With custom port
+uv run chainlit run chainlit_app/app.py --port 8002
+```
+
+Once running:
+- Chainlit UI: http://localhost:8001
+- FastAPI Backend: http://localhost:8000
+
 ### Package Management
 ```bash
 # Add a dependency
@@ -121,6 +143,14 @@ src/langchain_docker/
 └── utils/
     ├── __init__.py            # Utility exports
     └── errors.py              # Custom exception classes
+
+chainlit_app/                   # Chainlit UI application
+├── app.py                     # Main Chainlit application
+├── utils.py                   # API client for FastAPI communication
+├── chainlit.md                # Welcome page markdown
+├── .chainlit/                 # Chainlit configuration
+│   └── config.toml           # UI and app settings
+└── public/                    # Static assets (optional)
 
 .env.example                    # Template for environment variables
 .env                           # User's API keys (git-ignored)
@@ -200,6 +230,32 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `create_app()`: Configures FastAPI with CORS, routers, exception handlers
 - CORS enabled for Chainlit integration (localhost:3000, 8000, 8001)
 - Health check at `/health`, detailed status at `/api/v1/status`
+
+### Chainlit UI Modules
+
+The Chainlit UI provides a web-based chat interface that communicates with the FastAPI backend.
+
+**app.py** (`chainlit_app/app.py`):
+- Main Chainlit application with chat lifecycle handlers
+- `@cl.on_chat_start`: Initialize session, check API health, fetch providers
+- `@cl.on_message`: Handle incoming user messages, stream responses
+- `@cl.on_settings_update`: Handle provider/temperature changes
+- Uses Chainlit's `ChatSettings` for provider selection and temperature control
+
+**utils.py** (`chainlit_app/utils.py`):
+- `APIClient` class: HTTP client for FastAPI communication
+- Methods: `chat()`, `chat_stream()`, `create_session()`, `get_session()`, `list_providers()`
+- Handles SSE streaming by parsing "data: " prefixed lines
+- Configurable via `FASTAPI_BASE_URL` environment variable
+
+**chainlit.md** (`chainlit_app/chainlit.md`):
+- Welcome page displayed when chat starts
+- Provides usage instructions and feature documentation
+
+**config.toml** (`chainlit_app/.chainlit/config.toml`):
+- Chainlit configuration: UI theme, features, telemetry
+- Project name: "LangChain Docker Chat"
+- Shows README as default, session timeout: 3600s
 
 ### Example Modules
 
@@ -287,6 +343,35 @@ curl -X POST http://localhost:8000/api/v1/sessions \
 curl http://localhost:8000/api/v1/sessions/{session_id}
 ```
 
+### Developing the Chainlit UI
+
+1. **Start both services during development**:
+   ```bash
+   # Terminal 1: FastAPI with reload
+   uv run langchain-docker serve --reload
+
+   # Terminal 2: Chainlit with watch mode
+   uv run chainlit run chainlit_app/app.py -w
+   ```
+
+2. **Modify the UI**:
+   - Edit `chainlit_app/app.py` for chat logic and handlers
+   - Edit `chainlit_app/utils.py` for API client changes
+   - Edit `chainlit_app/chainlit.md` for welcome page content
+   - Edit `chainlit_app/.chainlit/config.toml` for UI theme/settings
+
+3. **Test UI changes**:
+   - Chainlit auto-reloads when files change (with `-w` flag)
+   - Check browser console for JavaScript errors
+   - Check terminal for Python errors
+
+4. **Add new Chainlit features**:
+   - Use `@cl.on_chat_start` for initialization logic
+   - Use `@cl.on_message` for message handling
+   - Use `@cl.on_settings_update` for settings changes
+   - Use `@cl.action_callback` for custom button actions
+   - Use `cl.user_session.set/get` for state management
+
 ## Important Patterns
 
 ### Error Handling
@@ -310,6 +395,7 @@ All API keys and configuration are loaded from `.env` file:
 - `API_LOG_LEVEL` (default: info)
 - `SESSION_TTL_HOURS` (default: 24)
 - `MODEL_CACHE_SIZE` (default: 10)
+- `FASTAPI_BASE_URL` (default: http://localhost:8000) - For Chainlit UI to connect to backend
 
 ### Model Initialization
 ```python
@@ -407,6 +493,78 @@ async def api_key_missing_handler(request: Request, exc: APIKeyMissingError):
             "setup_url": get_setup_url(exc.provider),
         }
     )
+```
+
+### Chainlit Chat Handler Pattern
+```python
+# In chainlit_app/app.py
+import chainlit as cl
+
+@cl.on_message
+async def main(message: cl.Message):
+    # Get settings from user session
+    provider = cl.user_session.get("provider")
+    session_id = cl.user_session.get("session_id")
+
+    # Create streaming message
+    msg = cl.Message(content="", author="Assistant")
+    await msg.send()
+
+    # Stream from API
+    async for event in api_client.chat_stream(
+        message=message.content,
+        session_id=session_id,
+        provider=provider,
+    ):
+        if event.get("event") == "token":
+            await msg.stream_token(event.get("content", ""))
+
+    await msg.update()
+```
+
+### Chainlit Settings Pattern
+```python
+# In chainlit_app/app.py
+from chainlit.input_widget import Select, Slider
+
+@cl.on_chat_start
+async def start():
+    # Configure settings panel
+    settings = await cl.ChatSettings([
+        Select(
+            id="provider",
+            label="Model Provider",
+            values=["openai", "anthropic", "google"],
+            initial_value="openai",
+        ),
+        Slider(
+            id="temperature",
+            label="Temperature",
+            initial=0.7,
+            min=0.0,
+            max=2.0,
+            step=0.1,
+        ),
+    ]).send()
+
+@cl.on_settings_update
+async def settings_update(settings):
+    # Save to user session
+    cl.user_session.set("provider", settings["provider"])
+    cl.user_session.set("temperature", settings["temperature"])
+```
+
+### Chainlit API Client Pattern
+```python
+# In chainlit_app/utils.py
+class APIClient:
+    async def chat_stream(self, message: str, **kwargs) -> AsyncGenerator:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("POST", f"{self.base_url}/api/v1/chat/stream", json=payload) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])  # Parse SSE format
+                        yield data
 ```
 
 ## Build System
