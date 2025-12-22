@@ -122,6 +122,28 @@ Examples:
         help="Run all examples in sequence",
     )
 
+    # Serve API command
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start the FastAPI server",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind to (default: 8000)",
+    )
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development",
+    )
+
     return parser
 
 
@@ -195,6 +217,37 @@ def run_stream_command(args: argparse.Namespace) -> None:
     streaming.compare_streaming_vs_invoke(**kwargs)
 
 
+def run_serve_command(args: argparse.Namespace) -> None:
+    """Run the FastAPI server.
+
+    Args:
+        args: Parsed command-line arguments
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        print("Error: uvicorn is not installed. Install with: uv add uvicorn")
+        sys.exit(1)
+
+    print(f"\n{'='*60}")
+    print("Starting FastAPI Server")
+    print(f"{'='*60}")
+    print(f"Host: {args.host}")
+    print(f"Port: {args.port}")
+    print(f"Reload: {args.reload}")
+    print(f"{'='*60}\n")
+    print(f"API Documentation: http://{args.host}:{args.port}/docs")
+    print(f"Health Check: http://{args.host}:{args.port}/health")
+    print(f"{'='*60}\n")
+
+    uvicorn.run(
+        "langchain_docker.api.app:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
+
+
 def run_all_command(args: argparse.Namespace) -> None:
     """Run all examples in sequence.
 
@@ -262,6 +315,7 @@ def main() -> None:
         "agent": run_agent_command,
         "stream": run_stream_command,
         "all": run_all_command,
+        "serve": run_serve_command,
     }
 
     try:

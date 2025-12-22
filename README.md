@@ -4,11 +4,19 @@ A comprehensive demonstration of LangChain foundational models with examples for
 
 ## Features
 
+### CLI Examples
 - **Basic Model Invocation**: Initialize and use language models from different providers
 - **Model Customization**: Control model behavior with parameters like temperature
 - **Multi-Provider Support**: Work with OpenAI, Anthropic, and Google models
 - **Agent Creation**: Build conversational agents with message history
 - **Streaming Responses**: Display model outputs in real-time
+
+### FastAPI Backend
+- **REST API**: Full-featured REST API for chat, model management, and sessions
+- **Chat Endpoints**: Non-streaming and Server-Sent Events (SSE) streaming support
+- **Model Management**: List providers, get model details, validate configurations
+- **Session Management**: Create, retrieve, list, and delete conversation sessions
+- **CORS Support**: Ready for Chainlit and other frontend integrations
 
 ## Installation
 
@@ -96,6 +104,123 @@ model = init_model(
     model="claude-3-5-sonnet-20241022",
     temperature=0.0
 )
+```
+
+## FastAPI Backend
+
+The project includes a full REST API built with FastAPI.
+
+### Starting the API Server
+
+```bash
+# Start the server
+uv run langchain-docker serve
+
+# With custom host and port
+uv run langchain-docker serve --host 0.0.0.0 --port 8000
+
+# With auto-reload for development
+uv run langchain-docker serve --reload
+```
+
+Once running:
+- **API Documentation**: http://localhost:8000/docs
+- **Alternative Docs**: http://localhost:8000/redoc
+- **Health Check**: http://localhost:8000/health
+
+### API Endpoints
+
+#### Chat Endpoints
+
+**POST /api/v1/chat** - Non-streaming chat
+```bash
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What is FastAPI?",
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.7
+  }'
+```
+
+**POST /api/v1/chat/stream** - Streaming chat with SSE
+```bash
+curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Tell me a story",
+    "provider": "openai",
+    "stream": true
+  }'
+```
+
+#### Model Management Endpoints
+
+**GET /api/v1/models/providers** - List all providers
+```bash
+curl http://localhost:8000/api/v1/models/providers
+```
+
+**GET /api/v1/models/providers/{provider}** - Get provider details
+```bash
+curl http://localhost:8000/api/v1/models/providers/openai
+```
+
+**POST /api/v1/models/validate** - Validate model configuration
+```bash
+curl -X POST http://localhost:8000/api/v1/models/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.5
+  }'
+```
+
+#### Session Management Endpoints
+
+**POST /api/v1/sessions** - Create new session
+```bash
+curl -X POST http://localhost:8000/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"user_id": "user123"}}'
+```
+
+**GET /api/v1/sessions/{session_id}** - Get session details
+```bash
+curl http://localhost:8000/api/v1/sessions/{session_id}
+```
+
+**GET /api/v1/sessions** - List all sessions
+```bash
+curl "http://localhost:8000/api/v1/sessions?limit=10&offset=0"
+```
+
+**DELETE /api/v1/sessions/{session_id}** - Delete session
+```bash
+curl -X DELETE http://localhost:8000/api/v1/sessions/{session_id}
+```
+
+### Chainlit Integration
+
+The API is ready for Chainlit integration:
+
+```python
+# In your Chainlit app
+import httpx
+
+async def send_message(message: str, session_id: str = None):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/api/v1/chat",
+            json={
+                "message": message,
+                "session_id": session_id,
+                "provider": "openai"
+            }
+        )
+        return response.json()
 ```
 
 ## Available Examples

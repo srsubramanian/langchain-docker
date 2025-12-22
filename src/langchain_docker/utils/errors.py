@@ -47,6 +47,28 @@ class ModelInitializationError(LangChainDockerError):
         super().__init__(message)
 
 
+class SessionNotFoundError(LangChainDockerError):
+    """Raised when session is not found."""
+
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        message = f"Session '{session_id}' not found"
+        super().__init__(message)
+
+
+class InvalidProviderError(LangChainDockerError):
+    """Raised when an invalid provider is specified."""
+
+    def __init__(self, provider: str, valid_providers: list[str]):
+        self.provider = provider
+        self.valid_providers = valid_providers
+        message = (
+            f"Invalid provider '{provider}'. "
+            f"Valid providers are: {', '.join(valid_providers)}"
+        )
+        super().__init__(message)
+
+
 def get_setup_instructions(provider: str) -> str:
     """Get setup instructions for a specific provider.
 
@@ -82,3 +104,20 @@ def get_setup_instructions(provider: str) -> str:
         provider.lower(),
         f"Please obtain an API key for {provider} and set {provider.upper()}_API_KEY in your .env file.",
     )
+
+
+def get_setup_url(provider: str) -> str:
+    """Get setup URL for a specific provider.
+
+    Args:
+        provider: Model provider name (openai, anthropic, google)
+
+    Returns:
+        Setup URL string
+    """
+    urls = {
+        "openai": "https://platform.openai.com/api-keys",
+        "anthropic": "https://console.anthropic.com/",
+        "google": "https://aistudio.google.com/app/apikey",
+    }
+    return urls.get(provider.lower(), "")
