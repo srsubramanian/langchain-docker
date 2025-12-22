@@ -1,0 +1,102 @@
+"""Configuration and environment handling."""
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from langchain_docker.utils.errors import APIKeyMissingError
+
+
+@dataclass
+class Config:
+    """Configuration for langchain-docker.
+
+    Attributes:
+        default_provider: Default model provider to use
+        default_model: Default model name
+        default_temperature: Default temperature for model responses
+    """
+
+    default_provider: str = "openai"
+    default_model: str = "gpt-4o-mini"
+    default_temperature: float = 0.0
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        """Create Config from environment variables.
+
+        Returns:
+            Config instance with values from environment or defaults
+        """
+        return cls(
+            default_provider=os.getenv("DEFAULT_MODEL_PROVIDER", "openai"),
+            default_model=os.getenv("DEFAULT_MODEL_NAME", "gpt-4o-mini"),
+            default_temperature=float(os.getenv("DEFAULT_TEMPERATURE", "0.0")),
+        )
+
+
+def load_environment() -> None:
+    """Load environment variables from .env file.
+
+    Looks for .env file in current directory and parent directories.
+    Silently succeeds if .env file is not found.
+    """
+    env_path = Path(".env")
+
+    if env_path.exists():
+        load_dotenv(env_path)
+    else:
+        load_dotenv()
+
+
+def validate_api_key(provider: str) -> str:
+    """Validate that API key exists for the given provider.
+
+    Args:
+        provider: Provider name (openai, anthropic, google)
+
+    Returns:
+        The API key value
+
+    Raises:
+        APIKeyMissingError: If the API key is not found in environment
+    """
+    provider_key_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+    }
+
+    env_var = provider_key_map.get(provider.lower())
+    if not env_var:
+        raise ValueError(f"Unknown provider: {provider}")
+
+    api_key = os.getenv(env_var)
+    if not api_key:
+        raise APIKeyMissingError(provider)
+
+    return api_key
+
+
+def get_api_key(provider: str) -> str | None:
+    """Get API key for provider without raising an error.
+
+    Args:
+        provider: Provider name (openai, anthropic, google)
+
+    Returns:
+        API key if found, None otherwise
+    """
+    provider_key_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+    }
+
+    env_var = provider_key_map.get(provider.lower())
+    if not env_var:
+        return None
+
+    return os.getenv(env_var)
