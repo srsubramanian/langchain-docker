@@ -144,18 +144,63 @@ docker-compose down -v
 - **Scalability**: Easy to scale services independently
 - **No Local Setup**: No need to install Python, uv, or dependencies
 
-## Phoenix Tracing & Observability
+## Tracing & Observability
 
-Monitor, debug, and evaluate your LLM applications with Phoenix from Arize.
+Monitor, debug, and evaluate your LLM applications with your choice of tracing platform.
 
-### What is Phoenix?
+### Supported Platforms
 
-Phoenix provides:
-- **LLM Tracing**: Track every LLM call with detailed spans
-- **Performance Monitoring**: Latency, token usage, and cost tracking
-- **Debugging Tools**: Inspect inputs, outputs, and intermediate steps
-- **Evaluation Framework**: Test and evaluate LLM responses
-- **Visualization**: Beautiful UI to explore your traces
+| Platform | Type | Best For |
+|----------|------|----------|
+| **Phoenix** | Open source, self-hosted | Full control, no vendor lock-in |
+| **LangSmith** | Hosted service | Zero-config with LangChain |
+
+### Choosing a Platform
+
+Set `TRACING_PROVIDER` in your `.env` file:
+
+```bash
+# Options: phoenix, langsmith, none
+TRACING_PROVIDER=phoenix
+```
+
+---
+
+## LangSmith (Hosted)
+
+LangSmith is LangChain's hosted tracing solution with zero-config setup.
+
+### Setup
+
+1. Get your API key at https://smith.langchain.com/settings
+
+2. Configure in `.env`:
+```bash
+TRACING_PROVIDER=langsmith
+LANGCHAIN_API_KEY=lsv2_...
+LANGCHAIN_PROJECT=langchain-docker  # optional
+```
+
+3. Run your application:
+```bash
+uv run langchain-docker serve
+```
+
+4. View traces at: https://smith.langchain.com
+
+### LangSmith Features
+
+- **Zero Configuration**: Just set API key and it works
+- **Hosted Solution**: No infrastructure to manage
+- **Deep LangChain Integration**: Auto-instrumentation of all LangChain operations
+- **Playground**: Test prompts directly in the UI
+- **Datasets & Evaluations**: Built-in evaluation tools
+
+---
+
+## Phoenix (Self-Hosted)
+
+Phoenix from Arize is an open-source tracing platform with full self-hosting support.
 
 ### Running with Phoenix
 
@@ -191,6 +236,13 @@ uv run langchain-docker serve
 uv run chainlit run chainlit_app/app.py --port 8001
 ```
 
+### Phoenix Features
+
+- **Open Source**: Full control, no vendor lock-in
+- **Self-Hosted**: Your data stays on your infrastructure
+- **Framework Agnostic**: Works with LangChain, LlamaIndex, and more
+- **OpenTelemetry Native**: Integrates with existing observability stacks
+
 ### Accessing Phoenix UI
 
 Open http://localhost:6006 in your browser to:
@@ -199,7 +251,21 @@ Open http://localhost:6006 in your browser to:
 - Debug issues with detailed span information
 - Export traces for analysis
 
-### Features Available
+### Phoenix Configuration
+
+```bash
+# Phoenix endpoint (default: http://localhost:6006/v1/traces)
+PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
+
+# Debug: print traces to console (default: false)
+PHOENIX_CONSOLE_EXPORT=false
+```
+
+---
+
+## Common Features
+
+Both platforms support these features:
 
 **Automatic Instrumentation:**
 - All LangChain operations are automatically traced
@@ -215,10 +281,10 @@ Open http://localhost:6006 in your browser to:
 - Execution time
 - Error details
 
-**Session Tracking (NEW!):**
+**Session Tracking:**
 - All traces are automatically grouped by conversation session
 - Each session (conversation thread) gets a unique identifier
-- View multi-turn conversations as connected traces in Phoenix Sessions tab
+- View multi-turn conversations as connected traces
 - Includes both user chat messages and automatic memory summarization traces
 - Makes debugging long conversations much easier
 
@@ -230,40 +296,13 @@ Traces are automatically organized by session ID, making it easy to:
 - **Track Memory Operations**: View when summarization occurs and how it affects context
 - **Compare Sessions**: Analyze different user conversations side-by-side
 
-To view sessions in Phoenix:
-1. Open Phoenix UI at http://localhost:6006
-2. Click the **Sessions** tab
-3. Browse sessions by recency or search by session ID
-4. Click a session to view all traces for that conversation
-
-### Configuration
-
-Control Phoenix tracing via environment variables:
-
-```bash
-# Enable/disable tracing (default: true)
-PHOENIX_ENABLED=true
-
-# Phoenix endpoint (default: http://localhost:6006/v1/traces)
-PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
-
-# Debug: print traces to console (default: false)
-PHOENIX_CONSOLE_EXPORT=false
-```
-
 ### Disabling Tracing
 
-To disable Phoenix tracing:
+To disable all tracing:
 
 ```bash
 # In .env file
-PHOENIX_ENABLED=false
-```
-
-Or temporarily:
-
-```bash
-PHOENIX_ENABLED=false uv run langchain-docker serve
+TRACING_PROVIDER=none
 ```
 
 ### Docker Compose Architecture

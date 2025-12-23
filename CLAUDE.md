@@ -452,8 +452,15 @@ All API keys and configuration are loaded from `.env` file:
 - `MODEL_CACHE_SIZE` (default: 10)
 - `FASTAPI_BASE_URL` (default: http://localhost:8000) - For Chainlit UI to connect to backend
 
-**Phoenix Tracing:**
-- `PHOENIX_ENABLED` (default: true) - Enable/disable tracing
+**Tracing Configuration:**
+- `TRACING_PROVIDER` (default: phoenix) - Tracing platform: "langsmith", "phoenix", or "none"
+
+**LangSmith (if TRACING_PROVIDER=langsmith):**
+- `LANGCHAIN_API_KEY` - LangSmith API key (required)
+- `LANGCHAIN_PROJECT` (default: langchain-docker) - Project name in LangSmith
+- `LANGCHAIN_ENDPOINT` (optional) - LangSmith API endpoint
+
+**Phoenix (if TRACING_PROVIDER=phoenix):**
 - `PHOENIX_ENDPOINT` (default: http://localhost:6006/v1/traces) - Phoenix collector endpoint
 - `PHOENIX_CONSOLE_EXPORT` (default: false) - Export traces to console for debugging
 

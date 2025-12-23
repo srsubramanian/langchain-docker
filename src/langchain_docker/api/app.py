@@ -9,13 +9,13 @@ from fastapi.responses import JSONResponse
 from langchain_docker.api.middleware import register_exception_handlers
 from langchain_docker.api.routers import chat, models, sessions
 from langchain_docker.core.config import load_environment
-from langchain_docker.core.tracing import setup_phoenix_tracing
+from langchain_docker.core.tracing import setup_tracing
 
 # Load environment variables
 load_environment()
 
-# Initialize Phoenix tracing
-setup_phoenix_tracing()
+# Initialize tracing (LangSmith or Phoenix based on TRACING_PROVIDER env var)
+setup_tracing()
 
 
 def create_app() -> FastAPI:
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
             Detailed status information
         """
         from langchain_docker.api.dependencies import get_model_service, get_session_service
+        from langchain_docker.core.tracing import get_tracing_provider
 
         model_service = get_model_service()
         session_service = get_session_service()
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
             "providers": providers,
             "active_sessions": len(session_service._sessions),
             "cached_models": model_service.get_cache_size(),
+            "tracing_provider": get_tracing_provider() or "none",
         }
 
     return app

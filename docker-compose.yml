@@ -32,6 +32,7 @@ services:
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - TRACING_PROVIDER=langsmith
       - PHOENIX_ENDPOINT=http://phoenix:6006/v1/traces
     command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
     depends_on:

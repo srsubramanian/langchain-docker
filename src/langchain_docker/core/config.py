@@ -23,6 +23,7 @@ class Config:
         memory_summarization_provider: Provider for summarization (optional)
         memory_summarization_model: Model for summarization (optional)
         memory_summarization_temperature: Temperature for summarization
+        tracing_provider: Tracing platform (langsmith, phoenix, or none)
     """
 
     default_provider: str = "openai"
@@ -34,6 +35,7 @@ class Config:
     memory_summarization_provider: str | None = None
     memory_summarization_model: str | None = None
     memory_summarization_temperature: float = 0.0
+    tracing_provider: str = "phoenix"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -52,6 +54,7 @@ class Config:
             memory_summarization_provider=os.getenv("MEMORY_SUMMARIZATION_PROVIDER") or None,
             memory_summarization_model=os.getenv("MEMORY_SUMMARIZATION_MODEL") or None,
             memory_summarization_temperature=float(os.getenv("MEMORY_SUMMARIZATION_TEMPERATURE", "0.0")),
+            tracing_provider=os.getenv("TRACING_PROVIDER", "phoenix").lower(),
         )
 
 
