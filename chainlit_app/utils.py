@@ -1,9 +1,14 @@
 """Utility functions for Chainlit app to communicate with FastAPI backend."""
 
+import logging
 import os
 from typing import AsyncGenerator, Optional
 
 import httpx
+
+# Configure logging for debugging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class APIClient:
@@ -89,6 +94,9 @@ class APIClient:
             if model:
                 payload["model"] = model
 
+            logger.debug(f"[chat_stream] POST {self.base_url}/api/v1/chat/stream")
+            logger.debug(f"[chat_stream] Payload: {payload}")
+
             async with client.stream(
                 "POST",
                 f"{self.base_url}/api/v1/chat/stream",
@@ -122,12 +130,16 @@ class APIClient:
         """
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             payload = {"metadata": metadata or {}}
+            logger.debug(f"[create_session] POST {self.base_url}/api/v1/sessions")
+            logger.debug(f"[create_session] Payload: {payload}")
             response = await client.post(
                 f"{self.base_url}/api/v1/sessions",
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug(f"[create_session] Response: {result}")
+            return result
 
     async def get_session(self, session_id: str) -> dict:
         """Get session details including message history.
