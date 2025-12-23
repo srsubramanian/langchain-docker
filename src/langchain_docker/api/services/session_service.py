@@ -24,6 +24,9 @@ class Session:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     metadata: dict = field(default_factory=dict)
+    conversation_summary: str | None = None
+    summary_message_count: int = 0
+    last_summarized_at: datetime | None = None
 
 
 class SessionService:

@@ -54,6 +54,17 @@ class MessageSchema(BaseModel):
             return AIMessage(content=self.content)
 
 
+class MemoryMetadata(BaseModel):
+    """Metadata about memory management for this response."""
+
+    summarized: bool = Field(False, description="Whether summarization occurred")
+    summary_triggered: bool = Field(False, description="Whether trigger threshold was reached")
+    total_messages: int = Field(..., description="Total number of messages in conversation")
+    summarized_message_count: int = Field(0, description="Number of messages included in summary")
+    recent_message_count: int = Field(..., description="Number of recent messages kept intact")
+    summary_content: str | None = Field(None, description="The summary text (for debugging)")
+
+
 class ChatRequest(BaseModel):
     """Request schema for chat endpoint."""
 
@@ -64,6 +75,9 @@ class ChatRequest(BaseModel):
     temperature: float = Field(0.0, ge=0.0, le=2.0, description="Temperature for response generation")
     stream: bool = Field(False, description="Enable streaming response")
     max_tokens: int | None = Field(None, gt=0, description="Maximum tokens in response")
+    enable_memory: bool = Field(True, description="Enable conversation memory management")
+    memory_trigger_count: int | None = Field(None, gt=0, description="Override trigger threshold for summarization")
+    memory_keep_recent: int | None = Field(None, gt=0, description="Override number of recent messages to keep")
 
 
 class ChatResponse(BaseModel):
@@ -73,6 +87,7 @@ class ChatResponse(BaseModel):
     message: MessageSchema
     conversation_length: int = Field(..., description="Total number of messages in conversation")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    memory_metadata: MemoryMetadata | None = Field(None, description="Memory management metadata")
 
 
 class StreamEvent(BaseModel):

@@ -17,11 +17,23 @@ class Config:
         default_provider: Default model provider to use
         default_model: Default model name
         default_temperature: Default temperature for model responses
+        memory_enabled: Enable conversation summarization
+        memory_trigger_message_count: Trigger summarization after N messages
+        memory_keep_recent_count: Keep last N messages unsummarized
+        memory_summarization_provider: Provider for summarization (optional)
+        memory_summarization_model: Model for summarization (optional)
+        memory_summarization_temperature: Temperature for summarization
     """
 
     default_provider: str = "openai"
     default_model: str = "gpt-4o-mini"
     default_temperature: float = 0.0
+    memory_enabled: bool = True
+    memory_trigger_message_count: int = 20
+    memory_keep_recent_count: int = 10
+    memory_summarization_provider: str | None = None
+    memory_summarization_model: str | None = None
+    memory_summarization_temperature: float = 0.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -34,6 +46,12 @@ class Config:
             default_provider=os.getenv("DEFAULT_MODEL_PROVIDER", "openai"),
             default_model=os.getenv("DEFAULT_MODEL_NAME", "gpt-4o-mini"),
             default_temperature=float(os.getenv("DEFAULT_TEMPERATURE", "0.0")),
+            memory_enabled=os.getenv("MEMORY_ENABLED", "true").lower() == "true",
+            memory_trigger_message_count=int(os.getenv("MEMORY_TRIGGER_MESSAGE_COUNT", "20")),
+            memory_keep_recent_count=int(os.getenv("MEMORY_KEEP_RECENT_COUNT", "10")),
+            memory_summarization_provider=os.getenv("MEMORY_SUMMARIZATION_PROVIDER") or None,
+            memory_summarization_model=os.getenv("MEMORY_SUMMARIZATION_MODEL") or None,
+            memory_summarization_temperature=float(os.getenv("MEMORY_SUMMARIZATION_TEMPERATURE", "0.0")),
         )
 
 

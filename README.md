@@ -16,7 +16,16 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Chat Endpoints**: Non-streaming and Server-Sent Events (SSE) streaming support
 - **Model Management**: List providers, get model details, validate configurations
 - **Session Management**: Create, retrieve, list, and delete conversation sessions
+- **Memory Management**: Intelligent conversation summarization to prevent context overflow
 - **CORS Support**: Ready for Chainlit and other frontend integrations
+
+### Memory Management (NEW!)
+- **Automatic Summarization**: Conversations are automatically summarized when they exceed configurable thresholds
+- **Context Window Optimization**: Keep recent messages intact while summarizing older ones
+- **Configurable Thresholds**: Control when summarization triggers and how many recent messages to preserve
+- **LLM-Based Summaries**: Uses the same or a cheaper model to generate high-quality summaries
+- **Transparent Operation**: Memory metadata included in API responses for observability
+- **Graceful Fallback**: Simple text-based summaries if LLM summarization fails
 
 ### Chainlit UI
 - **Interactive Chat Interface**: Modern web-based chat UI powered by Chainlit
@@ -408,6 +417,97 @@ curl "http://localhost:8000/api/v1/sessions?limit=10&offset=0"
 ```bash
 curl -X DELETE http://localhost:8000/api/v1/sessions/{session_id}
 ```
+
+### Memory Management
+
+The API automatically manages conversation memory through intelligent summarization. When conversations exceed a configurable threshold, older messages are summarized to prevent context window overflow while preserving recent context.
+
+#### How It Works
+
+1. **Automatic Triggering**: When a conversation reaches 20 messages (default), summarization is triggered
+2. **LLM-Based Summary**: Older messages are summarized using the same or a cheaper model
+3. **Context Optimization**: Summary + recent 10 messages (default) are sent to the model
+4. **Full History Preserved**: Complete message history is kept in the session for auditing
+
+#### Configuration
+
+Control memory management via environment variables in `.env`:
+
+```bash
+# Enable/disable memory management (default: true)
+MEMORY_ENABLED=true
+
+# Trigger summarization after N messages (default: 20)
+MEMORY_TRIGGER_MESSAGE_COUNT=20
+
+# Keep last N messages unsummarized (default: 10)
+MEMORY_KEEP_RECENT_COUNT=10
+
+# Optional: Use specific provider for summarization
+MEMORY_SUMMARIZATION_PROVIDER=openai
+
+# Optional: Use cheaper model for summarization (default: gpt-4o-mini)
+MEMORY_SUMMARIZATION_MODEL=gpt-4o-mini
+
+# Temperature for summarization (default: 0.0 for consistency)
+MEMORY_SUMMARIZATION_TEMPERATURE=0.0
+```
+
+#### Per-Request Control
+
+Override memory settings for individual requests:
+
+```bash
+# Custom trigger and keep-recent counts
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Continue our discussion",
+    "session_id": "my-session",
+    "provider": "openai",
+    "memory_trigger_count": 30,
+    "memory_keep_recent": 15
+  }'
+```
+
+```bash
+# Disable memory for specific request
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What is the weather?",
+    "session_id": "my-session",
+    "provider": "openai",
+    "enable_memory": false
+  }'
+```
+
+#### Memory Metadata
+
+Each response includes memory metadata for observability:
+
+```json
+{
+  "session_id": "my-session",
+  "message": {...},
+  "conversation_length": 25,
+  "memory_metadata": {
+    "summarized": true,
+    "summary_triggered": true,
+    "total_messages": 25,
+    "summarized_message_count": 15,
+    "recent_message_count": 10,
+    "summary_content": "The user asked about..."
+  }
+}
+```
+
+#### Benefits
+
+- **Prevent Token Limit Errors**: Automatic context management prevents hitting model limits
+- **Cost Optimization**: Reduce token usage in long conversations
+- **Maintain Context**: Important information is preserved in summaries
+- **Improved Performance**: Smaller context windows mean faster responses
 
 ## Chainlit UI
 
