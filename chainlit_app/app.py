@@ -30,6 +30,25 @@ async def start():
         ).send()
         return
 
+    # Create a new backend session explicitly
+    try:
+        session_response = await api_client.create_session(
+            metadata={"source": "chainlit", "user": cl.user_session.get("id", "unknown")}
+        )
+        session_id = session_response.get("session_id")
+        cl.user_session.set("session_id", session_id)
+
+        await cl.Message(
+            content=f"✓ Session created: `{session_id}`\n\nThis session ID will group all your messages together in Phoenix tracing.",
+            author="System",
+        ).send()
+    except Exception as e:
+        await cl.Message(
+            content=f"Warning: Could not create session: {str(e)}",
+            author="System",
+        ).send()
+        cl.user_session.set("session_id", None)
+
     # Get available providers
     try:
         providers = await api_client.list_providers()
@@ -57,8 +76,7 @@ async def start():
             author="System",
         ).send()
 
-    # Initialize session state
-    cl.user_session.set("session_id", None)
+    # Initialize other session state
     cl.user_session.set("provider", "openai")
     cl.user_session.set("model", None)
     cl.user_session.set("temperature", 0.7)
@@ -122,10 +140,8 @@ async def main(message: cl.Message):
             event_type = event.get("event")
 
             if event_type == "start":
-                # Save session ID
-                new_session_id = event.get("session_id")
-                if new_session_id:
-                    cl.user_session.set("session_id", new_session_id)
+                # Session already created explicitly, just continue
+                pass
 
             elif event_type == "token":
                 # Stream token to UI
@@ -166,8 +182,40 @@ async def end():
 @cl.action_callback("reset_session")
 async def on_reset_session(action: cl.Action):
     """Reset the current session."""
-    cl.user_session.set("session_id", None)
-    await cl.Message(
-        content="Session reset! Starting a new conversation.",
-        author="System",
-    ).send()
+    # Create a new session
+    try:
+        session_response = await api_client.create_session(
+            metadata={"source": "chainlit", "user": cl.user_session.get("id", "unknown"), "reset": True}
+        )
+        session_id = session_response.get("session_id")
+        cl.user_session.set("session_id", session_id)
+
+        await cl.Message(
+            content=f"Session reset! New session created: `{session_id}`",
+            author="System",
+        ).send()
+    except Exception as e:
+        cl.user_session.set("session_id", None)
+        await cl.Message(
+            content=f"Session reset but could not create new session: {str(e)}",
+            author="System",
+        ).send()
+
+
+@cl.action_callback("show_session_info")
+async def on_show_session_info(action: cl.Action):
+    """Show current session information."""
+    session_id = cl.user_session.get("session_id")
+    if session_id:
+        await cl.Message(
+            content=f"**Current Session Info:**\n\n"
+            f"- Session ID: `{session_id}`\n"
+            f"- View in Phoenix: http://localhost:6006 (Sessions tab)\n"
+            f"- Search for: `{session_id}`",
+            author="System",
+        ).send()
+    else:
+        await cl.Message(
+            content="No active session",
+            author="System",
+        ).send()
