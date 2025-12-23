@@ -65,8 +65,12 @@ class ChatService:
         )
 
         # Invoke model with optimized context window and session tracing
+        # Use both trace_session context and LangChain config for session metadata
         with trace_session(session.session_id):
-            ai_response = model.invoke(context_messages)
+            ai_response = model.invoke(
+                context_messages,
+                config={"metadata": {"session_id": session.session_id}}
+            )
 
         # Add AI response to session
         session.messages.append(ai_response)
@@ -126,8 +130,12 @@ class ChatService:
         full_content = ""
         try:
             # Use optimized context window with session tracing
+            # Use both trace_session context and LangChain config for session metadata
             with trace_session(session.session_id):
-                for chunk in model.stream(context_messages):
+                for chunk in model.stream(
+                    context_messages,
+                    config={"metadata": {"session_id": session.session_id}}
+                ):
                     if chunk.content:
                         full_content += chunk.content
                         yield {

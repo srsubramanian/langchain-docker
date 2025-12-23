@@ -6,6 +6,7 @@ from typing import Generator, Optional
 
 from openinference.instrumentation import using_session
 from openinference.instrumentation.langchain import LangChainInstrumentor
+from openinference.semconv.trace import SpanAttributes
 from opentelemetry import trace as trace_api
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk import trace as trace_sdk
@@ -92,7 +93,12 @@ def trace_session(session_id: str) -> Generator[None, None, None]:
         ...     response = model.invoke(messages)
     """
     if is_tracing_enabled():
+        # Use both using_session context manager and set span attribute directly
         with using_session(session_id):
+            # Also set the attribute on the current span if available
+            current_span = trace_api.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute(SpanAttributes.SESSION_ID, session_id)
             yield
     else:
         yield

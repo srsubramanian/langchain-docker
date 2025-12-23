@@ -216,7 +216,10 @@ class MemoryService:
 
         # Generate summary with session tracing
         with trace_session(session_id):
-            summary_response = summarization_model.invoke([HumanMessage(content=prompt)])
+            summary_response = summarization_model.invoke(
+                [HumanMessage(content=prompt)],
+                config={"metadata": {"session_id": session_id, "operation": "summarization"}}
+            )
 
         # Check if summary is too long and condense if needed
         MAX_SUMMARY_LENGTH = 2000  # characters
@@ -224,7 +227,10 @@ class MemoryService:
             logger.warning(f"Summary too long ({len(summary_response.content)} chars), condensing...")
             condense_prompt = f"Please condense this summary to under {MAX_SUMMARY_LENGTH} characters:\n\n{summary_response.content}"
             with trace_session(session_id):
-                condensed = summarization_model.invoke([HumanMessage(content=condense_prompt)])
+                condensed = summarization_model.invoke(
+                    [HumanMessage(content=condense_prompt)],
+                    config={"metadata": {"session_id": session_id, "operation": "condense_summary"}}
+                )
             return condensed.content[:MAX_SUMMARY_LENGTH]
 
         return summary_response.content
