@@ -215,6 +215,27 @@ Open http://localhost:6006 in your browser to:
 - Execution time
 - Error details
 
+**Session Tracking (NEW!):**
+- All traces are automatically grouped by conversation session
+- Each session (conversation thread) gets a unique identifier
+- View multi-turn conversations as connected traces in Phoenix Sessions tab
+- Includes both user chat messages and automatic memory summarization traces
+- Makes debugging long conversations much easier
+
+### Session Grouping
+
+Traces are automatically organized by session ID, making it easy to:
+- **Debug Conversations**: Follow the flow of a multi-turn conversation
+- **Analyze Performance**: See how response times change over conversation length
+- **Track Memory Operations**: View when summarization occurs and how it affects context
+- **Compare Sessions**: Analyze different user conversations side-by-side
+
+To view sessions in Phoenix:
+1. Open Phoenix UI at http://localhost:6006
+2. Click the **Sessions** tab
+3. Browse sessions by recency or search by session ID
+4. Click a session to view all traces for that conversation
+
 ### Configuration
 
 Control Phoenix tracing via environment variables:

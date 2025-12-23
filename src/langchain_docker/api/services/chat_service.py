@@ -9,6 +9,7 @@ from langchain_docker.api.schemas.chat import ChatRequest, ChatResponse, Message
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
+from langchain_docker.core.tracing import trace_session
 
 
 class ChatService:
@@ -63,8 +64,9 @@ class ChatService:
             max_tokens=request.max_tokens,
         )
 
-        # Invoke model with optimized context window (CHANGED: was session.messages)
-        ai_response = model.invoke(context_messages)
+        # Invoke model with optimized context window and session tracing
+        with trace_session(session.session_id):
+            ai_response = model.invoke(context_messages)
 
         # Add AI response to session
         session.messages.append(ai_response)
@@ -120,17 +122,18 @@ class ChatService:
             }),
         }
 
-        # Stream response tokens
+        # Stream response tokens with session tracing
         full_content = ""
         try:
-            # Use optimized context window (CHANGED: was session.messages)
-            for chunk in model.stream(context_messages):
-                if chunk.content:
-                    full_content += chunk.content
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"content": chunk.content}),
-                    }
+            # Use optimized context window with session tracing
+            with trace_session(session.session_id):
+                for chunk in model.stream(context_messages):
+                    if chunk.content:
+                        full_content += chunk.content
+                        yield {
+                            "event": "token",
+                            "data": json.dumps({"content": chunk.content}),
+                        }
 
             # Create AI message from full content
             from langchain_core.messages import AIMessage

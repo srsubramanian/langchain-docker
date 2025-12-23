@@ -10,6 +10,7 @@ from langchain_docker.api.schemas.chat import ChatRequest, MemoryMetadata
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import Session
 from langchain_docker.core.config import Config
+from langchain_docker.core.tracing import trace_session
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ class MemoryService:
                     try:
                         # Generate new summary
                         new_summary = self._summarize_messages(
-                            messages_to_summarize, request.provider, request.model
+                            messages_to_summarize, request.provider, request.model, session.session_id
                         )
 
                         # Update session
@@ -172,7 +173,7 @@ class MemoryService:
         return len(real_messages) >= trigger_count
 
     def _summarize_messages(
-        self, messages: list[BaseMessage], provider: str, model: str | None
+        self, messages: list[BaseMessage], provider: str, model: str | None, session_id: str
     ) -> str:
         """Generate summary using LLM.
 
@@ -180,6 +181,7 @@ class MemoryService:
             messages: Messages to summarize
             provider: Model provider for summarization
             model: Model name for summarization
+            session_id: Session ID for tracing
 
         Returns:
             Summary text
@@ -212,15 +214,17 @@ class MemoryService:
             keep_recent=self.config.memory_keep_recent_count, conversation=conversation_text
         )
 
-        # Generate summary
-        summary_response = summarization_model.invoke([HumanMessage(content=prompt)])
+        # Generate summary with session tracing
+        with trace_session(session_id):
+            summary_response = summarization_model.invoke([HumanMessage(content=prompt)])
 
         # Check if summary is too long and condense if needed
         MAX_SUMMARY_LENGTH = 2000  # characters
         if len(summary_response.content) > MAX_SUMMARY_LENGTH:
             logger.warning(f"Summary too long ({len(summary_response.content)} chars), condensing...")
             condense_prompt = f"Please condense this summary to under {MAX_SUMMARY_LENGTH} characters:\n\n{summary_response.content}"
-            condensed = summarization_model.invoke([HumanMessage(content=condense_prompt)])
+            with trace_session(session_id):
+                condensed = summarization_model.invoke([HumanMessage(content=condense_prompt)])
             return condensed.content[:MAX_SUMMARY_LENGTH]
 
         return summary_response.content

@@ -1,8 +1,10 @@
 """Phoenix tracing configuration for observability and debugging."""
 
 import os
-from typing import Optional
+from contextlib import contextmanager
+from typing import Generator, Optional
 
+from openinference.instrumentation import using_session
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry import trace as trace_api
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -70,3 +72,27 @@ def is_tracing_enabled() -> bool:
         True if tracing is enabled, False otherwise
     """
     return os.getenv("PHOENIX_ENABLED", "true").lower() == "true"
+
+
+@contextmanager
+def trace_session(session_id: str) -> Generator[None, None, None]:
+    """Context manager for tracing a session.
+
+    Groups related traces together in Phoenix under a single session.
+    This enables better visualization and analysis of multi-turn conversations.
+
+    Args:
+        session_id: Unique identifier for the session/conversation
+
+    Yields:
+        None
+
+    Example:
+        >>> with trace_session("user-session-123"):
+        ...     response = model.invoke(messages)
+    """
+    if is_tracing_enabled():
+        with using_session(session_id):
+            yield
+    else:
+        yield
