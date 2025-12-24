@@ -3,8 +3,8 @@
 import logging
 from typing import Any, Callable, Optional
 
+from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
 from langgraph_supervisor import create_supervisor
 
 from langchain_docker.api.services.model_service import ModelService
@@ -179,11 +179,11 @@ class AgentService:
                 )
 
             config = BUILTIN_AGENTS[agent_name]
-            agent = create_react_agent(
+            agent = create_agent(
                 model=llm,
                 tools=config["tools"],
                 name=config["name"],
-                prompt=config["prompt"],
+                system_prompt=config["prompt"],
             )
             agents.append(agent)
             agent_descriptions.append(

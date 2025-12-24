@@ -652,34 +652,31 @@ class APIClient:
 ### Multi-Agent Workflow Pattern (LangGraph Supervisor)
 ```python
 # In agent_service.py
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent  # New location (moved from langgraph.prebuilt)
 from langgraph_supervisor import create_supervisor
-from langchain_core.tools import tool
 
 # Define tools for agents
-@tool
 def add(a: int, b: int) -> int:
     """Add two numbers."""
     return a + b
 
-@tool
 def get_weather(city: str) -> str:
     """Get weather for a city."""
     return f"Sunny, 68°F in {city}"
 
-# Create specialized agents
-math_agent = create_react_agent(
+# Create specialized agents using create_agent (replaces deprecated create_react_agent)
+math_agent = create_agent(
     model=llm,
     tools=[add, subtract, multiply, divide],
     name="math_expert",
-    prompt="You are a math expert. Use tools to perform calculations."
+    system_prompt="You are a math expert. Use tools to perform calculations."
 )
 
-weather_agent = create_react_agent(
+weather_agent = create_agent(
     model=llm,
     tools=[get_weather],
     name="weather_expert",
-    prompt="You are a weather expert. Provide weather information."
+    system_prompt="You are a weather expert. Provide weather information."
 )
 
 # Create supervisor workflow
