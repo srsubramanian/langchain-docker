@@ -478,6 +478,135 @@ curl "http://localhost:8000/api/v1/sessions?limit=10&offset=0"
 curl -X DELETE http://localhost:8000/api/v1/sessions/{session_id}
 ```
 
+#### Multi-Agent Endpoints (NEW!)
+
+**GET /api/v1/agents/builtin** - List available agents
+```bash
+curl http://localhost:8000/api/v1/agents/builtin
+```
+
+**POST /api/v1/agents/workflows** - Create a multi-agent workflow
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/workflows \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_id": "my-workflow",
+    "agents": ["math_expert", "weather_expert"],
+    "provider": "openai"
+  }'
+```
+
+**POST /api/v1/agents/workflows/{workflow_id}/invoke** - Invoke workflow
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/workflows/my-workflow/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is 15 times 7, and what is the weather in Tokyo?"}'
+```
+
+**GET /api/v1/agents/workflows** - List active workflows
+```bash
+curl http://localhost:8000/api/v1/agents/workflows
+```
+
+**DELETE /api/v1/agents/workflows/{workflow_id}** - Delete workflow
+```bash
+curl -X DELETE http://localhost:8000/api/v1/agents/workflows/my-workflow
+```
+
+### Multi-Agent Workflows
+
+The API supports LangGraph-based multi-agent workflows where a supervisor agent delegates tasks to specialized worker agents.
+
+#### Architecture
+
+```
+                    ┌─────────────────┐
+                    │   Supervisor    │
+                    │     Agent       │
+                    └────────┬────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  Math Expert    │ │ Weather Expert  │ │ Research Expert │
+│   (tools:       │ │   (tools:       │ │   (tools:       │
+│  add,subtract,  │ │ get_weather)    │ │  search_web)    │
+│  multiply,div)  │ │                 │ │                 │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+```
+
+#### Built-in Agents
+
+| Agent | Description | Tools |
+|-------|-------------|-------|
+| `math_expert` | Performs arithmetic calculations | add, subtract, multiply, divide |
+| `weather_expert` | Gets weather information | get_current_weather |
+| `research_expert` | Searches for information online | search_web |
+| `finance_expert` | Gets stock prices and financial data | get_stock_price |
+
+#### How It Works
+
+1. **Create a Workflow**: Combine multiple agents into a workflow with a supervisor
+2. **Invoke the Workflow**: Send a message that may require multiple agents
+3. **Supervisor Delegation**: The supervisor analyzes the request and delegates to appropriate agents
+4. **Aggregated Response**: Results from all agents are combined into a final response
+
+#### Example: Complex Query
+
+```bash
+# 1. Create a workflow with math and weather agents
+curl -X POST http://localhost:8000/api/v1/agents/workflows \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_id": "assistant",
+    "agents": ["math_expert", "weather_expert"],
+    "provider": "openai"
+  }'
+
+# 2. Ask a question requiring both agents
+curl -X POST http://localhost:8000/api/v1/agents/workflows/assistant/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What is 15 times 7, and what is the weather in San Francisco?"
+  }'
+
+# Response:
+# {
+#   "response": "15 times 7 is 105. The weather in San Francisco is sunny, 68°F (20°C).",
+#   "workflow_id": "assistant",
+#   "message_count": 12
+# }
+```
+
+#### Custom Supervisor Prompt
+
+Customize how the supervisor delegates tasks:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/workflows \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_id": "concise-assistant",
+    "agents": ["math_expert", "weather_expert", "research_expert"],
+    "provider": "openai",
+    "supervisor_prompt": "You are a helpful assistant. Always be concise and direct. Delegate tasks to the appropriate specialist agents."
+  }'
+```
+
+#### Session Tracking
+
+Workflow invocations support session IDs for tracing in Phoenix or LangSmith:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/workflows/assistant/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Calculate 100 divided by 5",
+    "session_id": "user-123-session"
+  }'
+```
+
 ### Memory Management
 
 The API automatically manages conversation memory through intelligent summarization. When conversations exceed a configurable threshold, older messages are summarized to prevent context window overflow while preserving recent context.

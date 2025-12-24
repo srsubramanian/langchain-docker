@@ -1,0 +1,289 @@
+"""Multi-agent orchestration service using LangGraph Supervisor."""
+
+import logging
+from typing import Any, Callable, Optional
+
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph_supervisor import create_supervisor
+
+from langchain_docker.api.services.model_service import ModelService
+from langchain_docker.core.tracing import trace_session
+
+logger = logging.getLogger(__name__)
+
+
+# Built-in tools for demo agents
+def add(a: float, b: float) -> float:
+    """Add two numbers together."""
+    return a + b
+
+
+def subtract(a: float, b: float) -> float:
+    """Subtract b from a."""
+    return a - b
+
+
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers together."""
+    return a * b
+
+
+def divide(a: float, b: float) -> float:
+    """Divide a by b. Returns error if b is zero."""
+    if b == 0:
+        return float("inf")
+    return a / b
+
+
+def get_current_weather(location: str) -> str:
+    """Get the current weather for a location (demo - returns mock data)."""
+    # Mock weather data for demo
+    weather_data = {
+        "san francisco": "Sunny, 68°F (20°C), light breeze",
+        "new york": "Cloudy, 55°F (13°C), chance of rain",
+        "london": "Rainy, 50°F (10°C), overcast",
+        "tokyo": "Clear, 72°F (22°C), humid",
+        "paris": "Partly cloudy, 62°F (17°C), pleasant",
+    }
+    location_lower = location.lower()
+    for city, weather in weather_data.items():
+        if city in location_lower:
+            return f"Weather in {location}: {weather}"
+    return f"Weather in {location}: Sunny, 70°F (21°C), clear skies (default)"
+
+
+def search_web(query: str) -> str:
+    """Search the web for information (demo - returns mock data)."""
+    # Mock search results for demo
+    return f"Search results for '{query}': This is a demo search result. In production, integrate with a real search API like Tavily, SerpAPI, or DuckDuckGo."
+
+
+def get_stock_price(symbol: str) -> str:
+    """Get the current stock price for a symbol (demo - returns mock data)."""
+    # Mock stock data for demo
+    mock_prices = {
+        "AAPL": 178.50,
+        "GOOGL": 141.25,
+        "MSFT": 378.90,
+        "AMZN": 178.25,
+        "META": 505.75,
+    }
+    symbol_upper = symbol.upper()
+    if symbol_upper in mock_prices:
+        return f"{symbol_upper}: ${mock_prices[symbol_upper]:.2f}"
+    return f"{symbol_upper}: $100.00 (demo price)"
+
+
+# Agent configurations
+BUILTIN_AGENTS = {
+    "math_expert": {
+        "name": "math_expert",
+        "tools": [add, subtract, multiply, divide],
+        "prompt": "You are a math expert. Use the provided tools to solve mathematical problems. Always show your work step by step.",
+    },
+    "weather_expert": {
+        "name": "weather_expert",
+        "tools": [get_current_weather],
+        "prompt": "You are a weather expert. Use the weather tool to get current conditions for any location.",
+    },
+    "research_expert": {
+        "name": "research_expert",
+        "tools": [search_web],
+        "prompt": "You are a research expert with web search capabilities. Search for information to answer questions accurately.",
+    },
+    "finance_expert": {
+        "name": "finance_expert",
+        "tools": [get_stock_price],
+        "prompt": "You are a finance expert. Use the stock price tool to get current market data and provide financial insights.",
+    },
+}
+
+DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.
+Your job is to:
+1. Understand the user's request
+2. Delegate tasks to the appropriate specialist agent(s)
+3. Synthesize their responses into a coherent answer
+
+Available specialists:
+{agent_descriptions}
+
+Always delegate to the most appropriate specialist. If a task requires multiple specialists, coordinate their work."""
+
+
+class AgentService:
+    """Service for creating and managing multi-agent workflows."""
+
+    def __init__(self, model_service: ModelService):
+        """Initialize agent service.
+
+        Args:
+            model_service: Model service for LLM access
+        """
+        self.model_service = model_service
+        self._workflows: dict[str, Any] = {}
+
+    def list_builtin_agents(self) -> list[dict]:
+        """List all available built-in agents.
+
+        Returns:
+            List of agent configurations
+        """
+        return [
+            {
+                "name": config["name"],
+                "tools": [t.__name__ for t in config["tools"]],
+                "description": config["prompt"][:100] + "...",
+            }
+            for config in BUILTIN_AGENTS.values()
+        ]
+
+    def create_workflow(
+        self,
+        workflow_id: str,
+        agent_names: list[str],
+        provider: str = "openai",
+        model: Optional[str] = None,
+        supervisor_prompt: Optional[str] = None,
+    ) -> str:
+        """Create a multi-agent workflow with supervisor.
+
+        Args:
+            workflow_id: Unique identifier for the workflow
+            agent_names: List of built-in agent names to include
+            provider: Model provider to use
+            model: Model name (optional)
+            supervisor_prompt: Custom supervisor prompt (optional)
+
+        Returns:
+            Workflow ID
+
+        Raises:
+            ValueError: If agent name not found
+        """
+        # Get model
+        llm = self.model_service.get_or_create(
+            provider=provider,
+            model=model,
+            temperature=0.0,
+        )
+
+        # Create agents
+        agents = []
+        agent_descriptions = []
+
+        for agent_name in agent_names:
+            if agent_name not in BUILTIN_AGENTS:
+                raise ValueError(
+                    f"Unknown agent: {agent_name}. Available: {list(BUILTIN_AGENTS.keys())}"
+                )
+
+            config = BUILTIN_AGENTS[agent_name]
+            agent = create_react_agent(
+                model=llm,
+                tools=config["tools"],
+                name=config["name"],
+                prompt=config["prompt"],
+            )
+            agents.append(agent)
+            agent_descriptions.append(
+                f"- {config['name']}: {config['prompt'][:50]}..."
+            )
+
+        # Create supervisor prompt
+        if supervisor_prompt is None:
+            supervisor_prompt = DEFAULT_SUPERVISOR_PROMPT.format(
+                agent_descriptions="\n".join(agent_descriptions)
+            )
+
+        # Create supervisor workflow
+        workflow = create_supervisor(
+            agents,
+            model=llm,
+            prompt=supervisor_prompt,
+        )
+
+        # Compile and store
+        compiled = workflow.compile()
+        self._workflows[workflow_id] = {
+            "app": compiled,
+            "agents": agent_names,
+            "provider": provider,
+            "model": model,
+        }
+
+        logger.info(f"Created workflow {workflow_id} with agents: {agent_names}")
+        return workflow_id
+
+    def invoke_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        """Invoke a multi-agent workflow.
+
+        Args:
+            workflow_id: Workflow to invoke
+            message: User message
+            session_id: Optional session ID for tracing
+
+        Returns:
+            Workflow result with agent responses
+
+        Raises:
+            ValueError: If workflow not found
+        """
+        if workflow_id not in self._workflows:
+            raise ValueError(f"Workflow not found: {workflow_id}")
+
+        workflow_data = self._workflows[workflow_id]
+        app = workflow_data["app"]
+
+        # Invoke with session tracing
+        with trace_session(session_id or workflow_id):
+            result = app.invoke(
+                {"messages": [HumanMessage(content=message)]},
+                config={"metadata": {"session_id": session_id, "workflow_id": workflow_id}},
+            )
+
+        # Extract final response
+        messages = result.get("messages", [])
+        final_message = messages[-1] if messages else None
+
+        return {
+            "workflow_id": workflow_id,
+            "agents": workflow_data["agents"],
+            "response": final_message.content if final_message else "",
+            "message_count": len(messages),
+        }
+
+    def delete_workflow(self, workflow_id: str) -> bool:
+        """Delete a workflow.
+
+        Args:
+            workflow_id: Workflow to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if workflow_id in self._workflows:
+            del self._workflows[workflow_id]
+            return True
+        return False
+
+    def list_workflows(self) -> list[dict]:
+        """List all active workflows.
+
+        Returns:
+            List of workflow info
+        """
+        return [
+            {
+                "workflow_id": wf_id,
+                "agents": data["agents"],
+                "provider": data["provider"],
+                "model": data["model"],
+            }
+            for wf_id, data in self._workflows.items()
+        ]

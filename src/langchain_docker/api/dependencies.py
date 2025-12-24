@@ -4,6 +4,7 @@ from functools import lru_cache
 
 from fastapi import Depends
 
+from langchain_docker.api.services.agent_service import AgentService
 from langchain_docker.api.services.chat_service import ChatService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
@@ -63,3 +64,24 @@ def get_chat_service(
         ChatService instance
     """
     return ChatService(session_service, model_service, memory_service)
+
+
+# Singleton for agent service
+_agent_service: AgentService | None = None
+
+
+def get_agent_service(
+    model_service: ModelService = Depends(get_model_service),
+) -> AgentService:
+    """Get agent service instance.
+
+    Args:
+        model_service: Model service (injected)
+
+    Returns:
+        AgentService instance
+    """
+    global _agent_service
+    if _agent_service is None:
+        _agent_service = AgentService(model_service)
+    return _agent_service

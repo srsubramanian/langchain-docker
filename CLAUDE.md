@@ -167,17 +167,21 @@ src/langchain_docker/
 │   ├── middleware.py          # Error handling middleware
 │   ├── routers/               # API route modules
 │   │   ├── __init__.py
+│   │   ├── agents.py         # Multi-agent workflow endpoints
 │   │   ├── chat.py           # Chat endpoints (streaming & non-streaming)
 │   │   ├── models.py         # Model management endpoints
 │   │   └── sessions.py       # Session/conversation history endpoints
 │   ├── schemas/               # Pydantic models for request/response
 │   │   ├── __init__.py
+│   │   ├── agents.py         # Multi-agent workflow schemas
 │   │   ├── chat.py           # Chat request/response schemas
 │   │   ├── models.py         # Model schemas
 │   │   └── sessions.py       # Session schemas
 │   └── services/              # Business logic layer
 │       ├── __init__.py
+│       ├── agent_service.py  # Multi-agent workflow orchestration (LangGraph)
 │       ├── chat_service.py   # Chat orchestration
+│       ├── memory_service.py # Conversation memory and summarization
 │       ├── model_service.py  # Model instance caching (LRU)
 │       └── session_service.py # Session storage & retrieval (in-memory)
 ├── core/
@@ -245,12 +249,18 @@ The API follows a layered architecture: **Routers → Services → Core**
 
 **Schemas** (`src/langchain_docker/api/schemas/`):
 - Pydantic models for request/response validation
-- `chat.py`: MessageSchema, ChatRequest, ChatResponse, StreamEvent
+- `agents.py`: WorkflowCreateRequest, WorkflowInvokeRequest, WorkflowInvokeResponse, BuiltinAgentInfo
+- `chat.py`: MessageSchema, ChatRequest, ChatResponse, StreamEvent, MemoryMetadata
 - `sessions.py`: SessionCreate, SessionResponse, SessionList, DeleteResponse
 - `models.py`: ProviderInfo, ProviderDetails, ValidateRequest, ValidateResponse
 
 **Services** (`src/langchain_docker/api/services/`):
 - Business logic layer, reuses 100% of existing core functionality
+- `agent_service.py`: Multi-agent workflow orchestration
+  - LangGraph supervisor pattern for agent coordination
+  - Built-in agents: math_expert, weather_expert, research_expert, finance_expert
+  - Methods: `create_workflow()`, `invoke_workflow()`, `list_workflows()`, `delete_workflow()`
+  - Uses `create_react_agent()` and `create_supervisor()` from langgraph
 - `session_service.py`: Thread-safe in-memory session storage with TTL cleanup
   - OrderedDict-based LRU storage with max 1000 sessions
   - Background thread removes expired sessions (24h default TTL)
@@ -260,12 +270,17 @@ The API follows a layered architecture: **Routers → Services → Core**
   - Thread-safe with Lock for concurrent access
   - Reuses `init_model()` from core/models.py
   - Methods: `get_or_create()`, `list_providers()`, `get_provider_models()`
+- `memory_service.py`: Conversation memory and summarization
+  - Automatic summarization when conversations exceed thresholds
+  - Methods: `process_conversation()`, `_should_summarize()`, `_summarize_messages()`
 - `chat_service.py`: Orchestrates chat interactions
   - Converts Pydantic schemas to LangChain messages
+  - Integrates with MemoryService for context optimization
   - Methods: `process_message()` (non-streaming), `stream_message()` (async generator)
 
 **Routers** (`src/langchain_docker/api/routers/`):
 - FastAPI route handlers using dependency injection
+- `agents.py`: Multi-agent workflow endpoints (GET builtin, POST workflows, POST invoke, DELETE)
 - `chat.py`: POST /api/v1/chat, POST /api/v1/chat/stream (SSE)
 - `models.py`: GET /api/v1/models/providers, GET /api/v1/models/providers/{provider}, POST /api/v1/models/validate
 - `sessions.py`: Full CRUD for sessions (POST, GET, LIST, DELETE)
@@ -279,7 +294,7 @@ The API follows a layered architecture: **Routers → Services → Core**
 
 **Dependencies** (`src/langchain_docker/api/dependencies.py`):
 - Singleton instances via `@lru_cache` for services
-- `get_session_service()`, `get_model_service()`, `get_chat_service()`
+- `get_session_service()`, `get_model_service()`, `get_chat_service()`, `get_memory_service()`, `get_agent_service()`
 
 **App Factory** (`src/langchain_docker/api/app.py`):
 - `create_app()`: Configures FastAPI with CORS, routers, exception handlers
@@ -632,6 +647,62 @@ class APIClient:
                     if line.startswith("data: "):
                         data = json.loads(line[6:])  # Parse SSE format
                         yield data
+```
+
+### Multi-Agent Workflow Pattern (LangGraph Supervisor)
+```python
+# In agent_service.py
+from langgraph.prebuilt import create_react_agent
+from langgraph_supervisor import create_supervisor
+from langchain_core.tools import tool
+
+# Define tools for agents
+@tool
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+@tool
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Sunny, 68°F in {city}"
+
+# Create specialized agents
+math_agent = create_react_agent(
+    model=llm,
+    tools=[add, subtract, multiply, divide],
+    name="math_expert",
+    prompt="You are a math expert. Use tools to perform calculations."
+)
+
+weather_agent = create_react_agent(
+    model=llm,
+    tools=[get_weather],
+    name="weather_expert",
+    prompt="You are a weather expert. Provide weather information."
+)
+
+# Create supervisor workflow
+workflow = create_supervisor(
+    agents=[math_agent, weather_agent],
+    model=llm,
+    prompt="Delegate tasks to the appropriate specialist agent."
+)
+
+# Compile and invoke
+app = workflow.compile()
+result = app.invoke({"messages": [HumanMessage(content="What is 5+5 and weather in NYC?")]})
+```
+
+### Tracing Session Pattern
+```python
+# In tracing.py - wrap operations in session context for trace grouping
+from langchain_docker.core.tracing import trace_session
+
+# All LLM calls within this context will be grouped by session_id
+with trace_session(session_id="user-123"):
+    result = model.invoke(messages)
+    # Traces appear grouped in Phoenix/LangSmith UI
 ```
 
 ## Build System
