@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from langchain_docker.api.dependencies import get_agent_service
 from langchain_docker.api.schemas.agents import (
     AgentInfo,
+    CustomAgentCreateRequest,
+    CustomAgentCreateResponse,
+    CustomAgentDeleteResponse,
+    CustomAgentInfo,
+    ToolTemplateSchema,
     WorkflowCreateRequest,
     WorkflowCreateResponse,
     WorkflowDeleteResponse,
@@ -17,6 +22,145 @@ from langchain_docker.api.schemas.agents import (
 from langchain_docker.api.services.agent_service import AgentService
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+# Tool Registry Endpoints
+
+
+@router.get("/tools", response_model=list[ToolTemplateSchema])
+def list_tool_templates(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all available tool templates.
+
+    Returns tool templates with their configurable parameters.
+    These can be used to build custom agents.
+
+    Returns:
+        List of tool templates
+    """
+    return agent_service.list_tool_templates()
+
+
+@router.get("/tools/categories", response_model=list[str])
+def list_tool_categories(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all tool categories.
+
+    Returns:
+        List of category names (math, weather, research, finance, etc.)
+    """
+    return agent_service.list_tool_categories()
+
+
+# Custom Agent Endpoints
+
+
+@router.get("/custom", response_model=list[CustomAgentInfo])
+def list_custom_agents(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all custom agents created by users.
+
+    Returns:
+        List of custom agent information
+    """
+    return agent_service.list_custom_agents()
+
+
+@router.post("/custom", response_model=CustomAgentCreateResponse, status_code=201)
+def create_custom_agent(
+    request: CustomAgentCreateRequest,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Create a custom agent from tool selections.
+
+    Select tools from the registry and configure the agent's behavior
+    with a custom system prompt.
+
+    Args:
+        request: Custom agent configuration
+
+    Returns:
+        Created custom agent information
+    """
+    agent_id = request.agent_id or str(uuid.uuid4())
+
+    try:
+        tool_configs = [
+            {"tool_id": t.tool_id, "config": t.config}
+            for t in request.tools
+        ]
+        agent_service.create_custom_agent(
+            agent_id=agent_id,
+            name=request.name,
+            system_prompt=request.system_prompt,
+            tool_configs=tool_configs,
+            metadata=request.metadata,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return CustomAgentCreateResponse(
+        agent_id=agent_id,
+        name=request.name,
+        tools=[t.tool_id for t in request.tools],
+        message=f"Custom agent '{request.name}' created with {len(request.tools)} tools",
+    )
+
+
+@router.get("/custom/{agent_id}", response_model=CustomAgentInfo)
+def get_custom_agent(
+    agent_id: str,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Get details of a specific custom agent.
+
+    Args:
+        agent_id: Custom agent ID
+
+    Returns:
+        Custom agent information
+    """
+    agent = agent_service.get_custom_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Custom agent not found: {agent_id}")
+
+    return CustomAgentInfo(
+        id=agent.id,
+        name=agent.name,
+        tools=[tc["tool_id"] for tc in agent.tool_configs],
+        description=agent.system_prompt[:100] + "..." if len(agent.system_prompt) > 100 else agent.system_prompt,
+        created_at=agent.created_at.isoformat(),
+    )
+
+
+@router.delete("/custom/{agent_id}", response_model=CustomAgentDeleteResponse)
+def delete_custom_agent(
+    agent_id: str,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Delete a custom agent.
+
+    Args:
+        agent_id: Custom agent ID to delete
+
+    Returns:
+        Deletion status
+    """
+    deleted = agent_service.delete_custom_agent(agent_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Custom agent not found: {agent_id}")
+
+    return CustomAgentDeleteResponse(
+        agent_id=agent_id,
+        deleted=True,
+    )
+
+
+# Built-in Agent Endpoints
 
 
 @router.get("/builtin", response_model=list[AgentInfo])

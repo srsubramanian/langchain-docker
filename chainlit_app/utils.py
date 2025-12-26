@@ -308,6 +308,116 @@ class APIClient:
             response.raise_for_status()
             return response.json()
 
+    # Tool Registry Methods
+
+    async def list_tool_templates(self) -> list[dict]:
+        """List all available tool templates.
+
+        Returns:
+            List of tool templates with id, name, description, category, parameters
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(f"{self.base_url}/api/v1/agents/tools")
+            response.raise_for_status()
+            return response.json()
+
+    async def list_tool_categories(self) -> list[str]:
+        """List all tool categories.
+
+        Returns:
+            List of category names (math, weather, research, finance)
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(f"{self.base_url}/api/v1/agents/tools/categories")
+            response.raise_for_status()
+            return response.json()
+
+    # Custom Agent Methods
+
+    async def list_custom_agents(self) -> list[dict]:
+        """List all custom agents.
+
+        Returns:
+            List of custom agent information
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(f"{self.base_url}/api/v1/agents/custom")
+            response.raise_for_status()
+            return response.json()
+
+    async def create_custom_agent(
+        self,
+        name: str,
+        system_prompt: str,
+        tools: list[dict],
+        agent_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        """Create a custom agent.
+
+        Args:
+            name: Agent name
+            system_prompt: System prompt defining agent behavior
+            tools: List of tool configs [{"tool_id": str, "config": dict}]
+            agent_id: Optional custom ID (auto-generated if not provided)
+            metadata: Optional metadata
+
+        Returns:
+            Created agent response with agent_id
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            payload = {
+                "name": name,
+                "system_prompt": system_prompt,
+                "tools": tools,
+            }
+            if agent_id:
+                payload["agent_id"] = agent_id
+            if metadata:
+                payload["metadata"] = metadata
+
+            logger.debug(f"[create_custom_agent] POST {self.base_url}/api/v1/agents/custom")
+            logger.debug(f"[create_custom_agent] Payload: {payload}")
+
+            response = await client.post(
+                f"{self.base_url}/api/v1/agents/custom",
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def get_custom_agent(self, agent_id: str) -> dict:
+        """Get a custom agent by ID.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            Custom agent details
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/agents/custom/{agent_id}"
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def delete_custom_agent(self, agent_id: str) -> dict:
+        """Delete a custom agent.
+
+        Args:
+            agent_id: Agent to delete
+
+        Returns:
+            Deletion response
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.delete(
+                f"{self.base_url}/api/v1/agents/custom/{agent_id}"
+            )
+            response.raise_for_status()
+            return response.json()
+
 
 def get_api_client() -> APIClient:
     """Get API client instance.

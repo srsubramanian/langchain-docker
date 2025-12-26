@@ -1,8 +1,105 @@
 """Schemas for multi-agent API endpoints."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+
+# Tool Registry Schemas
+
+
+class ToolParameterSchema(BaseModel):
+    """Schema for a tool parameter."""
+
+    name: str = Field(..., description="Parameter name")
+    type: str = Field(..., description="Parameter type (string, number, boolean)")
+    description: str = Field(..., description="Parameter description")
+    default: Any = Field(None, description="Default value")
+    required: bool = Field(False, description="Whether parameter is required")
+
+
+class ToolTemplateSchema(BaseModel):
+    """Schema for a tool template."""
+
+    id: str = Field(..., description="Unique tool identifier")
+    name: str = Field(..., description="Human-readable tool name")
+    description: str = Field(..., description="Tool description")
+    category: str = Field(..., description="Tool category (math, weather, etc.)")
+    parameters: list[ToolParameterSchema] = Field(
+        default_factory=list,
+        description="Configurable parameters for this tool",
+    )
+
+
+# Custom Agent Schemas
+
+
+class ToolConfigRequest(BaseModel):
+    """Tool configuration for a custom agent."""
+
+    tool_id: str = Field(..., description="Tool template ID from registry")
+    config: dict = Field(
+        default_factory=dict,
+        description="Tool-specific configuration parameters",
+    )
+
+
+class CustomAgentCreateRequest(BaseModel):
+    """Request to create a custom agent."""
+
+    agent_id: Optional[str] = Field(
+        None,
+        description="Custom ID (auto-generated UUID if not provided)",
+    )
+    name: str = Field(
+        ...,
+        description="Agent name",
+        min_length=1,
+        max_length=50,
+    )
+    system_prompt: str = Field(
+        ...,
+        description="System prompt defining the agent's behavior and personality",
+        min_length=10,
+    )
+    tools: list[ToolConfigRequest] = Field(
+        ...,
+        description="Tools to equip the agent with",
+        min_length=1,
+    )
+    metadata: dict = Field(
+        default_factory=dict,
+        description="Optional metadata for the agent",
+    )
+
+
+class CustomAgentInfo(BaseModel):
+    """Information about a custom agent."""
+
+    id: str = Field(..., description="Agent ID")
+    name: str = Field(..., description="Agent name")
+    tools: list[str] = Field(..., description="Tool IDs equipped on this agent")
+    description: str = Field(..., description="Truncated system prompt")
+    created_at: str = Field(..., description="Creation timestamp (ISO format)")
+
+
+class CustomAgentCreateResponse(BaseModel):
+    """Response after creating a custom agent."""
+
+    agent_id: str = Field(..., description="Created agent ID")
+    name: str = Field(..., description="Agent name")
+    tools: list[str] = Field(..., description="Tool IDs")
+    message: str = Field(..., description="Status message")
+
+
+class CustomAgentDeleteResponse(BaseModel):
+    """Response after deleting a custom agent."""
+
+    agent_id: str = Field(..., description="Deleted agent ID")
+    deleted: bool = Field(..., description="Whether the agent was deleted")
+
+
+# Built-in Agent Schemas
 
 
 class AgentInfo(BaseModel):

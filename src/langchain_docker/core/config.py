@@ -24,6 +24,8 @@ class Config:
         memory_summarization_model: Model for summarization (optional)
         memory_summarization_temperature: Temperature for summarization
         tracing_provider: Tracing platform (langsmith, phoenix, or none)
+        database_url: Database connection string for SQL skill
+        sql_read_only: Enforce read-only mode for SQL queries
     """
 
     default_provider: str = "openai"
@@ -36,6 +38,8 @@ class Config:
     memory_summarization_model: str | None = None
     memory_summarization_temperature: float = 0.0
     tracing_provider: str = "phoenix"
+    database_url: str = "sqlite:///demo.db"
+    sql_read_only: bool = True
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -55,6 +59,8 @@ class Config:
             memory_summarization_model=os.getenv("MEMORY_SUMMARIZATION_MODEL") or None,
             memory_summarization_temperature=float(os.getenv("MEMORY_SUMMARIZATION_TEMPERATURE", "0.0")),
             tracing_provider=os.getenv("TRACING_PROVIDER", "phoenix").lower(),
+            database_url=os.getenv("DATABASE_URL", "sqlite:///demo.db"),
+            sql_read_only=os.getenv("SQL_READ_ONLY", "true").lower() == "true",
         )
 
 
@@ -201,3 +207,21 @@ def get_bedrock_region() -> str:
         Region name (defaults to us-east-1 if not set)
     """
     return os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION") or "us-east-1"
+
+
+def get_database_url() -> str:
+    """Get database URL for SQL skill.
+
+    Returns:
+        Database connection string (defaults to sqlite:///demo.db)
+    """
+    return os.getenv("DATABASE_URL", "sqlite:///demo.db")
+
+
+def is_sql_read_only() -> bool:
+    """Check if SQL read-only mode is enabled.
+
+    Returns:
+        True if read-only mode is enabled (default)
+    """
+    return os.getenv("SQL_READ_ONLY", "true").lower() == "true"

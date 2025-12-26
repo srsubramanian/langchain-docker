@@ -1,7 +1,7 @@
 """Chainlit UI for LangChain Docker API.
 
 This app provides a chat interface that connects to the FastAPI backend.
-Supports both standard chat and multi-agent workflows.
+Supports both standard chat, multi-agent workflows, and custom agent creation.
 """
 
 import uuid
@@ -15,7 +15,7 @@ from utils import get_api_client
 # Initialize API client
 api_client = get_api_client()
 
-# Agent presets for multi-agent mode
+# Agent presets for multi-agent mode (built-in)
 AGENT_PRESETS = {
     "all": {
         "name": "All Agents",
@@ -38,6 +38,9 @@ AGENT_PRESETS = {
         "description": "Mathematical calculations only",
     },
 }
+
+# Agent Builder wizard steps
+BUILDER_STEPS = ["name", "prompt", "tools", "confirm"]
 
 
 @cl.on_chat_start
@@ -115,6 +118,25 @@ async def start():
     except Exception:
         pass  # Multi-agent not critical
 
+    # Fetch custom agents and build dynamic presets
+    available_presets = dict(AGENT_PRESETS)  # Start with built-in presets
+    try:
+        custom_agents = await api_client.list_custom_agents()
+        for agent in custom_agents:
+            preset_key = f"custom:{agent['id']}"
+            available_presets[preset_key] = {
+                "name": f"Custom: {agent['name']}",
+                "agents": [agent["id"]],
+                "description": agent.get("description", "Custom agent"),
+            }
+        if custom_agents:
+            await cl.Message(
+                content=f"Custom agents available: {', '.join([a['name'] for a in custom_agents])}",
+                author="System",
+            ).send()
+    except Exception:
+        pass  # Custom agents not critical
+
     # Initialize session state
     cl.user_session.set("provider", configured_providers[0] if configured_providers else "openai")
     cl.user_session.set("model", None)
@@ -122,8 +144,39 @@ async def start():
     cl.user_session.set("mode", "chat")  # "chat" or "multi_agent"
     cl.user_session.set("agent_preset", "all")
     cl.user_session.set("workflow_id", None)
+    cl.user_session.set("available_presets", available_presets)  # Store dynamic presets
+
+    # Initialize agent builder state
+    cl.user_session.set("builder_active", False)
+    cl.user_session.set("builder_step", None)
+    cl.user_session.set("builder_data", {})
+
+    # Show agent builder action buttons
+    actions = [
+        cl.Action(
+            name="create_agent",
+            payload={"action": "create"},
+            label="Create Custom Agent",
+        ),
+        cl.Action(
+            name="view_tools",
+            payload={"action": "tools"},
+            label="View Available Tools",
+        ),
+        cl.Action(
+            name="my_agents",
+            payload={"action": "agents"},
+            label="My Custom Agents",
+        ),
+    ]
+    await cl.Message(
+        content="**Agent Builder**: Create custom agents with your choice of tools",
+        author="System",
+        actions=actions,
+    ).send()
 
     # Configure chat settings with mode selection
+    preset_keys = list(available_presets.keys())
     settings = await cl.ChatSettings(
         [
             Select(
@@ -135,7 +188,7 @@ async def start():
             Select(
                 id="agent_preset",
                 label="Agent Team (Multi-Agent mode)",
-                values=list(AGENT_PRESETS.keys()),
+                values=preset_keys,
                 initial_value="all",
             ),
             Select(
@@ -191,7 +244,8 @@ async def settings_update(settings):
 
 async def _create_workflow_for_session(preset_key: str, provider: str):
     """Create a multi-agent workflow for the current session."""
-    preset = AGENT_PRESETS.get(preset_key, AGENT_PRESETS["all"])
+    available_presets = cl.user_session.get("available_presets", AGENT_PRESETS)
+    preset = available_presets.get(preset_key, available_presets.get("all", AGENT_PRESETS["all"]))
     session_id = cl.user_session.get("session_id") or str(uuid.uuid4())
     workflow_id = f"chainlit-{session_id[:8]}"
 
@@ -235,6 +289,11 @@ async def _cleanup_workflow():
 @cl.on_message
 async def main(message: cl.Message):
     """Handle incoming messages."""
+    # Check if agent builder wizard is active
+    if cl.user_session.get("builder_active"):
+        await _handle_builder_message(message)
+        return
+
     mode = cl.user_session.get("mode", "chat")
 
     if mode == "multi_agent":
@@ -406,3 +465,295 @@ async def on_show_session_info(action: cl.Action):
             content="No active session",
             author="System",
         ).send()
+
+
+# Agent Builder Action Callbacks
+
+
+@cl.action_callback("create_agent")
+async def on_create_agent(action: cl.Action):
+    """Start the agent builder wizard."""
+    cl.user_session.set("builder_active", True)
+    cl.user_session.set("builder_step", "name")
+    cl.user_session.set("builder_data", {})
+
+    await cl.Message(
+        content="**Agent Builder Wizard**\n\n"
+                "Let's create a custom agent! You can cancel at any time by typing `cancel`.\n\n"
+                "**Step 1/4: Name**\n"
+                "What would you like to name your agent?",
+        author="Agent Builder",
+    ).send()
+
+
+@cl.action_callback("view_tools")
+async def on_view_tools(action: cl.Action):
+    """Show available tool templates."""
+    try:
+        tools = await api_client.list_tool_templates()
+        categories = await api_client.list_tool_categories()
+
+        content = "**Available Tool Templates**\n\n"
+
+        for category in categories:
+            category_tools = [t for t in tools if t["category"] == category]
+            if category_tools:
+                content += f"### {category.title()}\n"
+                for tool in category_tools:
+                    content += f"- **{tool['id']}**: {tool['description']}\n"
+                content += "\n"
+
+        content += "_Use these tool IDs when creating a custom agent._"
+
+        await cl.Message(content=content, author="System").send()
+    except Exception as e:
+        await cl.Message(
+            content=f"Could not fetch tools: {str(e)}",
+            author="System",
+        ).send()
+
+
+@cl.action_callback("my_agents")
+async def on_my_agents(action: cl.Action):
+    """Show user's custom agents."""
+    try:
+        agents = await api_client.list_custom_agents()
+
+        if not agents:
+            await cl.Message(
+                content="**My Custom Agents**\n\n"
+                        "_No custom agents created yet. Click 'Create Custom Agent' to get started!_",
+                author="System",
+            ).send()
+            return
+
+        content = "**My Custom Agents**\n\n"
+        for agent in agents:
+            tools_str = ", ".join(agent["tools"])
+            content += f"### {agent['name']}\n"
+            content += f"- **ID**: `{agent['id']}`\n"
+            content += f"- **Tools**: {tools_str}\n"
+            content += f"- **Description**: {agent['description']}\n"
+            content += f"- **Created**: {agent['created_at']}\n\n"
+
+        content += "_Use the agent ID in the Multi-Agent mode preset selector to use your custom agent._"
+
+        # Add delete buttons for each agent
+        actions = [
+            cl.Action(
+                name="delete_agent",
+                payload={"agent_id": agent["id"]},
+                label=f"Delete {agent['name']}",
+            )
+            for agent in agents
+        ]
+
+        await cl.Message(content=content, author="System", actions=actions).send()
+    except Exception as e:
+        await cl.Message(
+            content=f"Could not fetch custom agents: {str(e)}",
+            author="System",
+        ).send()
+
+
+@cl.action_callback("delete_agent")
+async def on_delete_agent(action: cl.Action):
+    """Delete a custom agent."""
+    agent_id = action.payload.get("agent_id")
+    if not agent_id:
+        return
+
+    try:
+        await api_client.delete_custom_agent(agent_id)
+        await cl.Message(
+            content=f"Agent `{agent_id}` deleted successfully.",
+            author="System",
+        ).send()
+    except Exception as e:
+        await cl.Message(
+            content=f"Could not delete agent: {str(e)}",
+            author="System",
+        ).send()
+
+
+@cl.action_callback("cancel_builder")
+async def on_cancel_builder(action: cl.Action):
+    """Cancel the agent builder wizard."""
+    cl.user_session.set("builder_active", False)
+    cl.user_session.set("builder_step", None)
+    cl.user_session.set("builder_data", {})
+
+    await cl.Message(
+        content="Agent builder cancelled.",
+        author="System",
+    ).send()
+
+
+# Agent Builder Wizard Handler
+
+
+async def _handle_builder_message(message: cl.Message):
+    """Handle messages during agent builder wizard."""
+    user_input = message.content.strip()
+    step = cl.user_session.get("builder_step")
+    data = cl.user_session.get("builder_data", {})
+
+    # Handle cancel at any point
+    if user_input.lower() == "cancel":
+        cl.user_session.set("builder_active", False)
+        cl.user_session.set("builder_step", None)
+        cl.user_session.set("builder_data", {})
+        await cl.Message(
+            content="Agent builder cancelled.",
+            author="Agent Builder",
+        ).send()
+        return
+
+    if step == "name":
+        # Validate name
+        if len(user_input) < 1 or len(user_input) > 50:
+            await cl.Message(
+                content="Name must be between 1 and 50 characters. Please try again:",
+                author="Agent Builder",
+            ).send()
+            return
+
+        data["name"] = user_input
+        cl.user_session.set("builder_data", data)
+        cl.user_session.set("builder_step", "prompt")
+
+        await cl.Message(
+            content=f"Great! Your agent will be named **{user_input}**.\n\n"
+                    "**Step 2/4: System Prompt**\n"
+                    "Write a system prompt that defines your agent's behavior and personality.\n"
+                    "(Minimum 10 characters)",
+            author="Agent Builder",
+        ).send()
+
+    elif step == "prompt":
+        # Validate prompt
+        if len(user_input) < 10:
+            await cl.Message(
+                content="System prompt must be at least 10 characters. Please try again:",
+                author="Agent Builder",
+            ).send()
+            return
+
+        data["system_prompt"] = user_input
+        cl.user_session.set("builder_data", data)
+        cl.user_session.set("builder_step", "tools")
+
+        # Show available tools
+        try:
+            tools = await api_client.list_tool_templates()
+            tool_list = "\n".join([f"- **{t['id']}**: {t['description']}" for t in tools])
+
+            await cl.Message(
+                content=f"System prompt saved.\n\n"
+                        f"**Step 3/4: Select Tools**\n"
+                        f"Choose the tools for your agent from the list below.\n"
+                        f"Enter tool IDs separated by commas (e.g., `add, multiply, get_weather`).\n\n"
+                        f"**Available Tools:**\n{tool_list}",
+                author="Agent Builder",
+            ).send()
+        except Exception as e:
+            await cl.Message(
+                content=f"System prompt saved, but could not fetch tools: {str(e)}\n"
+                        "Enter tool IDs separated by commas:",
+                author="Agent Builder",
+            ).send()
+
+    elif step == "tools":
+        # Parse tool IDs
+        tool_ids = [t.strip() for t in user_input.split(",") if t.strip()]
+
+        if not tool_ids:
+            await cl.Message(
+                content="Please select at least one tool. Enter tool IDs separated by commas:",
+                author="Agent Builder",
+            ).send()
+            return
+
+        # Validate tools exist
+        try:
+            available_tools = await api_client.list_tool_templates()
+            available_ids = [t["id"] for t in available_tools]
+
+            invalid_tools = [t for t in tool_ids if t not in available_ids]
+            if invalid_tools:
+                await cl.Message(
+                    content=f"Unknown tools: {', '.join(invalid_tools)}\n"
+                            f"Available tools: {', '.join(available_ids)}\n"
+                            "Please try again:",
+                    author="Agent Builder",
+                ).send()
+                return
+        except Exception:
+            pass  # Continue anyway
+
+        data["tools"] = [{"tool_id": tid, "config": {}} for tid in tool_ids]
+        cl.user_session.set("builder_data", data)
+        cl.user_session.set("builder_step", "confirm")
+
+        tool_names = ", ".join(tool_ids)
+        await cl.Message(
+            content=f"**Step 4/4: Confirm**\n\n"
+                    f"Please review your agent configuration:\n\n"
+                    f"- **Name**: {data['name']}\n"
+                    f"- **System Prompt**: {data['system_prompt'][:100]}{'...' if len(data['system_prompt']) > 100 else ''}\n"
+                    f"- **Tools**: {tool_names}\n\n"
+                    f"Type `create` to create the agent, or `cancel` to abort.",
+            author="Agent Builder",
+        ).send()
+
+    elif step == "confirm":
+        if user_input.lower() == "create":
+            # Create the agent
+            try:
+                result = await api_client.create_custom_agent(
+                    name=data["name"],
+                    system_prompt=data["system_prompt"],
+                    tools=data["tools"],
+                )
+
+                agent_id = result.get("agent_id", "unknown")
+
+                # Reset wizard state
+                cl.user_session.set("builder_active", False)
+                cl.user_session.set("builder_step", None)
+                cl.user_session.set("builder_data", {})
+
+                # Update available presets with new agent
+                available_presets = cl.user_session.get("available_presets", dict(AGENT_PRESETS))
+                preset_key = f"custom:{agent_id}"
+                available_presets[preset_key] = {
+                    "name": f"Custom: {data['name']}",
+                    "agents": [agent_id],
+                    "description": data["system_prompt"][:100],
+                }
+                cl.user_session.set("available_presets", available_presets)
+
+                await cl.Message(
+                    content=f"**Agent Created Successfully!**\n\n"
+                            f"- **Name**: {data['name']}\n"
+                            f"- **ID**: `{agent_id}`\n"
+                            f"- **Tools**: {', '.join([t['tool_id'] for t in data['tools']])}\n\n"
+                            f"**To use this agent:**\n"
+                            f"1. Open Settings (gear icon)\n"
+                            f"2. Set Mode to 'Multi-Agent'\n"
+                            f"3. Select `custom:{agent_id}` from Agent Team dropdown\n\n"
+                            f"_Note: Refresh the page if you don't see it in the dropdown._",
+                    author="Agent Builder",
+                ).send()
+
+            except Exception as e:
+                await cl.Message(
+                    content=f"Failed to create agent: {str(e)}\n"
+                            "Type `create` to try again, or `cancel` to abort.",
+                    author="Agent Builder",
+                ).send()
+        else:
+            await cl.Message(
+                content="Type `create` to create the agent, or `cancel` to abort.",
+                author="Agent Builder",
+            ).send()

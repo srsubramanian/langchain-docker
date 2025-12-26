@@ -1,6 +1,8 @@
 """Multi-agent orchestration service using LangGraph Supervisor."""
 
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 from langchain.agents import create_agent
@@ -8,9 +10,22 @@ from langchain_core.messages import HumanMessage
 from langgraph_supervisor import create_supervisor
 
 from langchain_docker.api.services.model_service import ModelService
+from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.core.tracing import trace_session
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CustomAgent:
+    """Custom agent definition created by users."""
+
+    id: str
+    name: str
+    system_prompt: str
+    tool_configs: list[dict]  # [{"tool_id": str, "config": dict}, ...]
+    created_at: datetime
+    metadata: dict = field(default_factory=dict)
 
 
 # Built-in tools for demo agents
@@ -75,6 +90,68 @@ def get_stock_price(symbol: str) -> str:
     return f"{symbol_upper}: $100.00 (demo price)"
 
 
+# SQL tools for sql_expert agent (using progressive disclosure pattern)
+_sql_skill = None
+
+
+def _get_sql_skill():
+    """Get or create SQLSkill instance (lazy loading)."""
+    global _sql_skill
+    if _sql_skill is None:
+        from langchain_docker.api.services.skill_registry import SQLSkill
+        _sql_skill = SQLSkill()
+    return _sql_skill
+
+
+def load_sql_skill() -> str:
+    """Load the SQL skill with database schema and guidelines.
+
+    Call this tool first before writing SQL queries to get the database schema,
+    available tables, and SQL guidelines. This enables you to write accurate
+    queries against the database.
+
+    Returns:
+        Database schema, available tables, and SQL guidelines
+    """
+    return _get_sql_skill().load_core()
+
+
+def sql_query(query: str) -> str:
+    """Execute a SQL query against the database.
+
+    In read-only mode, only SELECT queries are allowed.
+    Use load_sql_skill first to get the database schema.
+
+    Args:
+        query: The SQL query to execute (SELECT only in read-only mode)
+
+    Returns:
+        Query results or error message
+    """
+    return _get_sql_skill().execute_query(query)
+
+
+def sql_list_tables() -> str:
+    """List all available tables in the database.
+
+    Returns:
+        Comma-separated list of table names
+    """
+    return _get_sql_skill().list_tables()
+
+
+def sql_get_samples() -> str:
+    """Get sample rows from database tables.
+
+    Returns sample data from each table to help understand
+    the data structure and content.
+
+    Returns:
+        Sample rows from each table
+    """
+    return _get_sql_skill().load_details("samples")
+
+
 # Agent configurations
 BUILTIN_AGENTS = {
     "math_expert": {
@@ -97,6 +174,26 @@ BUILTIN_AGENTS = {
         "tools": [get_stock_price],
         "prompt": "You are a finance expert. Use the stock price tool to get current market data and provide financial insights.",
     },
+    "sql_expert": {
+        "name": "sql_expert",
+        "tools": [load_sql_skill, sql_query, sql_list_tables, sql_get_samples],
+        "prompt": """You are a SQL expert assistant that helps users query databases.
+
+Available skills (use load_sql_skill to activate):
+- write_sql: SQL query writing expert with database schema
+
+When a user asks about data:
+1. First call load_sql_skill() to get the database schema
+2. Write appropriate SQL queries using sql_query()
+3. Explain query results clearly to users
+
+Guidelines:
+- Always load the skill first to understand the database schema
+- Use sql_list_tables() if you need a quick overview of available tables
+- Use sql_get_samples() to see sample data from tables
+- Write clean, readable SQL queries with explicit column names
+- Explain your queries and results in plain language""",
+    },
 }
 
 DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.
@@ -112,7 +209,10 @@ Always delegate to the most appropriate specialist. If a task requires multiple 
 
 
 class AgentService:
-    """Service for creating and managing multi-agent workflows."""
+    """Service for creating and managing multi-agent workflows.
+
+    Supports both built-in agents and custom user-defined agents.
+    """
 
     def __init__(self, model_service: ModelService):
         """Initialize agent service.
@@ -122,6 +222,8 @@ class AgentService:
         """
         self.model_service = model_service
         self._workflows: dict[str, Any] = {}
+        self._custom_agents: dict[str, CustomAgent] = {}
+        self._tool_registry = ToolRegistry()
 
     def list_builtin_agents(self) -> list[dict]:
         """List all available built-in agents.
@@ -138,6 +240,176 @@ class AgentService:
             for config in BUILTIN_AGENTS.values()
         ]
 
+    # Tool Registry Methods
+
+    def get_tool_registry(self) -> ToolRegistry:
+        """Get the tool registry.
+
+        Returns:
+            ToolRegistry instance
+        """
+        return self._tool_registry
+
+    def list_tool_templates(self) -> list[dict]:
+        """List all available tool templates.
+
+        Returns:
+            List of tool templates with metadata
+        """
+        return self._tool_registry.to_dict_list()
+
+    def list_tool_categories(self) -> list[str]:
+        """List all tool categories.
+
+        Returns:
+            List of category names
+        """
+        return self._tool_registry.get_categories()
+
+    # Custom Agent Methods
+
+    def create_custom_agent(
+        self,
+        agent_id: str,
+        name: str,
+        system_prompt: str,
+        tool_configs: list[dict],
+        metadata: Optional[dict] = None,
+    ) -> CustomAgent:
+        """Create a custom agent from tool selections.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            name: Human-readable agent name
+            system_prompt: System prompt defining agent behavior
+            tool_configs: List of tool configurations [{"tool_id": str, "config": dict}]
+            metadata: Optional additional metadata
+
+        Returns:
+            Created CustomAgent
+
+        Raises:
+            ValueError: If any tool_id is invalid
+        """
+        # Validate tool configs
+        for tc in tool_configs:
+            tool_id = tc.get("tool_id")
+            if not self._tool_registry.get_tool(tool_id):
+                available = [t.id for t in self._tool_registry.list_tools()]
+                raise ValueError(f"Unknown tool: {tool_id}. Available: {available}")
+
+        agent = CustomAgent(
+            id=agent_id,
+            name=name,
+            system_prompt=system_prompt,
+            tool_configs=tool_configs,
+            created_at=datetime.utcnow(),
+            metadata=metadata or {},
+        )
+        self._custom_agents[agent_id] = agent
+        logger.info(f"Created custom agent: {agent_id} ({name})")
+        return agent
+
+    def get_custom_agent(self, agent_id: str) -> Optional[CustomAgent]:
+        """Get a custom agent by ID.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            CustomAgent if found, None otherwise
+        """
+        return self._custom_agents.get(agent_id)
+
+    def list_custom_agents(self) -> list[dict]:
+        """List all custom agents.
+
+        Returns:
+            List of custom agent info
+        """
+        return [
+            {
+                "id": a.id,
+                "name": a.name,
+                "tools": [tc["tool_id"] for tc in a.tool_configs],
+                "description": a.system_prompt[:100] + "..." if len(a.system_prompt) > 100 else a.system_prompt,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in self._custom_agents.values()
+        ]
+
+    def delete_custom_agent(self, agent_id: str) -> bool:
+        """Delete a custom agent.
+
+        Args:
+            agent_id: Agent to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if agent_id in self._custom_agents:
+            del self._custom_agents[agent_id]
+            logger.info(f"Deleted custom agent: {agent_id}")
+            return True
+        return False
+
+    def _sanitize_agent_name(self, name: str) -> str:
+        """Sanitize agent name for OpenAI compatibility.
+
+        OpenAI requires names to match pattern: ^[^\s<|\\/>]+
+        (no spaces or special characters like <, |, \, /, >)
+
+        Args:
+            name: Original agent name
+
+        Returns:
+            Sanitized name safe for OpenAI
+        """
+        import re
+        # Replace spaces and hyphens with underscores
+        safe_name = name.replace(" ", "_").replace("-", "_")
+        # Remove any other problematic characters
+        safe_name = re.sub(r'[<|\\/>]', '', safe_name)
+        # Remove any consecutive underscores
+        safe_name = re.sub(r'_+', '_', safe_name)
+        return safe_name.strip("_")
+
+    def _build_agent_from_custom(self, agent_id: str, llm) -> Any:
+        """Build a LangChain agent from a custom agent definition.
+
+        Args:
+            agent_id: Custom agent ID
+            llm: Language model to use
+
+        Returns:
+            Compiled agent graph
+
+        Raises:
+            ValueError: If agent not found
+        """
+        custom = self._custom_agents.get(agent_id)
+        if not custom:
+            raise ValueError(f"Custom agent not found: {agent_id}")
+
+        # Create tool instances from configurations
+        tools = []
+        for tc in custom.tool_configs:
+            tool = self._tool_registry.create_tool_instance(
+                tc["tool_id"],
+                tc.get("config", {}),
+            )
+            tools.append(tool)
+
+        # Sanitize name for OpenAI compatibility
+        safe_name = self._sanitize_agent_name(custom.name)
+
+        return create_agent(
+            model=llm,
+            tools=tools,
+            name=safe_name,
+            system_prompt=custom.system_prompt,
+        )
+
     def create_workflow(
         self,
         workflow_id: str,
@@ -148,9 +420,11 @@ class AgentService:
     ) -> str:
         """Create a multi-agent workflow with supervisor.
 
+        Supports both built-in agents and custom user-defined agents.
+
         Args:
             workflow_id: Unique identifier for the workflow
-            agent_names: List of built-in agent names to include
+            agent_names: List of agent names (built-in or custom agent IDs)
             provider: Model provider to use
             model: Model name (optional)
             supervisor_prompt: Custom supervisor prompt (optional)
@@ -168,27 +442,37 @@ class AgentService:
             temperature=0.0,
         )
 
-        # Create agents
+        # Create agents - supports both built-in and custom agents
         agents = []
         agent_descriptions = []
 
         for agent_name in agent_names:
-            if agent_name not in BUILTIN_AGENTS:
-                raise ValueError(
-                    f"Unknown agent: {agent_name}. Available: {list(BUILTIN_AGENTS.keys())}"
+            # Check built-in agents first
+            if agent_name in BUILTIN_AGENTS:
+                config = BUILTIN_AGENTS[agent_name]
+                agent = create_agent(
+                    model=llm,
+                    tools=config["tools"],
+                    name=config["name"],
+                    system_prompt=config["prompt"],
                 )
-
-            config = BUILTIN_AGENTS[agent_name]
-            agent = create_agent(
-                model=llm,
-                tools=config["tools"],
-                name=config["name"],
-                system_prompt=config["prompt"],
-            )
-            agents.append(agent)
-            agent_descriptions.append(
-                f"- {config['name']}: {config['prompt'][:50]}..."
-            )
+                agents.append(agent)
+                agent_descriptions.append(
+                    f"- {config['name']}: {config['prompt'][:50]}..."
+                )
+            # Check custom agents
+            elif agent_name in self._custom_agents:
+                agent = self._build_agent_from_custom(agent_name, llm)
+                custom = self._custom_agents[agent_name]
+                agents.append(agent)
+                agent_descriptions.append(
+                    f"- {custom.name}: {custom.system_prompt[:50]}..."
+                )
+            else:
+                available = list(BUILTIN_AGENTS.keys()) + list(self._custom_agents.keys())
+                raise ValueError(
+                    f"Unknown agent: {agent_name}. Available: {available}"
+                )
 
         # Create supervisor prompt
         if supervisor_prompt is None:
