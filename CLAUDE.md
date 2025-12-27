@@ -181,9 +181,12 @@ src/langchain_docker/
 │       ├── __init__.py
 │       ├── agent_service.py  # Multi-agent workflow orchestration (LangGraph)
 │       ├── chat_service.py   # Chat orchestration
+│       ├── demo_database.py  # Demo SQLite database with sample data
 │       ├── memory_service.py # Conversation memory and summarization
 │       ├── model_service.py  # Model instance caching (LRU)
-│       └── session_service.py # Session storage & retrieval (in-memory)
+│       ├── session_service.py # Session storage & retrieval (in-memory)
+│       ├── skill_registry.py # Skills with progressive disclosure pattern
+│       └── tool_registry.py  # Tool templates for custom agents
 ├── core/
 │   ├── __init__.py            # Core module exports
 │   ├── config.py              # Environment variable handling and configuration
@@ -258,9 +261,23 @@ The API follows a layered architecture: **Routers → Services → Core**
 - Business logic layer, reuses 100% of existing core functionality
 - `agent_service.py`: Multi-agent workflow orchestration
   - LangGraph supervisor pattern for agent coordination
-  - Built-in agents: math_expert, weather_expert, research_expert, finance_expert
+  - Static agents: math_expert, weather_expert, research_expert, finance_expert
+  - Dynamic agents: sql_expert (created from SkillRegistry)
   - Methods: `create_workflow()`, `invoke_workflow()`, `list_workflows()`, `delete_workflow()`
-  - Uses `create_react_agent()` and `create_supervisor()` from langgraph
+  - Uses `create_agent()` and `create_supervisor()` from langgraph
+- `skill_registry.py`: Skills with progressive disclosure pattern
+  - `Skill` base class with `load_core()` and `load_details()` methods
+  - `SQLSkill`: Database querying with on-demand schema loading
+  - `SkillRegistry`: Central registry for all skills (singleton via dependencies.py)
+  - Progressive disclosure: Level 1 (metadata) → Level 2 (schema) → Level 3 (samples)
+- `demo_database.py`: Demo SQLite database
+  - Auto-creates `demo.db` with sample data on first use
+  - Tables: customers, orders, products
+  - Used by SQLSkill for testing and demos
+- `tool_registry.py`: Tool templates for custom agents
+  - Categories: math, weather, research, finance, database
+  - SQL tools: load_sql_skill, sql_query, sql_list_tables, sql_get_samples
+  - Methods: `register()`, `list_tools()`, `create_tool_instance()`
 - `session_service.py`: Thread-safe in-memory session storage with TTL cleanup
   - OrderedDict-based LRU storage with max 1000 sessions
   - Background thread removes expired sessions (24h default TTL)
@@ -294,7 +311,9 @@ The API follows a layered architecture: **Routers → Services → Core**
 
 **Dependencies** (`src/langchain_docker/api/dependencies.py`):
 - Singleton instances via `@lru_cache` for services
-- `get_session_service()`, `get_model_service()`, `get_chat_service()`, `get_memory_service()`, `get_agent_service()`
+- `get_session_service()`, `get_model_service()`, `get_chat_service()`, `get_memory_service()`
+- `get_skill_registry()`: Singleton SkillRegistry for progressive disclosure skills
+- `get_agent_service()`: Receives SkillRegistry to create dynamic skill-based agents
 
 **App Factory** (`src/langchain_docker/api/app.py`):
 - `create_app()`: Configures FastAPI with CORS, routers, exception handlers
@@ -379,6 +398,53 @@ Each command supports `--provider`, `--model`, and `--temperature` flags where a
 6. Update OpenAPI documentation (FastAPI auto-generates from docstrings)
 7. Test endpoint via `/docs` or curl
 8. Update README.md with endpoint examples
+
+### Adding a New Skill (Progressive Disclosure)
+
+1. Create skill class in `src/langchain_docker/api/services/skill_registry.py`:
+   ```python
+   class MyNewSkill(Skill):
+       def __init__(self):
+           self.id = "my_skill"
+           self.name = "My Skill Expert"
+           self.description = "Does something useful"
+           self.category = "my_category"
+
+       def load_core(self) -> str:
+           """Level 2: Return main skill content."""
+           return "Skill context and guidelines..."
+
+       def load_details(self, resource: str) -> str:
+           """Level 3: Return detailed resources."""
+           if resource == "examples":
+               return "Example usage..."
+           return f"Unknown resource: {resource}"
+   ```
+
+2. Register in `SkillRegistry._register_builtin_skills()`:
+   ```python
+   def _register_builtin_skills(self):
+       self.register(SQLSkill())
+       self.register(MyNewSkill())  # Add here
+   ```
+
+3. Add corresponding tools in `tool_registry.py` (optional, for custom agents):
+   ```python
+   self.register(ToolTemplate(
+       id="load_my_skill",
+       name="Load My Skill",
+       description="Load my skill context",
+       category="my_category",
+       factory=lambda: self._create_my_skill_tool(),
+   ))
+   ```
+
+4. AgentService automatically creates `my_skill_expert` agent from the skill
+
+5. Test via API:
+   ```bash
+   curl http://localhost:8000/api/v1/agents/builtin  # Should show my_skill_expert
+   ```
 
 ### Testing API Endpoints
 
@@ -478,6 +544,10 @@ All API keys and configuration are loaded from `.env` file:
 **Phoenix (if TRACING_PROVIDER=phoenix):**
 - `PHOENIX_ENDPOINT` (default: http://localhost:6006/v1/traces) - Phoenix collector endpoint
 - `PHOENIX_CONSOLE_EXPORT` (default: false) - Export traces to console for debugging
+
+**Database Configuration (for SQL Skill):**
+- `DATABASE_URL` (default: sqlite:///demo.db) - Database connection string
+- `SQL_READ_ONLY` (default: true) - Enforce read-only mode (only SELECT allowed)
 
 ### Model Initialization
 ```python
@@ -700,6 +770,139 @@ from langchain_docker.core.tracing import trace_session
 with trace_session(session_id="user-123"):
     result = model.invoke(messages)
     # Traces appear grouped in Phoenix/LangSmith UI
+```
+
+### Skills with Progressive Disclosure Pattern
+
+The skills architecture enables specialized capabilities as invokable "skills" that load context on-demand, keeping the base agent lightweight. Reference: [LangChain Skills Documentation](https://docs.langchain.com/oss/python/langchain/multi-agent/skills)
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Level 1: Skill Metadata (always in agent prompt)          │
+│  - "write_sql: SQL query writing expert"                   │
+└─────────────────────────────────────────────────────────────┘
+                        ↓ Agent calls load_sql_skill()
+┌─────────────────────────────────────────────────────────────┐
+│  Level 2: Core Content (loaded on-demand)                   │
+│  - Database schema, table definitions                       │
+│  - SQL dialect-specific guidelines                          │
+└─────────────────────────────────────────────────────────────┘
+                        ↓ Agent calls sql_get_samples()
+┌─────────────────────────────────────────────────────────────┐
+│  Level 3: Detailed Resources (loaded as needed)             │
+│  - Sample rows from tables                                  │
+│  - Complex query examples                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Skill Definition:**
+```python
+# In skill_registry.py
+class SQLSkill(Skill):
+    def __init__(self, db_url=None, read_only=None):
+        self.id = "write_sql"
+        self.name = "SQL Query Expert"
+        self.db_url = db_url or get_database_url()  # From env var
+        self.read_only = read_only if read_only is not None else is_sql_read_only()
+        self._db = None  # Lazy-loaded database connection
+
+    def load_core(self) -> str:
+        """Level 2: Load database schema on-demand."""
+        db = self._get_db()
+        return f"""
+## SQL Skill Activated
+### Available Tables: {', '.join(db.get_usable_table_names())}
+### Schema: {db.get_table_info()}
+"""
+
+    def execute_query(self, query: str) -> str:
+        """Execute SQL with read-only enforcement."""
+        if self.read_only and not query.strip().upper().startswith("SELECT"):
+            return "Error: Only SELECT queries allowed in read-only mode"
+        return self._get_db().run(query)
+```
+
+**SkillRegistry Integration:**
+```python
+# In dependencies.py - Singleton registry
+def get_skill_registry() -> SkillRegistry:
+    global _skill_registry
+    if _skill_registry is None:
+        _skill_registry = SkillRegistry()  # Registers SQLSkill automatically
+    return _skill_registry
+
+# In agent_service.py - Dynamic agent creation
+def _create_skill_based_agents(self):
+    sql_skill = self._skill_registry.get_skill("write_sql")
+    if sql_skill:
+        # Create tools from skill methods
+        def load_sql_skill() -> str:
+            return sql_skill.load_core()
+
+        def sql_query(query: str) -> str:
+            return sql_skill.execute_query(query)
+
+        return {
+            "sql_expert": {
+                "name": "sql_expert",
+                "tools": [load_sql_skill, sql_query, ...],
+                "prompt": "You are a SQL expert..."
+            }
+        }
+```
+
+**Using the SQL Expert Agent:**
+```bash
+# Create workflow with sql_expert
+curl -X POST http://localhost:8000/api/v1/agents/workflows \
+  -H "Content-Type: application/json" \
+  -d '{"agents": ["sql_expert"], "workflow_id": "sql-demo"}'
+
+# Query the database (agent uses progressive disclosure)
+curl -X POST http://localhost:8000/api/v1/agents/workflows/sql-demo/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What are the top 5 customers by order total?"}'
+```
+
+**Agent Flow (Explicit Tool Calls):**
+```
+User: "Show me top customers"
+         │
+         ▼
+Agent: "I need database schema first"
+         │
+         ▼
+Agent calls: load_sql_skill()     ← Explicit, visible in traces
+         │
+         ▼
+Agent receives: table schemas, guidelines
+         │
+         ▼
+Agent calls: sql_query("SELECT c.name, SUM(o.total)...")
+         │
+         ▼
+Returns formatted results
+```
+
+**Adding New Skills:**
+```python
+# 1. Create skill class in skill_registry.py
+class LegalDocSkill(Skill):
+    def __init__(self):
+        self.id = "legal_doc"
+        self.name = "Legal Document Expert"
+        ...
+
+    def load_core(self) -> str:
+        return "Legal review guidelines..."
+
+# 2. Register in SkillRegistry._register_builtin_skills()
+def _register_builtin_skills(self):
+    self.register(SQLSkill())
+    self.register(LegalDocSkill())  # New skill
+
+# 3. AgentService automatically creates legal_doc_expert agent
 ```
 
 ## Build System

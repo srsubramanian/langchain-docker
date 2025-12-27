@@ -9,6 +9,7 @@ from langchain_docker.api.services.chat_service import ChatService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
+from langchain_docker.api.services.skill_registry import SkillRegistry
 from langchain_docker.core.config import Config
 
 
@@ -66,22 +67,43 @@ def get_chat_service(
     return ChatService(session_service, model_service, memory_service)
 
 
+# Singleton for skill registry
+_skill_registry: SkillRegistry | None = None
+
+
+def get_skill_registry() -> SkillRegistry:
+    """Get singleton skill registry instance.
+
+    The SkillRegistry manages all available skills (SQL, etc.)
+    using progressive disclosure pattern.
+
+    Returns:
+        SkillRegistry instance
+    """
+    global _skill_registry
+    if _skill_registry is None:
+        _skill_registry = SkillRegistry()
+    return _skill_registry
+
+
 # Singleton for agent service
 _agent_service: AgentService | None = None
 
 
 def get_agent_service(
     model_service: ModelService = Depends(get_model_service),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
 ) -> AgentService:
     """Get agent service instance.
 
     Args:
         model_service: Model service (injected)
+        skill_registry: Skill registry (injected)
 
     Returns:
         AgentService instance
     """
     global _agent_service
     if _agent_service is None:
-        _agent_service = AgentService(model_service)
+        _agent_service = AgentService(model_service, skill_registry)
     return _agent_service

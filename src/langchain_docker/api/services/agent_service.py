@@ -90,66 +90,8 @@ def get_stock_price(symbol: str) -> str:
     return f"{symbol_upper}: $100.00 (demo price)"
 
 
-# SQL tools for sql_expert agent (using progressive disclosure pattern)
-_sql_skill = None
-
-
-def _get_sql_skill():
-    """Get or create SQLSkill instance (lazy loading)."""
-    global _sql_skill
-    if _sql_skill is None:
-        from langchain_docker.api.services.skill_registry import SQLSkill
-        _sql_skill = SQLSkill()
-    return _sql_skill
-
-
-def load_sql_skill() -> str:
-    """Load the SQL skill with database schema and guidelines.
-
-    Call this tool first before writing SQL queries to get the database schema,
-    available tables, and SQL guidelines. This enables you to write accurate
-    queries against the database.
-
-    Returns:
-        Database schema, available tables, and SQL guidelines
-    """
-    return _get_sql_skill().load_core()
-
-
-def sql_query(query: str) -> str:
-    """Execute a SQL query against the database.
-
-    In read-only mode, only SELECT queries are allowed.
-    Use load_sql_skill first to get the database schema.
-
-    Args:
-        query: The SQL query to execute (SELECT only in read-only mode)
-
-    Returns:
-        Query results or error message
-    """
-    return _get_sql_skill().execute_query(query)
-
-
-def sql_list_tables() -> str:
-    """List all available tables in the database.
-
-    Returns:
-        Comma-separated list of table names
-    """
-    return _get_sql_skill().list_tables()
-
-
-def sql_get_samples() -> str:
-    """Get sample rows from database tables.
-
-    Returns sample data from each table to help understand
-    the data structure and content.
-
-    Returns:
-        Sample rows from each table
-    """
-    return _get_sql_skill().load_details("samples")
+# SQL tools will be created dynamically using SkillRegistry
+# See AgentService._create_sql_tools() for implementation
 
 
 # Agent configurations
@@ -174,26 +116,7 @@ BUILTIN_AGENTS = {
         "tools": [get_stock_price],
         "prompt": "You are a finance expert. Use the stock price tool to get current market data and provide financial insights.",
     },
-    "sql_expert": {
-        "name": "sql_expert",
-        "tools": [load_sql_skill, sql_query, sql_list_tables, sql_get_samples],
-        "prompt": """You are a SQL expert assistant that helps users query databases.
-
-Available skills (use load_sql_skill to activate):
-- write_sql: SQL query writing expert with database schema
-
-When a user asks about data:
-1. First call load_sql_skill() to get the database schema
-2. Write appropriate SQL queries using sql_query()
-3. Explain query results clearly to users
-
-Guidelines:
-- Always load the skill first to understand the database schema
-- Use sql_list_tables() if you need a quick overview of available tables
-- Use sql_get_samples() to see sample data from tables
-- Write clean, readable SQL queries with explicit column names
-- Explain your queries and results in plain language""",
-    },
+    # sql_expert is created dynamically in AgentService using SkillRegistry
 }
 
 DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.
@@ -214,16 +137,84 @@ class AgentService:
     Supports both built-in agents and custom user-defined agents.
     """
 
-    def __init__(self, model_service: ModelService):
+    def __init__(self, model_service: ModelService, skill_registry=None):
         """Initialize agent service.
 
         Args:
             model_service: Model service for LLM access
+            skill_registry: Skill registry for progressive disclosure skills
         """
         self.model_service = model_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
         self._tool_registry = ToolRegistry()
+
+        # Import SkillRegistry here to avoid circular imports if not provided
+        if skill_registry is None:
+            from langchain_docker.api.services.skill_registry import SkillRegistry
+            skill_registry = SkillRegistry()
+        self._skill_registry = skill_registry
+
+        # Create dynamic agents from skill registry
+        self._dynamic_agents = self._create_skill_based_agents()
+
+    def _create_skill_based_agents(self) -> dict:
+        """Create agents from registered skills.
+
+        Returns:
+            Dictionary of skill-based agent configurations
+        """
+        agents = {}
+
+        # Get SQL skill if available
+        sql_skill = self._skill_registry.get_skill("write_sql")
+        if sql_skill:
+            # Create tool functions that use the skill
+            def load_sql_skill() -> str:
+                """Load the SQL skill with database schema and guidelines."""
+                return sql_skill.load_core()
+
+            def sql_query(query: str) -> str:
+                """Execute a SQL query against the database."""
+                return sql_skill.execute_query(query)
+
+            def sql_list_tables() -> str:
+                """List all available tables in the database."""
+                return sql_skill.list_tables()
+
+            def sql_get_samples() -> str:
+                """Get sample rows from database tables."""
+                return sql_skill.load_details("samples")
+
+            agents["sql_expert"] = {
+                "name": "sql_expert",
+                "tools": [load_sql_skill, sql_query, sql_list_tables, sql_get_samples],
+                "prompt": f"""You are a SQL expert assistant that helps users query databases.
+
+{self._skill_registry.get_skill_summary()}
+
+When a user asks about data:
+1. First call load_sql_skill() to get the database schema
+2. Write appropriate SQL queries using sql_query()
+3. Explain query results clearly to users
+
+Guidelines:
+- Always load the skill first to understand the database schema
+- Use sql_list_tables() if you need a quick overview of available tables
+- Use sql_get_samples() to see sample data from tables
+- Write clean, readable SQL queries with explicit column names
+- Explain your queries and results in plain language""",
+            }
+
+        return agents
+
+    def _get_all_builtin_agents(self) -> dict:
+        """Get all builtin agents including dynamic skill-based ones.
+
+        Returns:
+            Combined dictionary of static and dynamic agents
+        """
+        return {**BUILTIN_AGENTS, **self._dynamic_agents}
 
     def list_builtin_agents(self) -> list[dict]:
         """List all available built-in agents.
@@ -231,13 +222,14 @@ class AgentService:
         Returns:
             List of agent configurations
         """
+        all_agents = self._get_all_builtin_agents()
         return [
             {
                 "name": config["name"],
                 "tools": [t.__name__ for t in config["tools"]],
                 "description": config["prompt"][:100] + "...",
             }
-            for config in BUILTIN_AGENTS.values()
+            for config in all_agents.values()
         ]
 
     # Tool Registry Methods
@@ -446,10 +438,12 @@ class AgentService:
         agents = []
         agent_descriptions = []
 
+        all_builtin = self._get_all_builtin_agents()
+
         for agent_name in agent_names:
-            # Check built-in agents first
-            if agent_name in BUILTIN_AGENTS:
-                config = BUILTIN_AGENTS[agent_name]
+            # Check built-in agents first (including skill-based ones)
+            if agent_name in all_builtin:
+                config = all_builtin[agent_name]
                 agent = create_agent(
                     model=llm,
                     tools=config["tools"],
@@ -469,7 +463,7 @@ class AgentService:
                     f"- {custom.name}: {custom.system_prompt[:50]}..."
                 )
             else:
-                available = list(BUILTIN_AGENTS.keys()) + list(self._custom_agents.keys())
+                available = list(all_builtin.keys()) + list(self._custom_agents.keys())
                 raise ValueError(
                     f"Unknown agent: {agent_name}. Available: {available}"
                 )

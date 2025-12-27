@@ -269,11 +269,11 @@ class ToolRegistry:
 
     # SQL tool factory methods
     def _get_sql_skill(self):
-        """Get or create SQLSkill instance (lazy loading)."""
-        if not hasattr(self, "_sql_skill"):
-            from langchain_docker.api.services.skill_registry import SQLSkill
-            self._sql_skill = SQLSkill()
-        return self._sql_skill
+        """Get SQL skill from SkillRegistry (lazy loading)."""
+        if not hasattr(self, "_skill_registry"):
+            from langchain_docker.api.services.skill_registry import SkillRegistry
+            self._skill_registry = SkillRegistry()
+        return self._skill_registry.get_skill("write_sql")
 
     def _create_load_sql_skill_tool(self) -> Callable:
         """Create load SQL skill tool for progressive disclosure."""
