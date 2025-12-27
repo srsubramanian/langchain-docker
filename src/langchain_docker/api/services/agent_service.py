@@ -167,8 +167,10 @@ class AgentService:
         agents = {}
 
         # Get SQL skill if available
-        sql_skill = self._skill_registry.get_skill("write_sql")
-        if sql_skill:
+        from langchain_docker.api.services.skill_registry import SQLSkill
+        skill = self._skill_registry.get_skill("write_sql")
+        if skill and isinstance(skill, SQLSkill):
+            sql_skill: SQLSkill = skill  # Type hint for IDE
             # Create tool functions that use the skill
             def load_sql_skill() -> str:
                 """Load the SQL skill with database schema and guidelines."""
