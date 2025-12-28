@@ -63,9 +63,12 @@ class CustomAgentCreateRequest(BaseModel):
         min_length=10,
     )
     tools: list[ToolConfigRequest] = Field(
-        ...,
+        default_factory=list,
         description="Tools to equip the agent with",
-        min_length=1,
+    )
+    skills: list[str] = Field(
+        default_factory=list,
+        description="Skill IDs to include (skills add their tools to the agent)",
     )
     metadata: dict = Field(
         default_factory=dict,
@@ -79,6 +82,7 @@ class CustomAgentInfo(BaseModel):
     id: str = Field(..., description="Agent ID")
     name: str = Field(..., description="Agent name")
     tools: list[str] = Field(..., description="Tool IDs equipped on this agent")
+    skills: list[str] = Field(default_factory=list, description="Skill IDs included")
     description: str = Field(..., description="Truncated system prompt")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
 

@@ -2,16 +2,17 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Check,
-  ChevronRight,
   Wrench,
   FileText,
-  Eye,
   Send,
   Bot,
   User,
   Loader2,
   MessageSquare,
   GitBranch,
+  ArrowLeft,
+  Sparkles,
+  Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,16 +21,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { agentsApi } from '@/api';
-import type { ToolTemplate } from '@/types/api';
+import { Collapsible } from '@/components/ui/collapsible';
+import { agentsApi, skillsApi } from '@/api';
+import type { ToolTemplate, SkillMetadata } from '@/types/api';
 import { cn } from '@/lib/cn';
-
-const STEPS = [
-  { id: 1, name: 'Name', icon: FileText },
-  { id: 2, name: 'Prompt', icon: FileText },
-  { id: 3, name: 'Tools', icon: Wrench },
-  { id: 4, name: 'Review', icon: Eye },
-];
+import { TemplateSelector } from './TemplateSelector';
+import type { AgentTemplate } from './templates';
 
 interface TestMessage {
   role: 'user' | 'assistant';
@@ -70,15 +67,20 @@ export function BuilderPage() {
   const isEditing = !!agentId;
 
   // Builder state
-  const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [tools, setTools] = useState<ToolTemplate[]>([]);
+  const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [toolsOrSkillsTab, setToolsOrSkillsTab] = useState<'tools' | 'skills'>('tools');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Template selection state
+  const [showTemplates, setShowTemplates] = useState(!isEditing);
 
   // Test chat state
   const [testMessages, setTestMessages] = useState<TestMessage[]>([]);
@@ -88,12 +90,17 @@ export function BuilderPage() {
   const [testError, setTestError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch tools and categories
+  // Fetch tools, categories, and skills
   useEffect(() => {
-    Promise.all([agentsApi.listTools(), agentsApi.listToolCategories()])
-      .then(([toolsData, categoriesData]) => {
+    Promise.all([
+      agentsApi.listTools(),
+      agentsApi.listToolCategories(),
+      skillsApi.list(),
+    ])
+      .then(([toolsData, categoriesData, skillsData]) => {
         setTools(toolsData);
         setCategories(categoriesData);
+        setSkills(skillsData.skills);
       })
       .catch(console.error);
   }, []);
@@ -127,23 +134,26 @@ export function BuilderPage() {
     }
   };
 
-  const canProceed = () => {
-    switch (step) {
-      case 1:
-        return name.trim().length >= 1 && name.trim().length <= 50;
-      case 2:
-        return systemPrompt.trim().length >= 10;
-      case 3:
-        return selectedTools.length > 0;
-      case 4:
-        return true;
-      default:
-        return false;
+  const toggleSkill = (skillId: string) => {
+    setSelectedSkills((prev) =>
+      prev.includes(skillId) ? prev.filter((id) => id !== skillId) : [...prev, skillId]
+    );
+    // Reset test workflow when skills change
+    if (testWorkflowId) {
+      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      setTestWorkflowId(null);
     }
   };
 
+  const canCreate = () => {
+    const hasValidName = name.trim().length >= 1 && name.trim().length <= 50;
+    const hasValidPrompt = systemPrompt.trim().length >= 10;
+    const hasToolsOrSkills = selectedTools.length > 0 || selectedSkills.length > 0;
+    return hasValidName && hasValidPrompt && hasToolsOrSkills;
+  };
+
   const canTest = () => {
-    return name.trim().length >= 1 && selectedTools.length > 0;
+    return name.trim().length >= 1 && (selectedTools.length > 0 || selectedSkills.length > 0);
   };
 
   const handleCreate = async () => {
@@ -155,6 +165,7 @@ export function BuilderPage() {
         name: name.trim(),
         system_prompt: systemPrompt.trim(),
         tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
+        skills: selectedSkills,
       });
       // Cleanup test workflow
       if (testWorkflowId) {
@@ -189,6 +200,7 @@ export function BuilderPage() {
           name: name.trim() || 'Test Agent',
           system_prompt: systemPrompt.trim() || 'You are a helpful assistant.',
           tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
+          skills: selectedSkills,
         });
 
         // Create a workflow with the temporary agent
@@ -230,223 +242,388 @@ export function BuilderPage() {
     }
   };
 
+  const handleSelectTemplate = (template: AgentTemplate) => {
+    setName(template.name);
+    setSystemPrompt(template.systemPrompt);
+    // Map template tool names to actual tool IDs
+    const toolIds = template.tools.filter((toolName) =>
+      tools.some((t) => t.id === toolName)
+    );
+    setSelectedTools(toolIds);
+    setShowTemplates(false);
+  };
+
+  const handleStartFromScratch = () => {
+    setShowTemplates(false);
+  };
+
+  const handleBackToTemplates = () => {
+    setShowTemplates(true);
+    // Reset form
+    setName('');
+    setSystemPrompt('');
+    setSelectedTools([]);
+    setSelectedSkills([]);
+  };
+
   const avatarColor = name ? getAvatarColor(name) : 'bg-primary';
   const initials = name ? getInitials(name) : 'AG';
+
+  // Validation messages for the create button tooltip
+  const getValidationMessages = () => {
+    const messages = [];
+    if (name.trim().length < 1) messages.push('Add agent name');
+    if (systemPrompt.trim().length < 10) messages.push('Add instructions (min 10 chars)');
+    if (selectedTools.length === 0 && selectedSkills.length === 0) messages.push('Select at least one tool or skill');
+    return messages;
+  };
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
       {/* Left Panel - Builder */}
-      <div className="flex-1 overflow-auto border-r">
-        <div className="container max-w-3xl py-8">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold">
-              {isEditing ? 'Edit Agent' : 'Create Custom Agent'}
-            </h1>
-            <p className="text-muted-foreground">
-              Build a custom agent with your own tools and instructions.
-            </p>
+      <div className="flex-1 flex flex-col overflow-hidden border-r">
+        {showTemplates ? (
+          /* Template Selection View */
+          <div className="flex-1 overflow-auto">
+            <div className="container max-w-5xl py-8">
+              <TemplateSelector
+                onSelectTemplate={handleSelectTemplate}
+                onStartFromScratch={handleStartFromScratch}
+              />
+            </div>
           </div>
+        ) : (
+          <>
+            {/* Header Bar */}
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-card">
+              <div className="flex items-center gap-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBackToTemplates}
+                  className="gap-1"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </Button>
 
-          {/* Step indicator */}
-          <div className="mb-8 flex items-center justify-center">
-            {STEPS.map((s, index) => {
-              const Icon = s.icon;
-              const isActive = step === s.id;
-              const isCompleted = step > s.id;
-
-              return (
-                <div key={s.id} className="flex items-center">
-                  <button
-                    onClick={() => isCompleted && setStep(s.id)}
-                    disabled={!isCompleted}
+                <div className="flex items-center gap-3">
+                  <div
                     className={cn(
-                      'flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors',
-                      isActive && 'border-primary bg-primary text-primary-foreground',
-                      isCompleted && 'border-primary bg-primary/20 text-primary',
-                      !isActive && !isCompleted && 'border-muted text-muted-foreground'
+                      'flex h-10 w-10 items-center justify-center rounded-lg text-white font-semibold',
+                      avatarColor
                     )}
                   >
-                    {isCompleted ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
-                  </button>
-                  <span
-                    className={cn(
-                      'ml-2 text-sm font-medium',
-                      isActive ? 'text-foreground' : 'text-muted-foreground'
-                    )}
-                  >
-                    {s.name}
-                  </span>
-                  {index < STEPS.length - 1 && (
-                    <ChevronRight className="mx-4 h-5 w-5 text-muted-foreground" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Step content */}
-          <Card>
-            <CardContent className="pt-6">
-              {step === 1 && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium">Agent Name</label>
+                    {initials}
+                  </div>
+                  <div className="flex flex-col">
                     <Input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="My Custom Agent"
+                      placeholder="Agent Name"
                       maxLength={50}
-                      className="mt-2"
+                      className="h-8 text-lg font-semibold border-none shadow-none px-0 focus-visible:ring-0 bg-transparent"
                     />
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {name.length}/50 characters
-                    </p>
+                    </span>
                   </div>
                 </div>
-              )}
 
-              {step === 2 && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium">System Prompt</label>
+                <Badge variant="outline" className="ml-2">
+                  {isEditing ? 'Editing' : 'Draft'}
+                </Badge>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {error && (
+                  <span className="text-sm text-destructive">{error}</span>
+                )}
+                <Button
+                  onClick={handleCreate}
+                  disabled={!canCreate() || isCreating}
+                  title={canCreate() ? 'Create agent' : getValidationMessages().join(', ')}
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    isEditing ? 'Save Changes' : 'Create Agent'
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Main Content - Scrollable Sections */}
+            <ScrollArea className="flex-1">
+              <div className="p-6 space-y-4 max-w-3xl">
+                {/* Instructions Section */}
+                <Collapsible
+                  title="Instructions"
+                  icon={<FileText className="h-4 w-4 text-muted-foreground" />}
+                  defaultOpen={true}
+                  badge={
+                    systemPrompt.length >= 10 ? (
+                      <Badge variant="secondary" className="ml-2 text-xs">
+                        <Check className="h-3 w-3 mr-1" />
+                        Set
+                      </Badge>
+                    ) : null
+                  }
+                >
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Define how your agent should behave and respond.
+                    </p>
                     <Textarea
                       value={systemPrompt}
                       onChange={(e) => setSystemPrompt(e.target.value)}
                       placeholder="You are a helpful assistant that..."
-                      className="mt-2 min-h-[200px]"
+                      className="min-h-[150px] resize-y"
                     />
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Minimum 10 characters. {systemPrompt.length} characters.
+                    <p className="text-xs text-muted-foreground">
+                      Minimum 10 characters. {systemPrompt.length} characters entered.
                     </p>
                   </div>
-                </div>
-              )}
+                </Collapsible>
 
-              {step === 3 && (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant={selectedCategory === null ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setSelectedCategory(null)}
-                    >
-                      All
-                    </Button>
-                    {categories.map((cat) => (
+                {/* Toolbox Section */}
+                <Collapsible
+                  title="Toolbox"
+                  icon={<Wrench className="h-4 w-4 text-muted-foreground" />}
+                  defaultOpen={true}
+                  badge={
+                    (selectedTools.length > 0 || selectedSkills.length > 0) ? (
+                      <Badge variant="secondary" className="ml-2 text-xs">
+                        {selectedTools.length + selectedSkills.length} selected
+                      </Badge>
+                    ) : null
+                  }
+                >
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Equip your agent with tools and skills.
+                    </p>
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 flex-wrap">
                       <Button
-                        key={cat}
-                        variant={selectedCategory === cat ? 'default' : 'outline'}
+                        variant="outline"
                         size="sm"
-                        onClick={() => setSelectedCategory(cat)}
+                        onClick={() => setToolsOrSkillsTab('tools')}
+                        className={cn(
+                          'gap-2',
+                          toolsOrSkillsTab === 'tools' && 'border-primary bg-primary/10'
+                        )}
                       >
-                        {cat}
+                        <Plus className="h-3 w-3" />
+                        Add Tool
                       </Button>
-                    ))}
-                  </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setToolsOrSkillsTab('skills')}
+                        className={cn(
+                          'gap-2',
+                          toolsOrSkillsTab === 'skills' && 'border-primary bg-primary/10'
+                        )}
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add Skill
+                      </Button>
+                    </div>
 
-                  <ScrollArea className="h-[300px]">
-                    <div className="grid gap-2">
-                      {filteredTools.map((tool) => {
-                        const isSelected = selectedTools.includes(tool.id);
-                        return (
-                          <button
-                            key={tool.id}
-                            onClick={() => toggleTool(tool.id)}
-                            className={cn(
-                              'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
-                              isSelected
-                                ? 'border-primary bg-primary/10'
-                                : 'border-border hover:bg-muted'
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                'mt-0.5 h-4 w-4 rounded border',
-                                isSelected
-                                  ? 'border-primary bg-primary'
-                                  : 'border-muted-foreground'
-                              )}
+                    {/* Selected items display */}
+                    {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                      <div className="flex flex-wrap gap-2">
+                        {selectedTools.map((toolId) => {
+                          const tool = tools.find((t) => t.id === toolId);
+                          return (
+                            <Badge
+                              key={toolId}
+                              variant="secondary"
+                              className="gap-1 cursor-pointer hover:bg-destructive/20"
+                              onClick={() => toggleTool(toolId)}
                             >
-                              {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                              <Wrench className="h-3 w-3" />
+                              {tool?.name || toolId}
+                              <span className="ml-1 text-muted-foreground">x</span>
+                            </Badge>
+                          );
+                        })}
+                        {selectedSkills.map((skillId) => {
+                          const skill = skills.find((s) => s.id === skillId);
+                          return (
+                            <Badge
+                              key={skillId}
+                              variant="secondary"
+                              className="gap-1 cursor-pointer hover:bg-destructive/20"
+                              onClick={() => toggleSkill(skillId)}
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              {skill?.name || skillId}
+                              <span className="ml-1 text-muted-foreground">x</span>
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Tools/Skills Selection */}
+                    <Tabs value={toolsOrSkillsTab} onValueChange={(v) => setToolsOrSkillsTab(v as 'tools' | 'skills')}>
+                      <TabsList className="w-full">
+                        <TabsTrigger value="tools" className="flex-1 gap-2">
+                          <Wrench className="h-4 w-4" />
+                          Tools ({tools.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="skills" className="flex-1 gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          Skills ({skills.length})
+                        </TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="tools" className="mt-4">
+                        {/* Category filter */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          <Button
+                            variant={selectedCategory === null ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setSelectedCategory(null)}
+                          >
+                            All
+                          </Button>
+                          {categories.map((cat) => (
+                            <Button
+                              key={cat}
+                              variant={selectedCategory === cat ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setSelectedCategory(cat)}
+                            >
+                              {cat}
+                            </Button>
+                          ))}
+                        </div>
+
+                        <div className="grid gap-2 max-h-[300px] overflow-y-auto pr-2">
+                          {filteredTools.map((tool) => {
+                            const isSelected = selectedTools.includes(tool.id);
+                            return (
+                              <button
+                                key={tool.id}
+                                onClick={() => toggleTool(tool.id)}
+                                className={cn(
+                                  'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                                  isSelected
+                                    ? 'border-primary bg-primary/10'
+                                    : 'border-border hover:bg-muted'
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    'mt-0.5 h-4 w-4 rounded border flex items-center justify-center',
+                                    isSelected
+                                      ? 'border-primary bg-primary'
+                                      : 'border-muted-foreground'
+                                  )}
+                                >
+                                  {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium">{tool.name}</span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {tool.category}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-sm text-muted-foreground">{tool.description}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="skills" className="mt-4">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Skills add specialized context and capabilities using progressive disclosure.
+                        </p>
+                        <div className="grid gap-2 max-h-[300px] overflow-y-auto pr-2">
+                          {skills.length === 0 ? (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                              <p>No skills available</p>
+                              <Button
+                                variant="link"
+                                size="sm"
+                                onClick={() => navigate('/skills/new')}
+                                className="mt-2"
+                              >
+                                Create a skill
+                              </Button>
                             </div>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">{tool.name}</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {tool.category}
-                                </Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">{tool.description}</p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-
-                  <p className="text-sm text-muted-foreground">
-                    {selectedTools.length} tool(s) selected
-                  </p>
-                </div>
-              )}
-
-              {step === 4 && (
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="font-medium">Name</h3>
-                    <p className="text-muted-foreground">{name}</p>
+                          ) : (
+                            skills.map((skill) => {
+                              const isSelected = selectedSkills.includes(skill.id);
+                              return (
+                                <button
+                                  key={skill.id}
+                                  onClick={() => toggleSkill(skill.id)}
+                                  className={cn(
+                                    'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                                    isSelected
+                                      ? 'border-primary bg-primary/10'
+                                      : 'border-border hover:bg-muted'
+                                  )}
+                                >
+                                  <div
+                                    className={cn(
+                                      'mt-0.5 h-4 w-4 rounded border flex items-center justify-center',
+                                      isSelected
+                                        ? 'border-primary bg-primary'
+                                        : 'border-muted-foreground'
+                                    )}
+                                  >
+                                    {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{skill.name}</span>
+                                      <Badge variant="outline" className="text-xs">
+                                        {skill.category}
+                                      </Badge>
+                                      <Badge variant="secondary" className="text-xs">
+                                        v{skill.version}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">{skill.description}</p>
+                                  </div>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </TabsContent>
+                    </Tabs>
                   </div>
-                  <div>
-                    <h3 className="font-medium">System Prompt</h3>
-                    <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                      {systemPrompt}
-                    </p>
+                </Collapsible>
+
+                {/* Validation Summary */}
+                {!canCreate() && (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    <p className="font-medium mb-2">To create your agent, complete the following:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      {getValidationMessages().map((msg, i) => (
+                        <li key={i}>{msg}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <div>
-                    <h3 className="font-medium">Tools ({selectedTools.length})</h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {selectedTools.map((toolId) => {
-                        const tool = tools.find((t) => t.id === toolId);
-                        return (
-                          <Badge key={toolId} variant="secondary">
-                            {tool?.name || toolId}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {error && (
-                    <div className="rounded-lg bg-destructive/10 px-4 py-2 text-destructive">
-                      {error}
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Navigation */}
-          <div className="mt-6 flex justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setStep((s) => Math.max(1, s - 1))}
-              disabled={step === 1}
-            >
-              Back
-            </Button>
-
-            {step < 4 ? (
-              <Button onClick={() => setStep((s) => s + 1)} disabled={!canProceed()}>
-                Continue
-              </Button>
-            ) : (
-              <Button onClick={handleCreate} disabled={isCreating || !canProceed()}>
-                {isCreating ? 'Creating...' : 'Create Agent'}
-              </Button>
-            )}
-          </div>
-        </div>
+                )}
+              </div>
+            </ScrollArea>
+          </>
+        )}
       </div>
 
       {/* Right Panel - Preview & Test */}
@@ -490,9 +667,9 @@ export function BuilderPage() {
 
                 {/* System Prompt Preview */}
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1">System Prompt</p>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Instructions</p>
                   <p className="text-sm line-clamp-4">
-                    {systemPrompt || 'No system prompt defined yet...'}
+                    {systemPrompt || 'No instructions defined yet...'}
                   </p>
                 </div>
 
@@ -517,23 +694,100 @@ export function BuilderPage() {
                   )}
                 </div>
 
+                {/* Skills Preview */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Skills ({selectedSkills.length})
+                  </p>
+                  {selectedSkills.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedSkills.map((skillId) => {
+                        const skill = skills.find((s) => s.id === skillId);
+                        return (
+                          <Badge key={skillId} variant="secondary" className="text-xs gap-1">
+                            <Sparkles className="h-3 w-3" />
+                            {skill?.name || skillId}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No skills selected yet...</p>
+                  )}
+                </div>
+
                 {/* Flow Diagram */}
                 <div className="pt-4 border-t">
                   <p className="text-xs font-medium text-muted-foreground mb-3">Agent Flow</p>
                   <div className="flex flex-col items-center gap-2">
+                    {/* User Input Node */}
                     <div className="px-4 py-2 bg-muted rounded-lg text-sm font-medium">
                       User Input
                     </div>
                     <div className="h-6 w-px bg-border" />
-                    <div
-                      className={cn(
-                        'px-4 py-2 rounded-lg text-sm font-medium text-white',
-                        avatarColor
+
+                    {/* Agent Node with Tools */}
+                    <div className="flex items-center gap-3">
+                      {/* Tools on the left */}
+                      {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                        <div className="flex flex-col gap-1 items-end">
+                          {selectedTools.slice(0, 3).map((toolId) => {
+                            const tool = tools.find((t) => t.id === toolId);
+                            return (
+                              <div
+                                key={toolId}
+                                className="flex items-center gap-1"
+                              >
+                                <div className="px-2 py-1 bg-blue-500/20 border border-blue-500/50 rounded text-xs text-blue-400 flex items-center gap-1">
+                                  <Wrench className="h-3 w-3" />
+                                  {tool?.name?.split(' ')[0] || toolId}
+                                </div>
+                                <div className="w-3 h-px bg-blue-500/50" />
+                              </div>
+                            );
+                          })}
+                          {selectedSkills.slice(0, 2).map((skillId) => {
+                            const skill = skills.find((s) => s.id === skillId);
+                            return (
+                              <div
+                                key={skillId}
+                                className="flex items-center gap-1"
+                              >
+                                <div className="px-2 py-1 bg-purple-500/20 border border-purple-500/50 rounded text-xs text-purple-400 flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3" />
+                                  {skill?.name?.split(' ')[0] || skillId}
+                                </div>
+                                <div className="w-3 h-px bg-purple-500/50" />
+                              </div>
+                            );
+                          })}
+                          {(selectedTools.length > 3 || selectedSkills.length > 2) && (
+                            <div className="text-xs text-muted-foreground">
+                              +{Math.max(0, selectedTools.length - 3) + Math.max(0, selectedSkills.length - 2)} more
+                            </div>
+                          )}
+                        </div>
                       )}
-                    >
-                      {name || 'Agent'}
+
+                      {/* Agent Node */}
+                      <div
+                        className={cn(
+                          'px-4 py-2 rounded-lg text-sm font-medium text-white relative',
+                          avatarColor
+                        )}
+                      >
+                        {name || 'Agent'}
+                        {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                          <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center text-[10px] text-white font-bold">
+                            {selectedTools.length + selectedSkills.length}
+                          </div>
+                        )}
+                      </div>
                     </div>
+
                     <div className="h-6 w-px bg-border" />
+
+                    {/* Response Node */}
                     <div className="px-4 py-2 bg-muted rounded-lg text-sm font-medium">
                       Response
                     </div>

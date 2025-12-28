@@ -27,8 +27,20 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Transparent Operation**: Memory metadata included in API responses for observability
 - **Graceful Fallback**: Simple text-based summaries if LLM summarization fails
 
-### Chainlit UI
-- **Interactive Chat Interface**: Modern web-based chat UI powered by Chainlit
+### React Web UI (Recommended)
+- **Modern Chat Interface**: Dark-themed UI inspired by LangSmith Agent Builder
+- **Real-time Streaming**: SSE-based streaming with token-by-token display
+- **Multi-Agent Workflows**: Visual React Flow diagrams showing agent coordination
+- **Custom Agent Builder**: Single-page builder with live flow visualization
+  - Inline agent name editing with Draft badge
+  - Collapsible Instructions and Toolbox sections
+  - Tool selection (blue nodes) and Skill selection (purple nodes)
+  - Real-time Agent Flow diagram showing connected tools/skills
+- **Skills Management**: Browse, create, and edit skills with progressive disclosure
+- **Provider Selection**: Switch between OpenAI, Anthropic, Google, and Bedrock
+
+### Chainlit UI (Legacy)
+- **Interactive Chat Interface**: Web-based chat UI powered by Chainlit
 - **Real-time Streaming**: See AI responses as they're being generated
 - **Provider Selection**: Switch between OpenAI, Anthropic, and Google models on the fly
 - **Temperature Control**: Adjust response creativity with a simple slider
@@ -86,7 +98,8 @@ docker-compose up -d --build
 ```
 
 Once running:
-- **Chainlit UI**: http://localhost:8001
+- **React Web UI** (Recommended): http://localhost:8001
+- **Chainlit UI** (Legacy): http://localhost:8002
 - **FastAPI Backend**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
 - **Phoenix Tracing**: http://localhost:6006
@@ -120,20 +133,20 @@ docker-compose down -v
 ### Architecture
 
 ```
-┌─────────────────┐         ┌─────────────────┐
-│  Chainlit UI    │         │  FastAPI API    │
-│  Container      │◄────────┤  Container      │
-│  Port: 8001     │         │  Port: 8000     │
-└─────────────────┘         └─────────────────┘
-         │                           │
-         │    Docker Network         │
-         └───────────────────────────┘
-                    │
-         ┌──────────▼──────────┐
-         │   LLM Providers     │
-         │  (OpenAI/Anthropic/ │
-         │      Google)        │
-         └─────────────────────┘
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│  React Web UI   │   │  Chainlit UI    │   │  FastAPI API    │
+│  (Recommended)  │   │  (Legacy)       │◄──┤  Container      │
+│  Port: 8001     │◄──┤  Port: 8002     │   │  Port: 8000     │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
+         │                    │                      │
+         └────────────────────┴──────────────────────┘
+                         Docker Network
+                              │
+                   ┌──────────▼──────────┐
+                   │   LLM Providers     │
+                   │  (OpenAI/Anthropic/ │
+                   │   Google/Bedrock)   │
+                   └─────────────────────┘
 ```
 
 ### Benefits of Docker
@@ -310,14 +323,14 @@ TRACING_PROVIDER=none
 When using Docker Compose, the stack includes:
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Phoenix    │     │  FastAPI    │     │  Chainlit   │
-│  Port: 6006 │◄────│  Port: 8000 │◄────│  Port: 8001 │
-│  (Tracing)  │     │  (Backend)  │     │  (Frontend) │
-└─────────────┘     └─────────────┘     └─────────────┘
-       │                    │                    │
-       └────────────────────┴────────────────────┘
-                   Docker Network
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Phoenix    │     │  FastAPI    │     │  React UI   │     │  Chainlit   │
+│  Port: 6006 │◄────│  Port: 8000 │◄────│  Port: 8001 │     │  Port: 8002 │
+│  (Tracing)  │     │  (Backend)  │     │ (Recommend) │     │  (Legacy)   │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+       │                    │                    │                  │
+       └────────────────────┴────────────────────┴──────────────────┘
+                              Docker Network
 ```
 
 Phoenix traces are automatically sent from the API backend and visualized in the Phoenix UI.
@@ -513,6 +526,59 @@ curl http://localhost:8000/api/v1/agents/workflows
 curl -X DELETE http://localhost:8000/api/v1/agents/workflows/my-workflow
 ```
 
+#### Skills API Endpoints
+
+**GET /api/v1/skills** - List all skills (metadata only)
+```bash
+curl http://localhost:8000/api/v1/skills
+```
+
+**GET /api/v1/skills/{skill_id}** - Get full skill details
+```bash
+curl http://localhost:8000/api/v1/skills/write_sql
+```
+
+**POST /api/v1/skills** - Create a custom skill
+```bash
+curl -X POST http://localhost:8000/api/v1/skills \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Custom Skill",
+    "description": "A custom skill for specific tasks",
+    "category": "custom",
+    "core_content": "Skill instructions and context..."
+  }'
+```
+
+**POST /api/v1/skills/{skill_id}/load** - Load skill into agent context
+```bash
+curl -X POST http://localhost:8000/api/v1/skills/write_sql/load
+```
+
+#### Custom Agent Endpoints
+
+**GET /api/v1/agents/tools** - List available tool templates
+```bash
+curl http://localhost:8000/api/v1/agents/tools
+```
+
+**POST /api/v1/agents/custom** - Create a custom agent
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/custom \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Assistant",
+    "system_prompt": "You are a helpful assistant...",
+    "tools": [{"tool_id": "calculator", "config": {}}],
+    "skills": ["write_sql"]
+  }'
+```
+
+**GET /api/v1/agents/custom** - List custom agents
+```bash
+curl http://localhost:8000/api/v1/agents/custom
+```
+
 ### Multi-Agent Workflows
 
 The API supports LangGraph-based multi-agent workflows where a supervisor agent delegates tasks to specialized worker agents.
@@ -698,9 +764,65 @@ Each response includes memory metadata for observability:
 - **Maintain Context**: Important information is preserved in summaries
 - **Improved Performance**: Smaller context windows mean faster responses
 
-## Chainlit UI
+## React Web UI (Recommended)
 
-The project includes a fully-featured chat interface built with Chainlit.
+The project includes a modern React-based web UI inspired by LangSmith Agent Builder.
+
+### Starting the React Web UI
+
+**You need to run both the FastAPI backend and React dev server:**
+
+```bash
+# Terminal 1: Start the FastAPI backend
+uv run langchain-docker serve
+
+# Terminal 2: Start the React dev server
+cd web_ui
+npm install
+npm run dev
+```
+
+Once running:
+- **React Web UI**: http://localhost:3000 (dev) or http://localhost:8001 (Docker)
+- **API Backend**: http://localhost:8000
+
+### Features
+
+| Route | Feature | Description |
+|-------|---------|-------------|
+| `/chat` | Streaming Chat | Real-time SSE streaming with provider/model selection |
+| `/agents` | Multi-Agent Workflows | React Flow visualization of supervisor + agent coordination |
+| `/builder` | Custom Agent Builder | Single-page builder with live flow diagram |
+| `/skills` | Skills Management | Browse, create, and edit skills |
+
+### Custom Agent Builder
+
+The Builder page provides a LangSmith-inspired single-page layout:
+
+1. **Header Bar**: Inline agent name input, Draft badge, Create Agent button
+2. **Instructions Section** (Collapsible): System prompt with character counter
+3. **Toolbox Section** (Collapsible):
+   - **Tools Tab**: Select from available tools (shown as blue nodes in flow)
+   - **Skills Tab**: Select skills for progressive disclosure (shown as purple nodes)
+4. **Agent Flow Visualization**: Real-time diagram showing:
+   - User Input → Agent → Response flow
+   - Connected tools and skills with count badge
+5. **Validation Summary**: Inline error display at bottom
+
+### Tech Stack
+
+- React 18 + Vite + TypeScript
+- shadcn/ui (Radix UI primitives)
+- Tailwind CSS (dark theme with teal accents)
+- Zustand (state management with localStorage)
+- React Flow (workflow visualization)
+- React Router v6
+
+---
+
+## Chainlit UI (Legacy)
+
+The project also includes a chat interface built with Chainlit.
 
 ### Starting the Chainlit UI
 
@@ -710,15 +832,15 @@ The project includes a fully-featured chat interface built with Chainlit.
 # Terminal 1: Start the FastAPI backend
 uv run langchain-docker serve
 
-# Terminal 2: Start the Chainlit UI on port 8001
-uv run chainlit run chainlit_app/app.py --port 8001
+# Terminal 2: Start the Chainlit UI on port 8002
+uv run chainlit run chainlit_app/app.py --port 8002
 
 # Or with watch mode (auto-reload on changes)
-uv run chainlit run chainlit_app/app.py --port 8001 -w
+uv run chainlit run chainlit_app/app.py --port 8002 -w
 ```
 
 Once running:
-- **Chainlit UI**: http://localhost:8001
+- **Chainlit UI**: http://localhost:8002
 - **API Backend**: http://localhost:8000
 
 ### Using the Chat Interface
@@ -746,7 +868,7 @@ The Chainlit UI communicates with the FastAPI backend via HTTP:
 ```
 ┌─────────────┐      HTTP/SSE      ┌──────────────┐      LangChain      ┌─────────────┐
 │  Chainlit   │ ◄─────────────────► │   FastAPI    │ ◄──────────────────► │  LLM APIs   │
-│     UI      │   (localhost:8001)  │   Backend    │  (OpenAI/Anthropic)  │  (OpenAI/   │
+│     UI      │   (localhost:8002)  │   Backend    │  (OpenAI/Anthropic)  │  (OpenAI/   │
 │             │                     │              │                      │  Anthropic/ │
 │ (Frontend)  │                     │ (Backend)    │                      │   Google)   │
 └─────────────┘                     └──────────────┘                      └─────────────┘
@@ -907,6 +1029,17 @@ src/langchain_docker/
 ├── __init__.py           # Package initialization and public API
 ├── __main__.py           # CLI entry point
 ├── cli.py                # Command-line interface
+├── api/                  # FastAPI backend
+│   ├── routers/         # API route handlers
+│   │   ├── agents.py    # Multi-agent workflow endpoints
+│   │   ├── chat.py      # Chat endpoints (streaming & non-streaming)
+│   │   ├── skills.py    # Skills CRUD endpoints
+│   │   └── sessions.py  # Session management
+│   ├── schemas/         # Pydantic request/response models
+│   └── services/        # Business logic layer
+│       ├── agent_service.py   # Multi-agent orchestration
+│       ├── skill_registry.py  # Progressive disclosure skills
+│       └── tool_registry.py   # Tool templates for custom agents
 ├── core/
 │   ├── config.py        # Configuration and environment handling
 │   └── models.py        # Model initialization utilities
@@ -918,6 +1051,23 @@ src/langchain_docker/
 │   └── streaming.py            # Streaming output
 └── utils/
     └── errors.py        # Custom exceptions
+
+web_ui/                   # React Web UI (recommended)
+├── src/
+│   ├── api/             # API client modules
+│   ├── components/ui/   # shadcn/ui components (Button, Card, Collapsible, etc.)
+│   ├── features/
+│   │   ├── chat/        # ChatPage - streaming chat
+│   │   ├── multiagent/  # MultiAgentPage - React Flow visualization
+│   │   ├── builder/     # BuilderPage - single-page agent builder
+│   │   └── skills/      # SkillsPage - skills management
+│   └── stores/          # Zustand state management
+├── Dockerfile           # Multi-stage build (Node → nginx)
+└── nginx.conf           # SPA routing + API proxy
+
+chainlit_app/            # Chainlit UI (legacy)
+├── app.py               # Main Chainlit application
+└── utils.py             # API client for FastAPI
 ```
 
 ## Development

@@ -129,6 +129,7 @@ export interface CustomAgentInfo {
   id: string;
   name: string;
   tools: string[];
+  skills: string[];
   description: string;
   created_at: string;
 }
@@ -138,6 +139,7 @@ export interface CustomAgentCreateRequest {
   name: string;
   system_prompt: string;
   tools: ToolConfig[];
+  skills?: string[];
   metadata?: Record<string, unknown>;
 }
 
@@ -195,4 +197,87 @@ export interface StatusResponse {
   active_sessions: number;
   cached_models: number;
   tracing_enabled: boolean;
+}
+
+// Skills types (Progressive Disclosure Pattern)
+export interface SkillMetadata {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: string;
+  author?: string | null;
+}
+
+export interface SkillResource {
+  name: string;
+  description: string;
+  content?: string | null;
+}
+
+export interface SkillScript {
+  name: string;
+  description: string;
+  language: string;
+  content?: string | null;
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: string;
+  author?: string | null;
+  is_builtin: boolean;
+  core_content?: string | null;
+  resources: SkillResource[];
+  scripts: SkillScript[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SkillListResponse {
+  skills: SkillMetadata[];
+  total: number;
+}
+
+export interface SkillCreateRequest {
+  id?: string | null;
+  name: string;
+  description: string;
+  category: string;
+  version?: string;
+  author?: string | null;
+  core_content: string;
+  resources?: SkillResource[];
+  scripts?: SkillScript[];
+}
+
+export interface SkillUpdateRequest {
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
+  version?: string | null;
+  author?: string | null;
+  core_content?: string | null;
+  resources?: SkillResource[] | null;
+  scripts?: SkillScript[] | null;
+}
+
+export interface SkillCreateResponse {
+  skill_id: string;
+  name: string;
+  message: string;
+}
+
+export interface SkillDeleteResponse {
+  skill_id: string;
+  deleted: boolean;
+}
+
+export interface SkillLoadResponse {
+  skill_id: string;
+  name: string;
+  content: string;
 }

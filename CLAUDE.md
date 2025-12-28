@@ -89,8 +89,9 @@ Once running:
 **Features:**
 - Streaming chat with provider/model selection
 - Multi-agent workflow visualization with React Flow
-- Custom agent builder wizard
-- Dark theme with teal accents (LangSmith-inspired)
+- Custom agent builder with single-page layout (LangSmith-inspired)
+- Skills management with progressive disclosure
+- Dark theme with teal accents
 
 ### Running the Chainlit UI (Legacy)
 
@@ -197,13 +198,15 @@ src/langchain_docker/
 │   │   ├── agents.py         # Multi-agent workflow endpoints
 │   │   ├── chat.py           # Chat endpoints (streaming & non-streaming)
 │   │   ├── models.py         # Model management endpoints
-│   │   └── sessions.py       # Session/conversation history endpoints
+│   │   ├── sessions.py       # Session/conversation history endpoints
+│   │   └── skills.py         # Skills CRUD and loading endpoints
 │   ├── schemas/               # Pydantic models for request/response
 │   │   ├── __init__.py
 │   │   ├── agents.py         # Multi-agent workflow schemas
 │   │   ├── chat.py           # Chat request/response schemas
 │   │   ├── models.py         # Model schemas
-│   │   └── sessions.py       # Session schemas
+│   │   ├── sessions.py       # Session schemas
+│   │   └── skills.py         # Skill request/response schemas
 │   └── services/              # Business logic layer
 │       ├── __init__.py
 │       ├── agent_service.py  # Multi-agent workflow orchestration (LangGraph)
@@ -305,6 +308,7 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `chat.py`: MessageSchema, ChatRequest, ChatResponse, StreamEvent, MemoryMetadata
 - `sessions.py`: SessionCreate, SessionResponse, SessionList, DeleteResponse
 - `models.py`: ProviderInfo, ProviderDetails, ValidateRequest, ValidateResponse
+- `skills.py`: SkillMetadata, SkillInfo, SkillCreateRequest, SkillUpdateRequest, SkillResource, SkillScript
 
 **Services** (`src/langchain_docker/api/services/`):
 - Business logic layer, reuses 100% of existing core functionality
@@ -350,6 +354,13 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `chat.py`: POST /api/v1/chat, POST /api/v1/chat/stream (SSE)
 - `models.py`: GET /api/v1/models/providers, GET /api/v1/models/providers/{provider}, POST /api/v1/models/validate
 - `sessions.py`: Full CRUD for sessions (POST, GET, LIST, DELETE)
+- `skills.py`: Skills API endpoints
+  - GET /api/v1/skills - List all skills (metadata only)
+  - GET /api/v1/skills/{skill_id} - Get full skill details with core content
+  - POST /api/v1/skills - Create custom skill
+  - PUT /api/v1/skills/{skill_id} - Update skill
+  - DELETE /api/v1/skills/{skill_id} - Delete custom skill
+  - POST /api/v1/skills/{skill_id}/load - Load skill into agent context
 
 **Middleware** (`src/langchain_docker/api/middleware.py`):
 - Maps custom exceptions to HTTP responses
@@ -416,14 +427,16 @@ web_ui/
 │   │   ├── chat.ts          # Chat API with SSE streaming
 │   │   ├── sessions.ts      # Session CRUD operations
 │   │   ├── models.ts        # Provider/model endpoints
-│   │   └── agents.ts        # Multi-agent workflow API
+│   │   ├── agents.ts        # Multi-agent workflow API
+│   │   └── skills.ts        # Skills API (list, get, create, update, delete)
 │   ├── components/
-│   │   ├── ui/              # shadcn/ui components (Button, Input, Card, etc.)
+│   │   ├── ui/              # shadcn/ui components (Button, Input, Card, Collapsible, etc.)
 │   │   └── layout/          # Header with navigation
 │   ├── features/
 │   │   ├── chat/            # ChatPage - streaming chat interface
 │   │   ├── multiagent/      # MultiAgentPage - React Flow + chat
-│   │   └── builder/         # BuilderPage - 4-step agent wizard
+│   │   ├── builder/         # BuilderPage - single-page agent builder
+│   │   └── skills/          # SkillsPage - skills management
 │   ├── stores/
 │   │   ├── sessionStore.ts  # Chat state (messages, streaming)
 │   │   └── settingsStore.ts # Persisted settings (provider, model, temp)
@@ -447,7 +460,8 @@ web_ui/
 |-------|-----------|-------------|
 | `/chat` | ChatPage | Standard streaming chat with provider/model selection |
 | `/agents` | MultiAgentPage | Split-panel: chat left, React Flow graph right |
-| `/builder` | BuilderPage | 4-step wizard to create custom agents |
+| `/builder` | BuilderPage | Single-page agent builder (LangSmith-inspired) |
+| `/skills` | SkillsPage | Skills management with editor |
 
 **Key Features:**
 
@@ -464,10 +478,23 @@ web_ui/
    - Bidirectional edges between supervisor and agents
 
 3. **BuilderPage** (`src/features/builder/BuilderPage.tsx`):
-   - Step 1: Agent name (1-50 characters)
-   - Step 2: System prompt (min 10 characters)
-   - Step 3: Tool selection with category filter (math, weather, research, finance, database)
-   - Step 4: Review and create
+   - Single-page layout inspired by LangSmith Agent Builder
+   - Header bar with inline agent name input, Draft badge, and Create Agent button
+   - Collapsible Instructions section (system prompt with character counter)
+   - Collapsible Toolbox section with Tools and Skills tabs
+   - Tool/Skill selection via "Add" buttons with category-filtered popover
+   - Selected items shown as removable badges with X buttons
+   - Real-time Agent Flow visualization showing:
+     - User Input → Agent → Response flow
+     - Connected tool nodes (blue) and skill nodes (purple)
+     - Dynamic count badge on agent showing total tools + skills
+   - Validation summary at bottom with inline error display
+   - Random avatar color generation for new agents
+
+4. **SkillsPage** (`src/features/skills/SkillsPage.tsx`):
+   - Skills listing with category-based organization
+   - Inline skill editor with code preview
+   - Progressive disclosure pattern for skill content
 
 **API Client Pattern:**
 ```typescript
@@ -736,7 +763,9 @@ curl http://localhost:8000/api/v1/sessions/{session_id}
 3. **Key files to modify**:
    - `src/features/chat/ChatPage.tsx` - Chat interface and streaming logic
    - `src/features/multiagent/MultiAgentPage.tsx` - React Flow workflow visualization
-   - `src/features/builder/BuilderPage.tsx` - Agent creation wizard
+   - `src/features/builder/BuilderPage.tsx` - Single-page agent builder with flow visualization
+   - `src/features/skills/SkillsPage.tsx` - Skills management interface
+   - `src/components/ui/collapsible.tsx` - Reusable collapsible section component
    - `src/api/*.ts` - API client methods
    - `src/stores/*.ts` - Zustand state management
    - `src/types/api.ts` - TypeScript types (keep in sync with backend schemas)
@@ -748,6 +777,7 @@ curl http://localhost:8000/api/v1/sessions/{session_id}
    # Copy component code to src/components/ui/
    # Example components already included:
    # - Button, Input, Card, Badge, Select, Slider, ScrollArea, Checkbox
+   # - Collapsible (custom), Popover, Tabs, Textarea
    ```
 
 5. **Building for production**:

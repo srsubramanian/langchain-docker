@@ -74,10 +74,10 @@ def create_custom_agent(
     request: CustomAgentCreateRequest,
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """Create a custom agent from tool selections.
+    """Create a custom agent from tool selections and skills.
 
-    Select tools from the registry and configure the agent's behavior
-    with a custom system prompt.
+    Select tools from the registry and/or skills to include.
+    Skills automatically add their context to the system prompt.
 
     Args:
         request: Custom agent configuration
@@ -97,16 +97,24 @@ def create_custom_agent(
             name=request.name,
             system_prompt=request.system_prompt,
             tool_configs=tool_configs,
+            skill_ids=request.skills,
             metadata=request.metadata,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    total_items = len(request.tools) + len(request.skills)
+    message_parts = []
+    if request.tools:
+        message_parts.append(f"{len(request.tools)} tools")
+    if request.skills:
+        message_parts.append(f"{len(request.skills)} skills")
+
     return CustomAgentCreateResponse(
         agent_id=agent_id,
         name=request.name,
         tools=[t.tool_id for t in request.tools],
-        message=f"Custom agent '{request.name}' created with {len(request.tools)} tools",
+        message=f"Custom agent '{request.name}' created with {' and '.join(message_parts) if message_parts else 'default config'}",
     )
 
 
@@ -131,6 +139,7 @@ def get_custom_agent(
         id=agent.id,
         name=agent.name,
         tools=[tc["tool_id"] for tc in agent.tool_configs],
+        skills=getattr(agent, "skill_ids", []) or [],
         description=agent.system_prompt[:100] + "..." if len(agent.system_prompt) > 100 else agent.system_prompt,
         created_at=agent.created_at.isoformat(),
     )

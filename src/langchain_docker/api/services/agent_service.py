@@ -25,6 +25,7 @@ class CustomAgent:
     system_prompt: str
     tool_configs: list[dict]  # [{"tool_id": str, "config": dict}, ...]
     created_at: datetime
+    skill_ids: list[str] = field(default_factory=list)  # Skills to include
     metadata: dict = field(default_factory=dict)
 
 
@@ -268,22 +269,24 @@ Guidelines:
         name: str,
         system_prompt: str,
         tool_configs: list[dict],
+        skill_ids: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
     ) -> CustomAgent:
-        """Create a custom agent from tool selections.
+        """Create a custom agent from tool selections and skills.
 
         Args:
             agent_id: Unique identifier for the agent
             name: Human-readable agent name
             system_prompt: System prompt defining agent behavior
             tool_configs: List of tool configurations [{"tool_id": str, "config": dict}]
+            skill_ids: List of skill IDs to include (their context will be added)
             metadata: Optional additional metadata
 
         Returns:
             Created CustomAgent
 
         Raises:
-            ValueError: If any tool_id is invalid
+            ValueError: If any tool_id or skill_id is invalid
         """
         # Validate tool configs
         for tc in tool_configs:
@@ -292,16 +295,24 @@ Guidelines:
                 available = [t.id for t in self._tool_registry.list_tools()]
                 raise ValueError(f"Unknown tool: {tool_id}. Available: {available}")
 
+        # Validate skill_ids
+        skill_ids = skill_ids or []
+        for skill_id in skill_ids:
+            if not self._skill_registry.get_skill(skill_id):
+                available = [s.id for s in self._skill_registry.list_skills()]
+                raise ValueError(f"Unknown skill: {skill_id}. Available: {available}")
+
         agent = CustomAgent(
             id=agent_id,
             name=name,
             system_prompt=system_prompt,
             tool_configs=tool_configs,
             created_at=datetime.utcnow(),
+            skill_ids=skill_ids,
             metadata=metadata or {},
         )
         self._custom_agents[agent_id] = agent
-        logger.info(f"Created custom agent: {agent_id} ({name})")
+        logger.info(f"Created custom agent: {agent_id} ({name}) with {len(skill_ids)} skills")
         return agent
 
     def get_custom_agent(self, agent_id: str) -> Optional[CustomAgent]:
@@ -326,6 +337,7 @@ Guidelines:
                 "id": a.id,
                 "name": a.name,
                 "tools": [tc["tool_id"] for tc in a.tool_configs],
+                "skills": a.skill_ids,
                 "description": a.system_prompt[:100] + "..." if len(a.system_prompt) > 100 else a.system_prompt,
                 "created_at": a.created_at.isoformat(),
             }
@@ -394,6 +406,21 @@ Guidelines:
             )
             tools.append(tool)
 
+        # Build system prompt with skills (progressive disclosure Level 2)
+        system_prompt = custom.system_prompt
+
+        if custom.skill_ids:
+            skill_contexts = []
+            for skill_id in custom.skill_ids:
+                skill = self._skill_registry.get_skill(skill_id)
+                if skill:
+                    # Load Level 2 content from the skill
+                    core_content = skill.load_core()
+                    skill_contexts.append(f"\n## {skill.name} Skill\n{core_content}")
+
+            if skill_contexts:
+                system_prompt = system_prompt + "\n\n# Equipped Skills\n" + "\n".join(skill_contexts)
+
         # Sanitize name for OpenAI compatibility
         safe_name = self._sanitize_agent_name(custom.name)
 
@@ -401,7 +428,7 @@ Guidelines:
             model=llm,
             tools=tools,
             name=safe_name,
-            system_prompt=custom.system_prompt,
+            system_prompt=system_prompt,
         )
 
     def create_workflow(
