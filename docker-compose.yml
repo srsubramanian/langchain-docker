@@ -49,14 +49,29 @@ services:
     networks:
       - langchain-network
 
-  # Chainlit UI
+  # React UI (new)
+  react-ui:
+    build:
+      context: ./web_ui
+      dockerfile: Dockerfile
+    container_name: langchain-react-ui
+    ports:
+      - "8001:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - langchain-network
+
+  # Chainlit UI (legacy, port 8002)
   ui:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: langchain-ui
     ports:
-      - "8001:8001"
+      - "8002:8001"
     env_file:
       - .env
     environment:
