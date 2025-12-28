@@ -128,10 +128,9 @@ export interface ToolConfig {
 export interface CustomAgentInfo {
   id: string;
   name: string;
-  system_prompt: string;
-  tool_configs: ToolConfig[];
+  tools: string[];
+  description: string;
   created_at: string;
-  metadata: Record<string, unknown>;
 }
 
 export interface CustomAgentCreateRequest {

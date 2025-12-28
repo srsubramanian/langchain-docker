@@ -68,7 +68,31 @@ Once running:
 - Health Check: http://localhost:8000/health
 - Status: http://localhost:8000/api/v1/status
 
-### Running the Chainlit UI
+### Running the React Web UI (Recommended)
+
+**Note: The React Web UI requires the FastAPI backend to be running.**
+
+```bash
+# Terminal 1: Start FastAPI backend
+uv run langchain-docker serve
+
+# Terminal 2: Start React dev server
+cd web_ui
+npm install
+npm run dev
+```
+
+Once running:
+- React Web UI: http://localhost:3000 (dev) or http://localhost:8001 (Docker)
+- FastAPI Backend: http://localhost:8000
+
+**Features:**
+- Streaming chat with provider/model selection
+- Multi-agent workflow visualization with React Flow
+- Custom agent builder wizard
+- Dark theme with teal accents (LangSmith-inspired)
+
+### Running the Chainlit UI (Legacy)
 
 **Note: The Chainlit UI requires the FastAPI backend to be running.**
 
@@ -76,15 +100,15 @@ Once running:
 # Terminal 1: Start FastAPI backend
 uv run langchain-docker serve
 
-# Terminal 2: Start Chainlit UI on port 8001
-uv run chainlit run chainlit_app/app.py --port 8001
+# Terminal 2: Start Chainlit UI on port 8002
+uv run chainlit run chainlit_app/app.py --port 8002
 
 # With watch mode (auto-reload on file changes)
-uv run chainlit run chainlit_app/app.py --port 8001 -w
+uv run chainlit run chainlit_app/app.py --port 8002 -w
 ```
 
 Once running:
-- Chainlit UI: http://localhost:8001
+- Chainlit UI: http://localhost:8002
 - FastAPI Backend: http://localhost:8000
 
 ### Running with Docker
@@ -106,8 +130,10 @@ docker-compose down
 ```
 
 **Docker Compose Services:**
+- `phoenix`: Phoenix tracing server on port 6006
 - `api`: FastAPI backend on port 8000
-- `ui`: Chainlit UI on port 8001
+- `react-ui`: React Web UI on port 8001 (recommended)
+- `ui`: Chainlit UI on port 8002 (legacy)
 - Shared network: `langchain-network`
 - Health checks enabled for automatic dependency management
 
@@ -126,7 +152,8 @@ docker-compose up
 **Services running:**
 - Phoenix UI: http://localhost:6006
 - FastAPI Backend: http://localhost:8000
-- Chainlit UI: http://localhost:8001
+- React Web UI: http://localhost:8001 (recommended)
+- Chainlit UI: http://localhost:8002 (legacy)
 
 **For local development without Docker:**
 
@@ -203,13 +230,35 @@ src/langchain_docker/
     ├── __init__.py            # Utility exports
     └── errors.py              # Custom exception classes
 
-chainlit_app/                   # Chainlit UI application
+chainlit_app/                   # Chainlit UI application (legacy, port 8002)
 ├── app.py                     # Main Chainlit application
 ├── utils.py                   # API client for FastAPI communication
 ├── chainlit.md                # Welcome page markdown
 ├── .chainlit/                 # Chainlit configuration
 │   └── config.toml           # UI and app settings
 └── public/                    # Static assets (optional)
+
+web_ui/                         # React Web UI (recommended, port 8001)
+├── src/
+│   ├── api/                   # API client modules (chat, sessions, models, agents)
+│   ├── components/
+│   │   ├── ui/               # shadcn/ui components
+│   │   └── layout/           # Header with navigation
+│   ├── features/
+│   │   ├── chat/             # ChatPage - streaming chat
+│   │   ├── multiagent/       # MultiAgentPage - React Flow visualization
+│   │   └── builder/          # BuilderPage - 4-step agent wizard
+│   ├── stores/               # Zustand stores (session, settings)
+│   ├── types/                # TypeScript types
+│   ├── lib/                  # Utilities (cn.ts)
+│   ├── App.tsx               # Router configuration
+│   ├── main.tsx              # Entry point
+│   └── index.css             # Tailwind + dark theme
+├── Dockerfile                 # Multi-stage build (Node → nginx)
+├── nginx.conf                 # SPA routing + API proxy
+├── package.json               # Dependencies
+├── vite.config.ts             # Vite configuration
+└── tailwind.config.js         # Theme configuration
 
 .env.example                    # Template for environment variables
 .env                           # User's API keys (git-ignored)
@@ -345,6 +394,159 @@ The Chainlit UI provides a web-based chat interface that communicates with the F
 - Chainlit configuration: UI theme, features, telemetry
 - Project name: "LangChain Docker Chat"
 - Shows README as default, session timeout: 3600s
+
+### React Web UI (web_ui/)
+
+A modern React-based web UI inspired by LangSmith Agent Builder, featuring React Flow for workflow visualization. This is the recommended UI for new deployments.
+
+**Tech Stack:**
+- React 18 + Vite + TypeScript
+- shadcn/ui (Radix UI primitives)
+- Tailwind CSS (dark theme with teal accents)
+- Zustand (state management with localStorage persistence)
+- React Flow (workflow/graph visualization)
+- React Router v6 (client-side routing)
+
+**Project Structure:**
+```
+web_ui/
+├── src/
+│   ├── api/                  # API client modules
+│   │   ├── index.ts         # Barrel exports
+│   │   ├── chat.ts          # Chat API with SSE streaming
+│   │   ├── sessions.ts      # Session CRUD operations
+│   │   ├── models.ts        # Provider/model endpoints
+│   │   └── agents.ts        # Multi-agent workflow API
+│   ├── components/
+│   │   ├── ui/              # shadcn/ui components (Button, Input, Card, etc.)
+│   │   └── layout/          # Header with navigation
+│   ├── features/
+│   │   ├── chat/            # ChatPage - streaming chat interface
+│   │   ├── multiagent/      # MultiAgentPage - React Flow + chat
+│   │   └── builder/         # BuilderPage - 4-step agent wizard
+│   ├── stores/
+│   │   ├── sessionStore.ts  # Chat state (messages, streaming)
+│   │   └── settingsStore.ts # Persisted settings (provider, model, temp)
+│   ├── types/
+│   │   └── api.ts           # TypeScript types matching backend schemas
+│   ├── lib/
+│   │   └── cn.ts            # Tailwind class merge utility
+│   ├── App.tsx              # Router configuration
+│   ├── main.tsx             # React entry point
+│   └── index.css            # Tailwind + dark theme CSS variables
+├── Dockerfile               # Multi-stage build (Node → nginx)
+├── nginx.conf               # SPA routing + API proxy
+├── package.json             # Dependencies
+├── vite.config.ts           # Vite + path aliases + dev proxy
+├── tailwind.config.js       # Theme configuration
+└── tsconfig.json            # TypeScript configuration
+```
+
+**Routes:**
+| Route | Component | Description |
+|-------|-----------|-------------|
+| `/chat` | ChatPage | Standard streaming chat with provider/model selection |
+| `/agents` | MultiAgentPage | Split-panel: chat left, React Flow graph right |
+| `/builder` | BuilderPage | 4-step wizard to create custom agents |
+
+**Key Features:**
+
+1. **ChatPage** (`src/features/chat/ChatPage.tsx`):
+   - SSE streaming with real-time token display
+   - Provider/model/temperature settings panel
+   - Message history with user/assistant bubbles
+   - Session persistence across page reloads
+
+2. **MultiAgentPage** (`src/features/multiagent/MultiAgentPage.tsx`):
+   - Split-panel layout (resizable)
+   - React Flow graph showing: User Input → Supervisor → Agents → Response
+   - Agent preset selector (all, math_weather, research_finance, math_only)
+   - Bidirectional edges between supervisor and agents
+
+3. **BuilderPage** (`src/features/builder/BuilderPage.tsx`):
+   - Step 1: Agent name (1-50 characters)
+   - Step 2: System prompt (min 10 characters)
+   - Step 3: Tool selection with category filter (math, weather, research, finance, database)
+   - Step 4: Review and create
+
+**API Client Pattern:**
+```typescript
+// src/api/chat.ts - SSE streaming
+async *streamMessage(request: ChatRequest): AsyncGenerator<StreamEvent> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...request, stream: true }),
+  });
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Parse SSE events (event: type, data: json)
+    // yield parsed StreamEvent objects
+  }
+}
+```
+
+**Zustand Store Pattern:**
+```typescript
+// src/stores/settingsStore.ts - Persisted settings
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+    (set) => ({
+      provider: 'openai',
+      model: null,
+      temperature: 0.7,
+      setProvider: (provider) => set({ provider }),
+      setModel: (model) => set({ model }),
+      setTemperature: (temperature) => set({ temperature }),
+    }),
+    { name: 'settings-storage' }  // localStorage key
+  )
+);
+```
+
+**Docker Configuration:**
+```dockerfile
+# web_ui/Dockerfile - Multi-stage build
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+```
+
+```nginx
+# web_ui/nginx.conf - SPA routing + API proxy
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+
+    # SPA routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API proxy
+    location /api {
+        proxy_pass http://api:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+    }
+}
+```
 
 ### Example Modules
 
@@ -507,6 +709,73 @@ curl http://localhost:8000/api/v1/sessions/{session_id}
    - Use `@cl.on_settings_update` for settings changes
    - Use `@cl.action_callback` for custom button actions
    - Use `cl.user_session.set/get` for state management
+
+### Developing the React Web UI
+
+1. **Start services for development**:
+   ```bash
+   # Terminal 1: FastAPI backend with reload
+   uv run langchain-docker serve --reload
+
+   # Terminal 2: React dev server with hot reload
+   cd web_ui
+   npm install
+   npm run dev
+   ```
+   - React dev server runs on http://localhost:3000
+   - API requests proxy to http://localhost:8000
+
+2. **Project setup (if starting fresh)**:
+   ```bash
+   cd web_ui
+   npm install
+   # or with cache issues:
+   npm install --cache /tmp/npm-cache
+   ```
+
+3. **Key files to modify**:
+   - `src/features/chat/ChatPage.tsx` - Chat interface and streaming logic
+   - `src/features/multiagent/MultiAgentPage.tsx` - React Flow workflow visualization
+   - `src/features/builder/BuilderPage.tsx` - Agent creation wizard
+   - `src/api/*.ts` - API client methods
+   - `src/stores/*.ts` - Zustand state management
+   - `src/types/api.ts` - TypeScript types (keep in sync with backend schemas)
+   - `src/index.css` - Theme CSS variables
+
+4. **Adding a new shadcn/ui component**:
+   ```bash
+   # Components are manually added from shadcn/ui docs
+   # Copy component code to src/components/ui/
+   # Example components already included:
+   # - Button, Input, Card, Badge, Select, Slider, ScrollArea, Checkbox
+   ```
+
+5. **Building for production**:
+   ```bash
+   cd web_ui
+   npm run build
+   # Output in dist/ folder
+   ```
+
+6. **Docker build**:
+   ```bash
+   # Build just the React UI
+   docker build -t langchain-react-ui ./web_ui
+
+   # Or rebuild all services
+   docker-compose up --build
+   ```
+
+7. **Adding new routes**:
+   - Create feature folder in `src/features/<feature-name>/`
+   - Create `<Feature>Page.tsx` component
+   - Add route in `src/App.tsx`
+   - Add navigation link in `src/components/layout/Header.tsx`
+
+8. **Adding new API endpoints**:
+   - Add TypeScript types in `src/types/api.ts`
+   - Create or update API client in `src/api/`
+   - Export from `src/api/index.ts`
 
 ## Important Patterns
 
