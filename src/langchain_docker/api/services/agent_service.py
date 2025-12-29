@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ScheduleConfig:
+    """Schedule configuration for an agent."""
+
+    enabled: bool
+    cron_expression: str
+    trigger_prompt: str
+    timezone: str = "UTC"
+
+
+@dataclass
 class CustomAgent:
     """Custom agent definition created by users."""
 
@@ -26,6 +36,7 @@ class CustomAgent:
     tool_configs: list[dict]  # [{"tool_id": str, "config": dict}, ...]
     created_at: datetime
     skill_ids: list[str] = field(default_factory=list)  # Skills to include
+    schedule: Optional[ScheduleConfig] = None  # Schedule configuration
     metadata: dict = field(default_factory=dict)
 
 
@@ -138,12 +149,13 @@ class AgentService:
     Supports both built-in agents and custom user-defined agents.
     """
 
-    def __init__(self, model_service: ModelService, skill_registry=None):
+    def __init__(self, model_service: ModelService, skill_registry=None, scheduler_service=None):
         """Initialize agent service.
 
         Args:
             model_service: Model service for LLM access
             skill_registry: Skill registry for progressive disclosure skills
+            scheduler_service: Scheduler service for cron-based execution
         """
         self.model_service = model_service
         self._workflows: dict[str, Any] = {}
@@ -155,6 +167,14 @@ class AgentService:
             from langchain_docker.api.services.skill_registry import SkillRegistry
             skill_registry = SkillRegistry()
         self._skill_registry = skill_registry
+
+        # Setup scheduler service
+        if scheduler_service is None:
+            from langchain_docker.api.services.scheduler_service import SchedulerService
+            scheduler_service = SchedulerService()
+        self._scheduler_service = scheduler_service
+        self._scheduler_service.set_execution_callback(self._execute_scheduled_agent)
+        self._scheduler_service.start()
 
         # Create dynamic agents from skill registry
         self._dynamic_agents = self._create_skill_based_agents()
@@ -270,6 +290,7 @@ Guidelines:
         system_prompt: str,
         tool_configs: list[dict],
         skill_ids: Optional[list[str]] = None,
+        schedule_config: Optional[dict] = None,
         metadata: Optional[dict] = None,
     ) -> CustomAgent:
         """Create a custom agent from tool selections and skills.
@@ -280,6 +301,11 @@ Guidelines:
             system_prompt: System prompt defining agent behavior
             tool_configs: List of tool configurations [{"tool_id": str, "config": dict}]
             skill_ids: List of skill IDs to include (their context will be added)
+            schedule_config: Optional schedule configuration dict with:
+                - enabled: bool
+                - cron_expression: str (e.g., "0 9 * * *")
+                - trigger_prompt: str
+                - timezone: str (default: "UTC")
             metadata: Optional additional metadata
 
         Returns:
@@ -302,6 +328,16 @@ Guidelines:
                 available = [s.id for s in self._skill_registry.list_skills()]
                 raise ValueError(f"Unknown skill: {skill_id}. Available: {available}")
 
+        # Create schedule config if provided
+        schedule = None
+        if schedule_config:
+            schedule = ScheduleConfig(
+                enabled=schedule_config.get("enabled", False),
+                cron_expression=schedule_config["cron_expression"],
+                trigger_prompt=schedule_config["trigger_prompt"],
+                timezone=schedule_config.get("timezone", "UTC"),
+            )
+
         agent = CustomAgent(
             id=agent_id,
             name=name,
@@ -309,11 +345,134 @@ Guidelines:
             tool_configs=tool_configs,
             created_at=datetime.utcnow(),
             skill_ids=skill_ids,
+            schedule=schedule,
             metadata=metadata or {},
         )
         self._custom_agents[agent_id] = agent
-        logger.info(f"Created custom agent: {agent_id} ({name}) with {len(skill_ids)} skills")
+
+        # Register schedule if provided
+        if schedule:
+            self._scheduler_service.add_schedule(
+                agent_id=agent_id,
+                cron_expression=schedule.cron_expression,
+                trigger_prompt=schedule.trigger_prompt,
+                timezone=schedule.timezone,
+                enabled=schedule.enabled,
+            )
+
+        logger.info(
+            f"Created custom agent: {agent_id} ({name}) with {len(skill_ids)} skills"
+            + (f", scheduled: {schedule.cron_expression}" if schedule and schedule.enabled else "")
+        )
         return agent
+
+    def _execute_scheduled_agent(self, agent_id: str, trigger_prompt: str) -> None:
+        """Execute a scheduled agent with the trigger prompt.
+
+        This is called by the scheduler service when a cron trigger fires.
+
+        Args:
+            agent_id: The agent to execute
+            trigger_prompt: The prompt to send
+        """
+        agent = self._custom_agents.get(agent_id)
+        if not agent:
+            logger.error(f"Scheduled agent not found: {agent_id}")
+            return
+
+        try:
+            # Create a simple workflow for this agent and invoke it
+            workflow_id = f"_scheduled_{agent_id}_{datetime.utcnow().timestamp()}"
+
+            # Build the agent
+            llm = self.model_service.get_or_create(
+                provider="openai",  # Default provider for scheduled execution
+                model=None,
+                temperature=0.0,
+            )
+
+            # Invoke the agent directly
+            agent_graph = self._build_agent_from_custom(agent_id, llm)
+            compiled = agent_graph.compile() if hasattr(agent_graph, 'compile') else agent_graph
+
+            with trace_session(workflow_id):
+                result = compiled.invoke(
+                    {"messages": [HumanMessage(content=trigger_prompt)]},
+                    config={"metadata": {"agent_id": agent_id, "scheduled": True}},
+                )
+
+            # Log the result
+            messages = result.get("messages", [])
+            final_response = messages[-1].content if messages else "No response"
+            logger.info(f"Scheduled execution completed for {agent_id}: {final_response[:100]}...")
+
+        except Exception as e:
+            logger.error(f"Scheduled execution failed for {agent_id}: {e}")
+
+    def get_agent_schedule(self, agent_id: str) -> Optional[dict]:
+        """Get schedule info for an agent.
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            Schedule info dict or None
+        """
+        return self._scheduler_service.get_schedule(agent_id)
+
+    def update_agent_schedule(
+        self,
+        agent_id: str,
+        enabled: Optional[bool] = None,
+        cron_expression: Optional[str] = None,
+        trigger_prompt: Optional[str] = None,
+        timezone: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Update schedule for an agent.
+
+        Args:
+            agent_id: Agent ID
+            enabled: New enabled state
+            cron_expression: New cron expression
+            trigger_prompt: New trigger prompt
+            timezone: New timezone
+
+        Returns:
+            Updated schedule info or None if agent not found
+        """
+        agent = self._custom_agents.get(agent_id)
+        if not agent:
+            return None
+
+        current = self._scheduler_service.get_schedule(agent_id)
+
+        # Build updated config
+        new_config = {
+            "enabled": enabled if enabled is not None else (current.get("enabled", False) if current else False),
+            "cron_expression": cron_expression or (current.get("cron_expression") if current else None),
+            "trigger_prompt": trigger_prompt or (current.get("trigger_prompt") if current else None),
+            "timezone": timezone or (current.get("timezone", "UTC") if current else "UTC"),
+        }
+
+        if not new_config["cron_expression"] or not new_config["trigger_prompt"]:
+            return None
+
+        # Update agent's schedule
+        agent.schedule = ScheduleConfig(
+            enabled=new_config["enabled"],
+            cron_expression=new_config["cron_expression"],
+            trigger_prompt=new_config["trigger_prompt"],
+            timezone=new_config["timezone"],
+        )
+
+        # Update scheduler
+        return self._scheduler_service.add_schedule(
+            agent_id=agent_id,
+            cron_expression=new_config["cron_expression"],
+            trigger_prompt=new_config["trigger_prompt"],
+            timezone=new_config["timezone"],
+            enabled=new_config["enabled"],
+        )
 
     def get_custom_agent(self, agent_id: str) -> Optional[CustomAgent]:
         """Get a custom agent by ID.
@@ -332,17 +491,29 @@ Guidelines:
         Returns:
             List of custom agent info
         """
-        return [
-            {
+        result = []
+        for a in self._custom_agents.values():
+            agent_dict = {
                 "id": a.id,
                 "name": a.name,
                 "tools": [tc["tool_id"] for tc in a.tool_configs],
                 "skills": a.skill_ids,
                 "description": a.system_prompt[:100] + "..." if len(a.system_prompt) > 100 else a.system_prompt,
                 "created_at": a.created_at.isoformat(),
+                "schedule": None,
             }
-            for a in self._custom_agents.values()
-        ]
+            # Include schedule info if present
+            if a.schedule:
+                schedule_data = self.get_agent_schedule(a.id)
+                agent_dict["schedule"] = {
+                    "enabled": a.schedule.enabled,
+                    "cron_expression": a.schedule.cron_expression,
+                    "trigger_prompt": a.schedule.trigger_prompt,
+                    "timezone": a.schedule.timezone,
+                    "next_run": schedule_data.get("next_run") if schedule_data else None,
+                }
+            result.append(agent_dict)
+        return result
 
     def delete_custom_agent(self, agent_id: str) -> bool:
         """Delete a custom agent.
@@ -354,6 +525,8 @@ Guidelines:
             True if deleted, False if not found
         """
         if agent_id in self._custom_agents:
+            # Remove any associated schedule
+            self._scheduler_service.remove_schedule(agent_id)
             del self._custom_agents[agent_id]
             logger.info(f"Deleted custom agent: {agent_id}")
             return True

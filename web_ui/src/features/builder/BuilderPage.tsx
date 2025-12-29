@@ -13,6 +13,8 @@ import {
   ArrowLeft,
   Sparkles,
   Plus,
+  Clock,
+  Calendar,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +25,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible } from '@/components/ui/collapsible';
 import { agentsApi, skillsApi } from '@/api';
-import type { ToolTemplate, SkillMetadata } from '@/types/api';
+import type { ToolTemplate, SkillMetadata, ScheduleConfig } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { TemplateSelector } from './TemplateSelector';
 import type { AgentTemplate } from './templates';
@@ -32,6 +34,17 @@ interface TestMessage {
   role: 'user' | 'assistant';
   content: string;
 }
+
+// Cron expression presets for easy selection
+const CRON_PRESETS = [
+  { label: 'Every minute', value: '* * * * *', description: 'For testing only' },
+  { label: 'Every hour', value: '0 * * * *', description: 'At the start of every hour' },
+  { label: 'Every day at 9am', value: '0 9 * * *', description: 'Daily at 9:00 AM' },
+  { label: 'Every day at 6pm', value: '0 18 * * *', description: 'Daily at 6:00 PM' },
+  { label: 'Every Monday at 9am', value: '0 9 * * 1', description: 'Weekly on Monday' },
+  { label: 'Every weekday at 9am', value: '0 9 * * 1-5', description: 'Mon-Fri at 9:00 AM' },
+  { label: 'First of month at 9am', value: '0 9 1 * *', description: 'Monthly on the 1st' },
+];
 
 // Generate avatar color from name
 function getAvatarColor(name: string): string {
@@ -78,6 +91,12 @@ export function BuilderPage() {
   const [toolsOrSkillsTab, setToolsOrSkillsTab] = useState<'tools' | 'skills'>('tools');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Schedule state
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [cronExpression, setCronExpression] = useState('0 9 * * *');
+  const [triggerPrompt, setTriggerPrompt] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState<string | null>('0 9 * * *');
 
   // Template selection state
   const [showTemplates, setShowTemplates] = useState(!isEditing);
@@ -161,11 +180,22 @@ export function BuilderPage() {
     setError(null);
 
     try {
+      // Build schedule config if enabled
+      const schedule: ScheduleConfig | null = scheduleEnabled && triggerPrompt.trim()
+        ? {
+            enabled: true,
+            cron_expression: cronExpression,
+            trigger_prompt: triggerPrompt.trim(),
+            timezone: 'UTC',
+          }
+        : null;
+
       await agentsApi.createCustomAgent({
         name: name.trim(),
         system_prompt: systemPrompt.trim(),
         tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
         skills: selectedSkills,
+        schedule,
       });
       // Cleanup test workflow
       if (testWorkflowId) {
@@ -606,6 +636,133 @@ export function BuilderPage() {
                         </div>
                       </TabsContent>
                     </Tabs>
+                  </div>
+                </Collapsible>
+
+                {/* Schedule Section */}
+                <Collapsible
+                  title="Schedule"
+                  icon={<Clock className="h-4 w-4 text-muted-foreground" />}
+                  defaultOpen={false}
+                  badge={
+                    scheduleEnabled ? (
+                      <Badge variant="secondary" className="ml-2 text-xs bg-green-500/20 text-green-400">
+                        <Calendar className="h-3 w-3 mr-1" />
+                        Active
+                      </Badge>
+                    ) : null
+                  }
+                >
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Automatically run your agent on a schedule with a predefined prompt.
+                    </p>
+
+                    {/* Enable/Disable Toggle */}
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleEnabled(!scheduleEnabled)}
+                        className={cn(
+                          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                          scheduleEnabled ? 'bg-primary' : 'bg-muted'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                            scheduleEnabled ? 'translate-x-6' : 'translate-x-1'
+                          )}
+                        />
+                      </button>
+                      <span className="text-sm font-medium">
+                        {scheduleEnabled ? 'Schedule enabled' : 'Schedule disabled'}
+                      </span>
+                    </div>
+
+                    {scheduleEnabled && (
+                      <>
+                        {/* Cron Presets */}
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">
+                            When to run
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {CRON_PRESETS.map((preset) => (
+                              <button
+                                key={preset.value}
+                                type="button"
+                                onClick={() => {
+                                  setCronExpression(preset.value);
+                                  setSelectedPreset(preset.value);
+                                }}
+                                className={cn(
+                                  'flex flex-col items-start rounded-lg border p-3 text-left transition-colors',
+                                  selectedPreset === preset.value
+                                    ? 'border-primary bg-primary/10'
+                                    : 'border-border hover:bg-muted'
+                                )}
+                              >
+                                <span className="text-sm font-medium">{preset.label}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {preset.description}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Custom Cron Expression */}
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">
+                            Cron expression
+                          </label>
+                          <Input
+                            value={cronExpression}
+                            onChange={(e) => {
+                              setCronExpression(e.target.value);
+                              setSelectedPreset(null);
+                            }}
+                            placeholder="0 9 * * *"
+                            className="font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Format: minute hour day month weekday (e.g., "0 9 * * *" = daily at 9am)
+                          </p>
+                        </div>
+
+                        {/* Trigger Prompt */}
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">
+                            Trigger prompt
+                          </label>
+                          <Textarea
+                            value={triggerPrompt}
+                            onChange={(e) => setTriggerPrompt(e.target.value)}
+                            placeholder="Run your daily report..."
+                            className="min-h-[80px]"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            This message will be sent to the agent when the schedule triggers.
+                          </p>
+                        </div>
+
+                        {/* Schedule Preview */}
+                        {triggerPrompt.trim() && (
+                          <div className="rounded-lg border border-dashed p-3 bg-muted/50">
+                            <p className="text-xs font-medium text-muted-foreground mb-1">
+                              Schedule Preview
+                            </p>
+                            <p className="text-sm">
+                              <span className="font-medium">{name || 'Agent'}</span> will run{' '}
+                              <span className="text-primary font-mono">{cronExpression}</span> with
+                              prompt: "{triggerPrompt.slice(0, 50)}
+                              {triggerPrompt.length > 50 ? '...' : ''}"
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </Collapsible>
 

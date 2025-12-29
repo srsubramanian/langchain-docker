@@ -2,7 +2,43 @@
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# Schedule Schemas
+
+
+class ScheduleConfig(BaseModel):
+    """Configuration for scheduled agent execution."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether the schedule is active",
+    )
+    cron_expression: str = Field(
+        ...,
+        description="Cron expression (e.g., '0 9 * * *' for daily at 9am)",
+    )
+    trigger_prompt: str = Field(
+        ...,
+        description="The prompt/message to send when the schedule triggers",
+        min_length=1,
+    )
+    timezone: str = Field(
+        default="UTC",
+        description="Timezone for the schedule (e.g., 'America/New_York')",
+    )
+
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron(cls, v: str) -> str:
+        """Validate cron expression format."""
+        parts = v.strip().split()
+        if len(parts) != 5:
+            raise ValueError(
+                "Cron expression must have 5 parts: minute hour day month weekday"
+            )
+        return v
 
 
 # Tool Registry Schemas
@@ -70,10 +106,24 @@ class CustomAgentCreateRequest(BaseModel):
         default_factory=list,
         description="Skill IDs to include (skills add their tools to the agent)",
     )
+    schedule: Optional[ScheduleConfig] = Field(
+        None,
+        description="Optional schedule configuration for automated execution",
+    )
     metadata: dict = Field(
         default_factory=dict,
         description="Optional metadata for the agent",
     )
+
+
+class ScheduleInfo(BaseModel):
+    """Schedule information for display."""
+
+    enabled: bool = Field(..., description="Whether the schedule is active")
+    cron_expression: str = Field(..., description="Cron expression")
+    trigger_prompt: str = Field(..., description="Prompt to run on trigger")
+    timezone: str = Field(..., description="Timezone")
+    next_run: Optional[str] = Field(None, description="Next scheduled run time (ISO format)")
 
 
 class CustomAgentInfo(BaseModel):
@@ -84,6 +134,7 @@ class CustomAgentInfo(BaseModel):
     tools: list[str] = Field(..., description="Tool IDs equipped on this agent")
     skills: list[str] = Field(default_factory=list, description="Skill IDs included")
     description: str = Field(..., description="Truncated system prompt")
+    schedule: Optional[ScheduleInfo] = Field(None, description="Schedule configuration")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
 
 
@@ -93,6 +144,7 @@ class CustomAgentCreateResponse(BaseModel):
     agent_id: str = Field(..., description="Created agent ID")
     name: str = Field(..., description="Agent name")
     tools: list[str] = Field(..., description="Tool IDs")
+    schedule_enabled: bool = Field(default=False, description="Whether schedule is active")
     message: str = Field(..., description="Status message")
 
 

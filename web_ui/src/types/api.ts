@@ -125,12 +125,29 @@ export interface ToolConfig {
   config: Record<string, unknown>;
 }
 
+// Schedule types
+export interface ScheduleConfig {
+  enabled: boolean;
+  cron_expression: string;
+  trigger_prompt: string;
+  timezone?: string;
+}
+
+export interface ScheduleInfo {
+  enabled: boolean;
+  cron_expression: string;
+  trigger_prompt: string;
+  timezone: string;
+  next_run?: string | null;
+}
+
 export interface CustomAgentInfo {
   id: string;
   name: string;
   tools: string[];
   skills: string[];
   description: string;
+  schedule?: ScheduleInfo | null;
   created_at: string;
 }
 
@@ -140,12 +157,15 @@ export interface CustomAgentCreateRequest {
   system_prompt: string;
   tools: ToolConfig[];
   skills?: string[];
+  schedule?: ScheduleConfig | null;
   metadata?: Record<string, unknown>;
 }
 
 export interface CustomAgentCreateResponse {
   agent_id: string;
   name: string;
+  tools: string[];
+  schedule_enabled: boolean;
   message: string;
 }
 

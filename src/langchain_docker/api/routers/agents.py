@@ -11,6 +11,7 @@ from langchain_docker.api.schemas.agents import (
     CustomAgentCreateResponse,
     CustomAgentDeleteResponse,
     CustomAgentInfo,
+    ScheduleInfo,
     ToolTemplateSchema,
     WorkflowCreateRequest,
     WorkflowCreateResponse,
@@ -78,6 +79,7 @@ def create_custom_agent(
 
     Select tools from the registry and/or skills to include.
     Skills automatically add their context to the system prompt.
+    Optionally configure a schedule for automated execution.
 
     Args:
         request: Custom agent configuration
@@ -92,28 +94,42 @@ def create_custom_agent(
             {"tool_id": t.tool_id, "config": t.config}
             for t in request.tools
         ]
+
+        # Build schedule config if provided
+        schedule_config = None
+        if request.schedule:
+            schedule_config = {
+                "enabled": request.schedule.enabled,
+                "cron_expression": request.schedule.cron_expression,
+                "trigger_prompt": request.schedule.trigger_prompt,
+                "timezone": request.schedule.timezone,
+            }
+
         agent_service.create_custom_agent(
             agent_id=agent_id,
             name=request.name,
             system_prompt=request.system_prompt,
             tool_configs=tool_configs,
             skill_ids=request.skills,
+            schedule_config=schedule_config,
             metadata=request.metadata,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    total_items = len(request.tools) + len(request.skills)
     message_parts = []
     if request.tools:
         message_parts.append(f"{len(request.tools)} tools")
     if request.skills:
         message_parts.append(f"{len(request.skills)} skills")
+    if request.schedule and request.schedule.enabled:
+        message_parts.append("scheduled")
 
     return CustomAgentCreateResponse(
         agent_id=agent_id,
         name=request.name,
         tools=[t.tool_id for t in request.tools],
+        schedule_enabled=request.schedule.enabled if request.schedule else False,
         message=f"Custom agent '{request.name}' created with {' and '.join(message_parts) if message_parts else 'default config'}",
     )
 
@@ -135,12 +151,25 @@ def get_custom_agent(
     if not agent:
         raise HTTPException(status_code=404, detail=f"Custom agent not found: {agent_id}")
 
+    # Build schedule info if agent has a schedule
+    schedule_info = None
+    if agent.schedule:
+        schedule_data = agent_service.get_agent_schedule(agent_id)
+        schedule_info = ScheduleInfo(
+            enabled=agent.schedule.enabled,
+            cron_expression=agent.schedule.cron_expression,
+            trigger_prompt=agent.schedule.trigger_prompt,
+            timezone=agent.schedule.timezone,
+            next_run=schedule_data.get("next_run") if schedule_data else None,
+        )
+
     return CustomAgentInfo(
         id=agent.id,
         name=agent.name,
         tools=[tc["tool_id"] for tc in agent.tool_configs],
         skills=getattr(agent, "skill_ids", []) or [],
         description=agent.system_prompt[:100] + "..." if len(agent.system_prompt) > 100 else agent.system_prompt,
+        schedule=schedule_info,
         created_at=agent.created_at.isoformat(),
     )
 
