@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query
 
-from langchain_docker.api.dependencies import get_session_service
+from langchain_docker.api.dependencies import get_current_user_id, get_session_service
 from langchain_docker.api.schemas.sessions import (
     DeleteResponse,
     SessionCreate,
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 @router.post("", response_model=SessionResponse, status_code=201)
 def create_session(
     request: SessionCreate,
+    user_id: str = Depends(get_current_user_id),
     session_service: SessionService = Depends(get_session_service),
 ):
     """Create a new conversation session.
@@ -27,7 +28,7 @@ def create_session(
     Returns:
         Created session details
     """
-    session = session_service.create(metadata=request.metadata)
+    session = session_service.create(user_id=user_id, metadata=request.metadata)
     return session_service.to_response(session)
 
 
@@ -52,18 +53,19 @@ def get_session(
 def list_sessions(
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    user_id: str = Depends(get_current_user_id),
     session_service: SessionService = Depends(get_session_service),
 ):
-    """List all sessions with pagination.
+    """List sessions for the current user with pagination.
 
     Args:
         limit: Maximum number of sessions to return (1-100)
         offset: Number of sessions to skip
 
     Returns:
-        Paginated list of sessions
+        Paginated list of sessions for the current user
     """
-    sessions, total = session_service.list(limit=limit, offset=offset)
+    sessions, total = session_service.list(limit=limit, offset=offset, user_id=user_id)
     summaries = [session_service.to_summary(s) for s in sessions]
 
     return SessionList(

@@ -91,6 +91,7 @@ Once running:
 - Multi-agent workflow visualization with React Flow
 - Custom agent builder with single-page layout (LangSmith-inspired)
 - Skills management with progressive disclosure
+- Multi-user support with user selector dropdown
 - Dark theme with teal accents
 
 ### Running the Chainlit UI (Legacy)
@@ -251,7 +252,7 @@ web_ui/                         # React Web UI (recommended, port 8001)
 │   │   ├── chat/             # ChatPage - streaming chat
 │   │   ├── multiagent/       # MultiAgentPage - React Flow visualization
 │   │   └── builder/          # BuilderPage - 4-step agent wizard
-│   ├── stores/               # Zustand stores (session, settings)
+│   ├── stores/               # Zustand stores (session, settings, user)
 │   ├── types/                # TypeScript types
 │   ├── lib/                  # Utilities (cn.ts)
 │   ├── App.tsx               # Router configuration
@@ -374,6 +375,7 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `get_session_service()`, `get_model_service()`, `get_chat_service()`, `get_memory_service()`
 - `get_skill_registry()`: Singleton SkillRegistry for progressive disclosure skills
 - `get_agent_service()`: Receives SkillRegistry to create dynamic skill-based agents
+- `get_current_user_id()`: Extracts user ID from `X-User-ID` header (defaults to "default")
 
 **App Factory** (`src/langchain_docker/api/app.py`):
 - `create_app()`: Configures FastAPI with CORS, routers, exception handlers
@@ -439,7 +441,8 @@ web_ui/
 │   │   └── skills/          # SkillsPage - skills management
 │   ├── stores/
 │   │   ├── sessionStore.ts  # Chat state (messages, streaming)
-│   │   └── settingsStore.ts # Persisted settings (provider, model, temp)
+│   │   ├── settingsStore.ts # Persisted settings (provider, model, temp)
+│   │   └── userStore.ts     # Multi-user state (current user, user list)
 │   ├── types/
 │   │   └── api.ts           # TypeScript types matching backend schemas
 │   ├── lib/
@@ -1202,6 +1205,122 @@ def _register_builtin_skills(self):
     self.register(LegalDocSkill())  # New skill
 
 # 3. AgentService automatically creates legal_doc_expert agent
+```
+
+### Multi-User Support
+
+The application supports multiple users with isolated sessions and conversation history.
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (React)                                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  User Selector (Header dropdown)                     │   │
+│  │  - Alice, Bob, Charlie (default users)               │   │
+│  │  - Add custom users                                  │   │
+│  │  - Persisted in localStorage                         │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                         │                                   │
+│                         ▼ X-User-ID header                  │
+└─────────────────────────────────────────────────────────────┘
+                          │
+┌─────────────────────────────────────────────────────────────┐
+│  Backend (FastAPI)                                          │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  get_current_user_id() dependency                    │   │
+│  │  - Extracts X-User-ID from request header            │   │
+│  │  - Defaults to "default" if not provided             │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                         │                                   │
+│                         ▼                                   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Session Service                                     │   │
+│  │  - Sessions scoped by user_id                        │   │
+│  │  - list(user_id=...) filters by user                 │   │
+│  │  - Each user sees only their conversations           │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Frontend User Store** (`web_ui/src/stores/userStore.ts`):
+```typescript
+// Zustand store with localStorage persistence
+export const useUserStore = create<UserState>()(
+  persist(
+    (set, get) => ({
+      currentUserId: 'alice',
+      currentUserName: 'Alice',
+      users: [
+        { id: 'alice', name: 'Alice', color: 'bg-violet-500' },
+        { id: 'bob', name: 'Bob', color: 'bg-blue-500' },
+        { id: 'charlie', name: 'Charlie', color: 'bg-teal-500' },
+      ],
+      setCurrentUser: (userId) => { /* switch user */ },
+      addUser: (name) => { /* add new user */ },
+    }),
+    { name: 'user-storage' }
+  )
+);
+```
+
+**API Client with User Header** (`web_ui/src/api/client.ts`):
+```typescript
+// Axios interceptor adds X-User-ID to all requests
+apiClient.interceptors.request.use((config) => {
+  const userId = useUserStore.getState().currentUserId;
+  if (userId) {
+    config.headers['X-User-ID'] = userId;
+  }
+  return config;
+});
+```
+
+**Backend User Extraction** (`src/langchain_docker/api/dependencies.py`):
+```python
+def get_current_user_id(
+    x_user_id: str | None = Header(None, alias="X-User-ID"),
+) -> str:
+    """Extract current user ID from request header."""
+    return x_user_id or "default"
+```
+
+**User-Scoped Sessions** (`src/langchain_docker/api/services/session_service.py`):
+```python
+@dataclass
+class Session:
+    session_id: str
+    user_id: str = "default"  # Sessions are scoped to users
+    messages: list[BaseMessage] = field(default_factory=list)
+    # ...
+
+def list(self, user_id: Optional[str] = None) -> tuple[list[Session], int]:
+    """List sessions, optionally filtered by user."""
+    sessions = list(self._sessions.values())
+    if user_id:
+        sessions = [s for s in sessions if s.user_id == user_id]
+    return sessions, len(sessions)
+```
+
+**Testing Multi-User Isolation:**
+```bash
+# Create session for Alice
+curl -X POST http://localhost:8000/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: alice" \
+  -d '{}'
+
+# Create session for Bob
+curl -X POST http://localhost:8000/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: bob" \
+  -d '{}'
+
+# List Alice's sessions (only sees her sessions)
+curl http://localhost:8000/api/v1/sessions -H "X-User-ID: alice"
+
+# List Bob's sessions (only sees his sessions)
+curl http://localhost:8000/api/v1/sessions -H "X-User-ID: bob"
 ```
 
 ## Build System

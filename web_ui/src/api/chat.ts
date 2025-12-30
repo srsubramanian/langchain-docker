@@ -1,4 +1,5 @@
 import { apiClient, API_BASE_URL } from './client';
+import { useUserStore } from '@/stores/userStore';
 import type { ChatRequest, ChatResponse, StreamEvent } from '@/types/api';
 
 export const chatApi = {
@@ -8,9 +9,13 @@ export const chatApi = {
   },
 
   async *streamMessage(request: ChatRequest): AsyncGenerator<StreamEvent> {
+    const userId = useUserStore.getState().currentUserId;
     const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(userId && { 'X-User-ID': userId }),
+      },
       body: JSON.stringify({ ...request, stream: true }),
     });
 

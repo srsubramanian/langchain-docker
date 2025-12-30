@@ -20,6 +20,7 @@ class Session:
     """In-memory session data structure."""
 
     session_id: str
+    user_id: str = "default"
     messages: list[BaseMessage] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -73,10 +74,11 @@ class SessionService:
             for sid in expired:
                 del self._sessions[sid]
 
-    def create(self, metadata: Optional[dict] = None) -> Session:
+    def create(self, user_id: str = "default", metadata: Optional[dict] = None) -> Session:
         """Create a new session.
 
         Args:
+            user_id: User ID who owns this session
             metadata: Optional metadata for the session
 
         Returns:
@@ -84,6 +86,7 @@ class SessionService:
         """
         session = Session(
             session_id=str(uuid.uuid4()),
+            user_id=user_id,
             metadata=metadata or {},
         )
 
@@ -109,11 +112,17 @@ class SessionService:
                 raise SessionNotFoundError(session_id)
             return self._sessions[session_id]
 
-    def get_or_create(self, session_id: Optional[str] = None, metadata: Optional[dict] = None) -> Session:
+    def get_or_create(
+        self,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        metadata: Optional[dict] = None,
+    ) -> Session:
         """Get existing session or create new one.
 
         Args:
             session_id: Optional session ID
+            user_id: User ID for new sessions
             metadata: Optional metadata for new sessions
 
         Returns:
@@ -126,26 +135,36 @@ class SessionService:
                 # Session ID provided but not found, create new with that ID
                 session = Session(
                     session_id=session_id,
+                    user_id=user_id,
                     metadata=metadata or {},
                 )
                 with self._lock:
                     self._sessions[session_id] = session
                 return session
         else:
-            return self.create(metadata)
+            return self.create(user_id=user_id, metadata=metadata)
 
-    def list(self, limit: int = 10, offset: int = 0) -> tuple[list[Session], int]:
-        """List sessions with pagination.
+    def list(
+        self,
+        limit: int = 10,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> tuple[list[Session], int]:
+        """List sessions with pagination, optionally filtered by user.
 
         Args:
             limit: Maximum number of sessions to return
             offset: Number of sessions to skip
+            user_id: Optional user ID to filter by
 
         Returns:
             Tuple of (sessions list, total count)
         """
         with self._lock:
             sessions = list(self._sessions.values())
+            # Filter by user if specified
+            if user_id:
+                sessions = [s for s in sessions if s.user_id == user_id]
             total = len(sessions)
             # Return most recently updated first
             sessions.sort(key=lambda s: s.updated_at, reverse=True)

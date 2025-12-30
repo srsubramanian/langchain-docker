@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from langchain_docker.api.dependencies import get_agent_service
+from langchain_docker.api.dependencies import get_agent_service, get_current_user_id
 from langchain_docker.api.schemas.agents import (
     AgentInfo,
     CustomAgentCreateRequest,
@@ -265,6 +265,7 @@ def create_workflow(
 def invoke_workflow(
     workflow_id: str,
     request: WorkflowInvokeRequest,
+    user_id: str = Depends(get_current_user_id),
     agent_service: AgentService = Depends(get_agent_service),
 ):
     """Invoke a multi-agent workflow.
@@ -278,11 +279,14 @@ def invoke_workflow(
     Returns:
         Workflow response with agent outputs
     """
+    # Include user_id in session for tracing
+    session_id = request.session_id or f"{user_id}:{workflow_id}"
+
     try:
         result = agent_service.invoke_workflow(
             workflow_id=workflow_id,
             message=request.message,
-            session_id=request.session_id,
+            session_id=session_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useUserStore } from '@/stores/userStore';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -10,10 +11,16 @@ export const apiClient = axios.create({
   timeout: 60000,
 });
 
-// Request interceptor for logging
+// Request interceptor for adding user ID header and logging
 apiClient.interceptors.request.use((config) => {
+  // Add X-User-ID header from user store
+  const userId = useUserStore.getState().currentUserId;
+  if (userId) {
+    config.headers['X-User-ID'] = userId;
+  }
+
   if (import.meta.env.DEV) {
-    console.debug('[API]', config.method?.toUpperCase(), config.url);
+    console.debug('[API]', config.method?.toUpperCase(), config.url, userId ? `(User: ${userId})` : '');
   }
   return config;
 });

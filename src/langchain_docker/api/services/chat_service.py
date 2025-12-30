@@ -35,17 +35,18 @@ class ChatService:
         self.model_service = model_service
         self.memory_service = memory_service
 
-    def process_message(self, request: ChatRequest) -> ChatResponse:
+    def process_message(self, request: ChatRequest, user_id: str = "default") -> ChatResponse:
         """Process a chat message (non-streaming).
 
         Args:
             request: Chat request
+            user_id: User ID for session scoping
 
         Returns:
             Chat response with AI message
         """
-        # Get or create session
-        session = self.session_service.get_or_create(request.session_id)
+        # Get or create session (scoped to user)
+        session = self.session_service.get_or_create(request.session_id, user_id=user_id)
 
         # Add user message to session
         user_message = HumanMessage(content=request.message)
@@ -86,17 +87,18 @@ class ChatService:
             memory_metadata=memory_metadata,  # NEW
         )
 
-    async def stream_message(self, request: ChatRequest) -> AsyncGenerator[dict, None]:
+    async def stream_message(self, request: ChatRequest, user_id: str = "default") -> AsyncGenerator[dict, None]:
         """Process a chat message with streaming.
 
         Args:
             request: Chat request
+            user_id: User ID for session scoping
 
         Yields:
             Server-Sent Event dicts with event and data keys
         """
-        # Get or create session
-        session = self.session_service.get_or_create(request.session_id)
+        # Get or create session (scoped to user)
+        session = self.session_service.get_or_create(request.session_id, user_id=user_id)
 
         # Add user message to session
         user_message = HumanMessage(content=request.message)

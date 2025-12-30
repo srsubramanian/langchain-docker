@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from fastapi import Depends
+from fastapi import Depends, Header
 
 from langchain_docker.api.services.agent_service import AgentService
 from langchain_docker.api.services.chat_service import ChatService
@@ -107,3 +107,21 @@ def get_agent_service(
     if _agent_service is None:
         _agent_service = AgentService(model_service, skill_registry)
     return _agent_service
+
+
+# Default user ID when header is not provided
+DEFAULT_USER_ID = "default"
+
+
+def get_current_user_id(
+    x_user_id: str | None = Header(None, alias="X-User-ID"),
+) -> str:
+    """Extract current user ID from request header.
+
+    Args:
+        x_user_id: User ID from X-User-ID header
+
+    Returns:
+        User ID string, defaults to "default" if not provided
+    """
+    return x_user_id or DEFAULT_USER_ID

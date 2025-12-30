@@ -38,6 +38,7 @@ A comprehensive demonstration of LangChain foundational models with examples for
   - Real-time Agent Flow diagram showing connected tools/skills
 - **Skills Management**: Browse, create, and edit skills with progressive disclosure
 - **Provider Selection**: Switch between OpenAI, Anthropic, Google, and Bedrock
+- **Multi-User Support**: User selector dropdown with isolated sessions per user
 
 ### Chainlit UI (Legacy)
 - **Interactive Chat Interface**: Web-based chat UI powered by Chainlit
@@ -818,6 +819,49 @@ The Builder page provides a LangSmith-inspired single-page layout:
 - React Flow (workflow visualization)
 - React Router v6
 
+### Multi-User Support
+
+The React Web UI includes built-in multi-user support, allowing different users to have isolated conversation histories.
+
+#### How It Works
+
+1. **User Selector**: Click the user avatar in the header to switch between users
+2. **Default Users**: Alice, Bob, and Charlie are pre-configured for testing
+3. **Add Custom Users**: Create new users directly from the dropdown
+4. **Isolated Sessions**: Each user only sees their own chat history and sessions
+5. **Persistent State**: User selection is saved in localStorage
+
+#### Architecture
+
+```
+┌─────────────────┐     X-User-ID Header     ┌─────────────────┐
+│  React Web UI   │ ─────────────────────────► │  FastAPI API    │
+│  User: Alice    │                            │  Sessions for   │
+│  (localStorage) │ ◄───────────────────────── │  Alice only     │
+└─────────────────┘                            └─────────────────┘
+```
+
+#### API Usage
+
+All API requests include the `X-User-ID` header automatically. You can also use it directly:
+
+```bash
+# Create a session for Alice
+curl -X POST http://localhost:8000/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: alice" \
+  -d '{}'
+
+# Chat as Alice
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: alice" \
+  -d '{"message": "Hello!", "provider": "openai"}'
+
+# List only Alice's sessions
+curl http://localhost:8000/api/v1/sessions -H "X-User-ID: alice"
+```
+
 ---
 
 ## Chainlit UI (Legacy)
@@ -1054,14 +1098,14 @@ src/langchain_docker/
 
 web_ui/                   # React Web UI (recommended)
 ├── src/
-│   ├── api/             # API client modules
+│   ├── api/             # API client modules (with X-User-ID header)
 │   ├── components/ui/   # shadcn/ui components (Button, Card, Collapsible, etc.)
 │   ├── features/
 │   │   ├── chat/        # ChatPage - streaming chat
 │   │   ├── multiagent/  # MultiAgentPage - React Flow visualization
 │   │   ├── builder/     # BuilderPage - single-page agent builder
 │   │   └── skills/      # SkillsPage - skills management
-│   └── stores/          # Zustand state management
+│   └── stores/          # Zustand stores (session, settings, user)
 ├── Dockerfile           # Multi-stage build (Node → nginx)
 └── nginx.conf           # SPA routing + API proxy
 
