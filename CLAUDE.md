@@ -230,6 +230,19 @@ src/langchain_docker/
 │   ├── multi_provider.py     # Multiple provider comparison (OpenAI, Anthropic, Google)
 │   ├── agent_basics.py       # Agent creation and multi-turn conversations
 │   └── streaming.py          # Streaming output demonstrations
+├── skills/                     # Skill content files (markdown)
+│   ├── __init__.py            # Skills package documentation
+│   ├── sql/                   # SQL skill content
+│   │   ├── __init__.py        # Skill module documentation
+│   │   ├── SKILL.md           # Core skill instructions + guidelines
+│   │   ├── examples.md        # SQL query examples
+│   │   └── patterns.md        # Advanced SQL patterns
+│   └── xlsx/                  # XLSX skill content
+│       ├── __init__.py        # Skill module documentation
+│       ├── SKILL.md           # Core skill instructions (Level 2)
+│       ├── recalc.md          # Recalculation script docs
+│       ├── examples.md        # Code examples
+│       └── formatting.md      # Formatting guide
 └── utils/
     ├── __init__.py            # Utility exports
     └── errors.py              # Custom exception classes
@@ -633,7 +646,38 @@ Each command supports `--provider`, `--model`, and `--temperature` flags where a
 
 ### Adding a New Skill (Progressive Disclosure)
 
-1. Create skill class in `src/langchain_docker/api/services/skill_registry.py`:
+Skills support two approaches: **file-based** (recommended for content-heavy skills) and **inline** (for simpler skills).
+
+#### Option A: File-Based Skill (Recommended)
+
+1. Create skill directory `src/langchain_docker/skills/my_skill/`:
+   ```
+   skills/my_skill/
+   ├── __init__.py        # Module documentation
+   ├── SKILL.md           # Core instructions (Level 2)
+   ├── examples.md        # Code examples (Level 3)
+   └── advanced.md        # Advanced topics (Level 3)
+   ```
+
+2. Create `SKILL.md` with YAML frontmatter:
+   ```markdown
+   ---
+   name: my_skill
+   description: "Description of what the skill does"
+   category: my_category
+   ---
+
+   # My Skill
+
+   ## Core Purpose
+   Explain what this skill does...
+
+   ## Guidelines
+   - Guideline 1
+   - Guideline 2
+   ```
+
+3. Create skill class in `skill_registry.py`:
    ```python
    class MyNewSkill(Skill):
        def __init__(self):
@@ -641,26 +685,63 @@ Each command supports `--provider`, `--model`, and `--temperature` flags where a
            self.name = "My Skill Expert"
            self.description = "Does something useful"
            self.category = "my_category"
+           self.is_builtin = True
+           self._skill_dir = SKILLS_DIR / "my_skill"
+
+       def _read_md_file(self, filename: str) -> str:
+           file_path = self._skill_dir / filename
+           if file_path.exists():
+               return file_path.read_text(encoding="utf-8")
+           return f"Error: File {filename} not found"
 
        def load_core(self) -> str:
-           """Level 2: Return main skill content."""
+           content = self._read_md_file("SKILL.md")
+           # Strip YAML frontmatter if present
+           if content.startswith("---"):
+               lines = content.split("\n")
+               for i, line in enumerate(lines[1:], 1):
+                   if line.strip() == "---":
+                       content = "\n".join(lines[i+1:]).strip()
+                       break
+           return f"## My Skill Activated\n\n{content}"
+
+       def load_details(self, resource: str) -> str:
+           resource_map = {"examples": "examples.md", "advanced": "advanced.md"}
+           if resource in resource_map:
+               return self._read_md_file(resource_map[resource])
+           return f"Unknown resource: {resource}"
+   ```
+
+#### Option B: Inline Skill (Simple Skills)
+
+   ```python
+   class SimpleSkill(Skill):
+       def __init__(self):
+           self.id = "simple_skill"
+           self.name = "Simple Skill"
+           self.description = "A simpler skill"
+           self.category = "general"
+
+       def load_core(self) -> str:
            return "Skill context and guidelines..."
 
        def load_details(self, resource: str) -> str:
-           """Level 3: Return detailed resources."""
            if resource == "examples":
                return "Example usage..."
            return f"Unknown resource: {resource}"
    ```
 
-2. Register in `SkillRegistry._register_builtin_skills()`:
+#### Registering the Skill
+
+Register in `SkillRegistry._register_builtin_skills()`:
    ```python
    def _register_builtin_skills(self):
        self.register(SQLSkill())
+       self.register(XLSXSkill())
        self.register(MyNewSkill())  # Add here
    ```
 
-3. Add corresponding tools in `tool_registry.py` (optional, for custom agents):
+Add tools in `tool_registry.py` (optional, for custom agents):
    ```python
    self.register(ToolTemplate(
        id="load_my_skill",
@@ -671,9 +752,9 @@ Each command supports `--provider`, `--model`, and `--temperature` flags where a
    ))
    ```
 
-4. AgentService automatically creates `my_skill_expert` agent from the skill
+AgentService automatically creates `my_skill_expert` agent from the skill.
 
-5. Test via API:
+Test via API:
    ```bash
    curl http://localhost:8000/api/v1/agents/builtin  # Should show my_skill_expert
    ```
