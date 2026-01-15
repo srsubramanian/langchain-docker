@@ -140,6 +140,7 @@ def get_bedrock_model(
         APIKeyMissingError: If AWS credentials are not configured
         ModelInitializationError: If model initialization fails
     """
+    import boto3
     from langchain_aws import ChatBedrockConverse
     from langchain_docker.core.config import get_bedrock_models, get_bedrock_region, get_bedrock_profile
 
@@ -150,17 +151,19 @@ def get_bedrock_model(
         available_models = get_bedrock_models()
         model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
+    # Create boto3 session with profile explicitly
+    boto_session = boto3.Session(
+        region_name=get_bedrock_region(),
+        profile_name=get_bedrock_profile(),
+    )
+
     # Build kwargs for ChatBedrockConverse
     bedrock_kwargs = {
         "model": model,
         "provider": "anthropic",
         "temperature": temperature,
-        "region_name": get_bedrock_region(),
+        "boto3_session": boto_session,
     }
-
-    profile = get_bedrock_profile()
-    if profile:
-        bedrock_kwargs["credentials_profile_name"] = profile
 
     bedrock_kwargs.update(kwargs)
 

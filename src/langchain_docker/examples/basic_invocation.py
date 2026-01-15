@@ -66,18 +66,28 @@ def basic_invoke_example(
 
     # For Bedrock, use ChatBedrockConverse directly (handles ARNs better)
     if provider == "bedrock":
+        import boto3
         from langchain_aws import ChatBedrockConverse
         from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
+
+        # Create boto3 session with profile explicitly
+        region = get_bedrock_region()
+        profile = get_bedrock_profile()
+
+        print(f"AWS Profile: {profile}")
+        print(f"AWS Region: {region}")
+
+        boto_session = boto3.Session(
+            region_name=region,
+            profile_name=profile,
+        )
 
         bedrock_kwargs = {
             "model": model,
             "provider": "anthropic",
             "temperature": temperature,
-            "region_name": get_bedrock_region(),
+            "boto3_session": boto_session,
         }
-        profile = get_bedrock_profile()
-        if profile:
-            bedrock_kwargs["credentials_profile_name"] = profile
 
         chat_model = ChatBedrockConverse(**bedrock_kwargs)
     else:
