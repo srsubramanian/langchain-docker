@@ -139,10 +139,17 @@ class ChatService:
                     config={"metadata": {"session_id": session.session_id}}
                 ):
                     if chunk.content:
-                        full_content += chunk.content
+                        # Handle both string and list content (Bedrock returns list)
+                        content = chunk.content
+                        if isinstance(content, list):
+                            content = "".join(
+                                c.get("text", "") if isinstance(c, dict) else str(c)
+                                for c in content
+                            )
+                        full_content += content
                         yield {
                             "event": "token",
-                            "data": json.dumps({"content": chunk.content}),
+                            "data": json.dumps({"content": content}),
                         }
 
             # Create AI message from full content

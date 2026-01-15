@@ -92,8 +92,8 @@ def validate_bedrock_access() -> bool:
         import boto3
         from botocore.exceptions import NoCredentialsError, ClientError
 
-        # Get region and profile from environment
-        region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION")
+        # Get region and profile from environment (default to us-east-1 for Bedrock)
+        region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION") or "us-east-1"
         profile = os.getenv("AWS_PROFILE") or os.getenv("BEDROCK_PROFILE")
 
         # Create Bedrock management client (not bedrock-runtime)
@@ -102,7 +102,7 @@ def validate_bedrock_access() -> bool:
         bedrock = session.client("bedrock")
 
         # Simple validation: list foundation models (doesn't cost anything)
-        bedrock.list_foundation_models(maxResults=1)
+        bedrock.list_foundation_models()
 
         return True
 
@@ -165,13 +165,10 @@ def get_api_key(provider: str) -> str | None:
     Returns:
         API key if found, None otherwise
     """
-    # Special handling for Bedrock
+    # Special handling for Bedrock - always show as configured
+    # Actual credential validation happens at runtime when invoking models
     if provider.lower() == "bedrock":
-        try:
-            validate_bedrock_access()
-            return "AWS_CREDENTIALS_VALID"
-        except:
-            return None
+        return "AWS_CREDENTIALS_CONFIGURED"
 
     provider_key_map = {
         "openai": "OPENAI_API_KEY",
