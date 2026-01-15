@@ -73,9 +73,10 @@ def load_environment() -> None:
     env_path = Path(".env")
 
     if env_path.exists():
-        load_dotenv(env_path)
+        load_dotenv(env_path, override=True)
     else:
-        load_dotenv()
+        # Try to find .env in parent directories
+        load_dotenv(override=True)
 
 
 def validate_bedrock_access() -> bool:

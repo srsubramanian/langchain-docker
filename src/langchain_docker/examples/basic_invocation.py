@@ -50,7 +50,17 @@ def basic_invoke_example(
     Returns:
         The model's response message
     """
+    import os
+    from pathlib import Path
+
     load_environment()
+
+    # Debug: show .env location
+    env_path = Path(".env")
+    print(f"[DEBUG] CWD: {Path.cwd()}")
+    print(f"[DEBUG] .env exists: {env_path.exists()}")
+    print(f"[DEBUG] AWS_PROFILE from env: {os.getenv('AWS_PROFILE')}")
+    print(f"[DEBUG] BEDROCK_PROFILE from env: {os.getenv('BEDROCK_PROFILE')}")
 
     # Use provider-specific default if model not specified
     if model is None:
