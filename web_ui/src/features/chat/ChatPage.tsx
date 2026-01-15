@@ -243,8 +243,8 @@ export function ChatPage() {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Model</label>
                     <Select
-                      value={model || ''}
-                      onValueChange={(v) => setModel(v || null)}
+                      value={model || 'default'}
+                      onValueChange={(v) => setModel(v === 'default' ? null : v)}
                     >
                       <SelectTrigger>
                         <SelectValue
@@ -252,7 +252,9 @@ export function ChatPage() {
                         />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Default</SelectItem>
+                        <SelectItem value="default">
+                          Default ({availableProvider?.default_model || 'auto'})
+                        </SelectItem>
                         {/* Models can be loaded from provider details */}
                       </SelectContent>
                     </Select>
