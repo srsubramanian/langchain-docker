@@ -94,25 +94,6 @@ Once running:
 - Multi-user support with user selector dropdown
 - Dark theme with teal accents
 
-### Running the Chainlit UI (Legacy)
-
-**Note: The Chainlit UI requires the FastAPI backend to be running.**
-
-```bash
-# Terminal 1: Start FastAPI backend
-uv run langchain-docker serve
-
-# Terminal 2: Start Chainlit UI on port 8002
-uv run chainlit run chainlit_app/app.py --port 8002
-
-# With watch mode (auto-reload on file changes)
-uv run chainlit run chainlit_app/app.py --port 8002 -w
-```
-
-Once running:
-- Chainlit UI: http://localhost:8002
-- FastAPI Backend: http://localhost:8000
-
 ### Running with Docker
 
 **For production deployments or consistent environments:**
@@ -134,14 +115,12 @@ docker-compose down
 **Docker Compose Services:**
 - `phoenix`: Phoenix tracing server on port 6006
 - `api`: FastAPI backend on port 8000
-- `react-ui`: React Web UI on port 8001 (recommended)
-- `ui`: Chainlit UI on port 8002 (legacy)
+- `react-ui`: React Web UI on port 8001
 - Shared network: `langchain-network`
 - Health checks enabled for automatic dependency management
 
 **Environment:**
 - API keys loaded from `.env` file
-- Chainlit automatically connects to API via `http://api:8000` (internal network)
 
 ### Running with Phoenix Tracing
 
@@ -154,8 +133,7 @@ docker-compose up
 **Services running:**
 - Phoenix UI: http://localhost:6006
 - FastAPI Backend: http://localhost:8000
-- React Web UI: http://localhost:8001 (recommended)
-- Chainlit UI: http://localhost:8002 (legacy)
+- React Web UI: http://localhost:8001
 
 **For local development without Docker:**
 
@@ -166,8 +144,8 @@ python -m phoenix.server.main serve
 # Terminal 2: Start FastAPI
 uv run langchain-docker serve
 
-# Terminal 3: Start Chainlit
-uv run chainlit run chainlit_app/app.py --port 8001
+# Terminal 3: Start React Web UI
+cd web_ui && npm run dev
 ```
 
 ### Package Management
@@ -215,6 +193,7 @@ src/langchain_docker/
 │       ├── demo_database.py  # Demo SQLite database with sample data
 │       ├── memory_service.py # Conversation memory and summarization
 │       ├── model_service.py  # Model instance caching (LRU)
+│       ├── scheduler_service.py # APScheduler-based agent scheduling
 │       ├── session_service.py # Session storage & retrieval (in-memory)
 │       ├── skill_registry.py # Skills with progressive disclosure pattern
 │       └── tool_registry.py  # Tool templates for custom agents
@@ -247,15 +226,7 @@ src/langchain_docker/
     ├── __init__.py            # Utility exports
     └── errors.py              # Custom exception classes
 
-chainlit_app/                   # Chainlit UI application (legacy, port 8002)
-├── app.py                     # Main Chainlit application
-├── utils.py                   # API client for FastAPI communication
-├── chainlit.md                # Welcome page markdown
-├── .chainlit/                 # Chainlit configuration
-│   └── config.toml           # UI and app settings
-└── public/                    # Static assets (optional)
-
-web_ui/                         # React Web UI (recommended, port 8001)
+web_ui/                         # React Web UI (port 8001)
 ├── src/
 │   ├── api/                   # API client modules (chat, sessions, models, agents)
 │   ├── components/
@@ -295,7 +266,11 @@ README.md                      # User-facing documentation
 **config.py** (`src/langchain_docker/core/config.py`):
 - `load_environment()`: Load .env file
 - `validate_api_key(provider)`: Check if API key exists, raise error if missing
+- `validate_bedrock_access()`: Validate AWS Bedrock access using boto3 credentials
 - `get_api_key(provider)`: Get API key without raising error
+- `get_bedrock_models()`: Get list of Bedrock model ARNs from environment
+- `get_bedrock_region()`: Get AWS region for Bedrock (defaults to us-east-1)
+- `get_bedrock_profile()`: Get AWS profile for Bedrock authentication
 - `Config` dataclass: Store default settings
 
 **models.py** (`src/langchain_docker/core/models.py`):
@@ -303,7 +278,8 @@ README.md                      # User-facing documentation
 - `get_openai_model()`: Pre-configured OpenAI model
 - `get_anthropic_model()`: Pre-configured Anthropic model
 - `get_google_model()`: Pre-configured Google model
-- `get_supported_providers()`: List available providers
+- `get_bedrock_model()`: Pre-configured AWS Bedrock model using ChatBedrockConverse
+- `get_supported_providers()`: List available providers (openai, anthropic, google, bedrock)
 
 **errors.py** (`src/langchain_docker/utils/errors.py`):
 - `LangChainDockerError`: Base exception
@@ -361,6 +337,11 @@ The API follows a layered architecture: **Routers → Services → Core**
   - Converts Pydantic schemas to LangChain messages
   - Integrates with MemoryService for context optimization
   - Methods: `process_message()` (non-streaming), `stream_message()` (async generator)
+- `scheduler_service.py`: Automated agent execution scheduler
+  - APScheduler-based background scheduler with cron support
+  - Methods: `add_schedule()`, `remove_schedule()`, `enable_schedule()`, `disable_schedule()`
+  - Methods: `get_schedule()`, `list_schedules()`, `get_next_run_time()`
+  - Supports timezone configuration and execution callbacks
 
 **Routers** (`src/langchain_docker/api/routers/`):
 - FastAPI route handlers using dependency injection
@@ -392,38 +373,12 @@ The API follows a layered architecture: **Routers → Services → Core**
 
 **App Factory** (`src/langchain_docker/api/app.py`):
 - `create_app()`: Configures FastAPI with CORS, routers, exception handlers
-- CORS enabled for Chainlit integration (localhost:3000, 8000, 8001)
+- CORS enabled for React Web UI integration (localhost:3000, 8000, 8001)
 - Health check at `/health`, detailed status at `/api/v1/status`
-
-### Chainlit UI Modules
-
-The Chainlit UI provides a web-based chat interface that communicates with the FastAPI backend.
-
-**app.py** (`chainlit_app/app.py`):
-- Main Chainlit application with chat lifecycle handlers
-- `@cl.on_chat_start`: Initialize session, check API health, fetch providers
-- `@cl.on_message`: Handle incoming user messages, stream responses
-- `@cl.on_settings_update`: Handle provider/temperature changes
-- Uses Chainlit's `ChatSettings` for provider selection and temperature control
-
-**utils.py** (`chainlit_app/utils.py`):
-- `APIClient` class: HTTP client for FastAPI communication
-- Methods: `chat()`, `chat_stream()`, `create_session()`, `get_session()`, `list_providers()`
-- Handles SSE streaming by parsing "data: " prefixed lines
-- Configurable via `FASTAPI_BASE_URL` environment variable
-
-**chainlit.md** (`chainlit_app/chainlit.md`):
-- Welcome page displayed when chat starts
-- Provides usage instructions and feature documentation
-
-**config.toml** (`chainlit_app/.chainlit/config.toml`):
-- Chainlit configuration: UI theme, features, telemetry
-- Project name: "LangChain Docker Chat"
-- Shows README as default, session timeout: 3600s
 
 ### React Web UI (web_ui/)
 
-A modern React-based web UI inspired by LangSmith Agent Builder, featuring React Flow for workflow visualization. This is the recommended UI for new deployments.
+A modern React-based web UI inspired by LangSmith Agent Builder, featuring React Flow for workflow visualization.
 
 **Tech Stack:**
 - React 18 + Vite + TypeScript
@@ -439,6 +394,7 @@ web_ui/
 ├── src/
 │   ├── api/                  # API client modules
 │   │   ├── index.ts         # Barrel exports
+│   │   ├── client.ts        # Centralized axios client with user ID interceptor
 │   │   ├── chat.ts          # Chat API with SSE streaming
 │   │   ├── sessions.ts      # Session CRUD operations
 │   │   ├── models.ts        # Provider/model endpoints
@@ -446,13 +402,20 @@ web_ui/
 │   │   └── skills.ts        # Skills API (list, get, create, update, delete)
 │   ├── components/
 │   │   ├── ui/              # shadcn/ui components (Button, Input, Card, Collapsible, etc.)
-│   │   └── layout/          # Header with navigation
+│   │   └── layout/          # Header with navigation, MainLayout
 │   ├── features/
-│   │   ├── chat/            # ChatPage - streaming chat interface
+│   │   ├── chat/            # ChatPage - streaming chat with ThreadList sidebar
+│   │   │   ├── ChatPage.tsx # Main chat interface with model selection
+│   │   │   └── ThreadList.tsx # Collapsible thread sidebar with search/delete
 │   │   ├── multiagent/      # MultiAgentPage - React Flow + chat
 │   │   ├── builder/         # BuilderPage - single-page agent builder
-│   │   └── skills/          # SkillsPage - skills management
+│   │   │   ├── BuilderPage.tsx # Agent configuration wizard
+│   │   │   ├── templates.ts    # Predefined agent templates
+│   │   │   └── TemplateSelector.tsx # Template selection grid
+│   │   ├── skills/          # SkillsPage - skills management
+│   │   └── agents/          # AgentsPage - agent management
 │   ├── stores/
+│   │   ├── index.ts         # Barrel exports for stores
 │   │   ├── sessionStore.ts  # Chat state (messages, streaming)
 │   │   ├── settingsStore.ts # Persisted settings (provider, model, temp)
 │   │   └── userStore.ts     # Multi-user state (current user, user list)
@@ -483,9 +446,11 @@ web_ui/
 
 1. **ChatPage** (`src/features/chat/ChatPage.tsx`):
    - SSE streaming with real-time token display
-   - Provider/model/temperature settings panel
+   - Provider/model/temperature settings panel with dynamic model loading
    - Message history with user/assistant bubbles
    - Session persistence across page reloads
+   - ThreadList sidebar with search, delete, and collapse functionality
+   - Automatic thread refresh after message exchange
 
 2. **MultiAgentPage** (`src/features/multiagent/MultiAgentPage.tsx`):
    - Split-panel layout (resizable)
@@ -495,6 +460,10 @@ web_ui/
 
 3. **BuilderPage** (`src/features/builder/BuilderPage.tsx`):
    - Single-page layout inspired by LangSmith Agent Builder
+   - Template selector with predefined agent configurations:
+     - Research Assistant, Math Tutor, Weather Assistant
+     - Data Analyst, Finance Advisor, General Assistant
+     - Category filtering (Productivity, Analysis, Communication, Development)
    - Header bar with inline agent name input, Draft badge, and Create Agent button
    - Collapsible Instructions section (system prompt with character counter)
    - Collapsible Toolbox section with Tools and Skills tabs
@@ -512,7 +481,31 @@ web_ui/
    - Inline skill editor with code preview
    - Progressive disclosure pattern for skill content
 
-**API Client Pattern:**
+**Centralized API Client Pattern:**
+```typescript
+// src/api/client.ts - Axios client with user ID interceptor
+import axios from 'axios';
+import { useUserStore } from '@/stores/userStore';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 60000,
+});
+
+// Request interceptor for adding user ID header
+apiClient.interceptors.request.use((config) => {
+  const userId = useUserStore.getState().currentUserId;
+  if (userId) {
+    config.headers['X-User-ID'] = userId;
+  }
+  return config;
+});
+```
+
+**SSE Streaming Pattern:**
 ```typescript
 // src/api/chat.ts - SSE streaming
 async *streamMessage(request: ChatRequest): AsyncGenerator<StreamEvent> {
@@ -552,6 +545,34 @@ export const useSettingsStore = create<SettingsState>()(
     { name: 'settings-storage' }  // localStorage key
   )
 );
+```
+
+**Dynamic Model Loading Pattern:**
+```typescript
+// ChatPage.tsx - Load models when provider changes
+const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+
+// Fetch available models when provider changes
+useEffect(() => {
+  if (provider) {
+    modelsApi
+      .getProviderDetails(provider)
+      .then((details) => {
+        setAvailableModels(details.available_models);
+      })
+      .catch(console.error);
+  }
+}, [provider]);
+
+// Render model selector
+<Select value={model || 'default'} onValueChange={(v) => setModel(v === 'default' ? null : v)}>
+  <SelectContent>
+    <SelectItem value="default">Default ({provider?.default_model})</SelectItem>
+    {availableModels.map((m) => (
+      <SelectItem key={m.name} value={m.name}>{m.name}</SelectItem>
+    ))}
+  </SelectContent>
+</Select>
 ```
 
 **Docker Configuration:**
@@ -792,35 +813,6 @@ curl -X POST http://localhost:8000/api/v1/sessions \
 curl http://localhost:8000/api/v1/sessions/{session_id}
 ```
 
-### Developing the Chainlit UI
-
-1. **Start both services during development**:
-   ```bash
-   # Terminal 1: FastAPI with reload
-   uv run langchain-docker serve --reload
-
-   # Terminal 2: Chainlit with watch mode on port 8001
-   uv run chainlit run chainlit_app/app.py --port 8001 -w
-   ```
-
-2. **Modify the UI**:
-   - Edit `chainlit_app/app.py` for chat logic and handlers
-   - Edit `chainlit_app/utils.py` for API client changes
-   - Edit `chainlit_app/chainlit.md` for welcome page content
-   - Edit `chainlit_app/.chainlit/config.toml` for UI theme/settings
-
-3. **Test UI changes**:
-   - Chainlit auto-reloads when files change (with `-w` flag)
-   - Check browser console for JavaScript errors
-   - Check terminal for Python errors
-
-4. **Add new Chainlit features**:
-   - Use `@cl.on_chat_start` for initialization logic
-   - Use `@cl.on_message` for message handling
-   - Use `@cl.on_settings_update` for settings changes
-   - Use `@cl.action_callback` for custom button actions
-   - Use `cl.user_session.set/get` for state management
-
 ### Developing the React Web UI
 
 1. **Start services for development**:
@@ -914,7 +906,6 @@ All API keys and configuration are loaded from `.env` file:
 - `API_LOG_LEVEL` (default: info)
 - `SESSION_TTL_HOURS` (default: 24)
 - `MODEL_CACHE_SIZE` (default: 10)
-- `FASTAPI_BASE_URL` (default: http://localhost:8000) - For Chainlit UI to connect to backend
 
 **Tracing Configuration:**
 - `TRACING_PROVIDER` (default: phoenix) - Tracing platform: "langsmith", "phoenix", or "none"
@@ -927,6 +918,13 @@ All API keys and configuration are loaded from `.env` file:
 **Phoenix (if TRACING_PROVIDER=phoenix):**
 - `PHOENIX_ENDPOINT` (default: http://localhost:6006/v1/traces) - Phoenix collector endpoint
 - `PHOENIX_CONSOLE_EXPORT` (default: false) - Export traces to console for debugging
+
+**AWS Bedrock Configuration:**
+- `AWS_PROFILE` or `BEDROCK_PROFILE` - AWS profile for authentication (optional, uses default credential chain)
+- `AWS_DEFAULT_REGION` or `AWS_REGION` (default: us-east-1) - AWS region for Bedrock
+- `BEDROCK_MODEL_ARNS` - Comma-separated list of model ARNs or inference profile ARNs
+  - Default: `anthropic.claude-3-5-sonnet-20241022-v2:0,anthropic.claude-3-5-haiku-20241022-v1:0`
+  - Example: `arn:aws:bedrock:us-east-1:123456789:inference-profile/my-profile`
 
 **Database Configuration (for SQL Skill):**
 - `DATABASE_URL` (default: sqlite:///demo.db) - Database connection string
@@ -1030,78 +1028,6 @@ async def api_key_missing_handler(request: Request, exc: APIKeyMissingError):
     )
 ```
 
-### Chainlit Chat Handler Pattern
-```python
-# In chainlit_app/app.py
-import chainlit as cl
-
-@cl.on_message
-async def main(message: cl.Message):
-    # Get settings from user session
-    provider = cl.user_session.get("provider")
-    session_id = cl.user_session.get("session_id")
-
-    # Create streaming message
-    msg = cl.Message(content="", author="Assistant")
-    await msg.send()
-
-    # Stream from API
-    async for event in api_client.chat_stream(
-        message=message.content,
-        session_id=session_id,
-        provider=provider,
-    ):
-        if event.get("event") == "token":
-            await msg.stream_token(event.get("content", ""))
-
-    await msg.update()
-```
-
-### Chainlit Settings Pattern
-```python
-# In chainlit_app/app.py
-from chainlit.input_widget import Select, Slider
-
-@cl.on_chat_start
-async def start():
-    # Configure settings panel
-    settings = await cl.ChatSettings([
-        Select(
-            id="provider",
-            label="Model Provider",
-            values=["openai", "anthropic", "google"],
-            initial_value="openai",
-        ),
-        Slider(
-            id="temperature",
-            label="Temperature",
-            initial=0.7,
-            min=0.0,
-            max=2.0,
-            step=0.1,
-        ),
-    ]).send()
-
-@cl.on_settings_update
-async def settings_update(settings):
-    # Save to user session
-    cl.user_session.set("provider", settings["provider"])
-    cl.user_session.set("temperature", settings["temperature"])
-```
-
-### Chainlit API Client Pattern
-```python
-# In chainlit_app/utils.py
-class APIClient:
-    async def chat_stream(self, message: str, **kwargs) -> AsyncGenerator:
-        async with httpx.AsyncClient() as client:
-            async with client.stream("POST", f"{self.base_url}/api/v1/chat/stream", json=payload) as response:
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = json.loads(line[6:])  # Parse SSE format
-                        yield data
-```
-
 ### Multi-Agent Workflow Pattern (LangGraph Supervisor)
 ```python
 # In agent_service.py
@@ -1153,6 +1079,60 @@ from langchain_docker.core.tracing import trace_session
 with trace_session(session_id="user-123"):
     result = model.invoke(messages)
     # Traces appear grouped in Phoenix/LangSmith UI
+```
+
+### Scheduler Service Pattern
+
+The scheduler service enables automated agent execution using APScheduler with cron expressions.
+
+**Adding a Schedule:**
+```python
+# In scheduler_service.py
+from langchain_docker.api.services.scheduler_service import SchedulerService
+
+scheduler = SchedulerService()
+scheduler.start()
+
+# Add a schedule with cron expression (5 parts: min hour day month weekday)
+schedule = scheduler.add_schedule(
+    agent_id="my-agent-123",
+    cron_expression="0 9 * * 1-5",  # 9 AM on weekdays
+    trigger_prompt="Generate the daily report",
+    timezone="America/New_York",
+    enabled=True,
+)
+# Returns: {"agent_id": "...", "next_run": "2025-01-16T09:00:00-05:00", ...}
+```
+
+**Managing Schedules:**
+```python
+# Disable without removing
+scheduler.disable_schedule("my-agent-123")
+
+# Re-enable
+scheduler.enable_schedule("my-agent-123")
+
+# Get schedule info
+info = scheduler.get_schedule("my-agent-123")
+# Returns: {"cron_expression": "0 9 * * 1-5", "enabled": True, "next_run": "..."}
+
+# List all schedules
+all_schedules = scheduler.list_schedules()
+
+# Remove schedule completely
+scheduler.remove_schedule("my-agent-123")
+```
+
+**Setting Execution Callback:**
+```python
+# Set callback for when schedules trigger
+def execute_agent(agent_id: str, prompt: str):
+    # Execute the agent with the trigger prompt
+    workflow = agent_service.get_workflow(agent_id)
+    result = workflow.invoke({"messages": [HumanMessage(content=prompt)]})
+    return result
+
+scheduler.set_execution_callback(execute_agent)
 ```
 
 ### Skills with Progressive Disclosure Pattern
