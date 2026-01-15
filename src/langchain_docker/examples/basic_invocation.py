@@ -64,22 +64,28 @@ def basic_invoke_example(
     print(f"Temperature: {temperature}")
     print(f"{'='*60}\n")
 
-    # Build kwargs for model initialization
-    model_kwargs = {
-        "model": model,
-        "model_provider": provider,
-        "temperature": temperature,
-    }
-
-    # Add Bedrock-specific parameters
+    # For Bedrock, use ChatBedrockConverse directly (handles ARNs better)
     if provider == "bedrock":
+        from langchain_aws import ChatBedrockConverse
         from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
-        model_kwargs["region_name"] = get_bedrock_region()
+
+        bedrock_kwargs = {
+            "model": model,
+            "temperature": temperature,
+            "region_name": get_bedrock_region(),
+        }
         profile = get_bedrock_profile()
         if profile:
-            model_kwargs["credentials_profile_name"] = profile
+            bedrock_kwargs["credentials_profile_name"] = profile
 
-    chat_model = init_chat_model(**model_kwargs)
+        chat_model = ChatBedrockConverse(**bedrock_kwargs)
+    else:
+        # Use init_chat_model for other providers
+        chat_model = init_chat_model(
+            model=model,
+            model_provider=provider,
+            temperature=temperature,
+        )
 
     prompt = "What is the capital of the Moon?"
     print(f"Prompt: {prompt}\n")

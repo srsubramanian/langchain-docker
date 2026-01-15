@@ -131,35 +131,39 @@ def get_bedrock_model(
     Args:
         model: Bedrock model ID or ARN. If None, uses first configured model.
         temperature: Sampling temperature (0.0-1.0)
-        **kwargs: Additional arguments for ChatBedrock
+        **kwargs: Additional arguments for ChatBedrockConverse
 
     Returns:
-        Configured ChatBedrock instance
+        Configured ChatBedrockConverse instance
 
     Raises:
         APIKeyMissingError: If AWS credentials are not configured
         ModelInitializationError: If model initialization fails
     """
+    from langchain_aws import ChatBedrockConverse
     from langchain_docker.core.config import get_bedrock_models, get_bedrock_region, get_bedrock_profile
+
+    validate_api_key("bedrock")
 
     # Get default model if not specified
     if model is None:
         available_models = get_bedrock_models()
         model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
-    # Pass region and profile as kwargs
-    region = get_bedrock_region()
-    profile = get_bedrock_profile()
+    # Build kwargs for ChatBedrockConverse
+    bedrock_kwargs = {
+        "model": model,
+        "temperature": temperature,
+        "region_name": get_bedrock_region(),
+    }
 
-    # Build kwargs for ChatBedrock
-    bedrock_kwargs = {"region_name": region}
+    profile = get_bedrock_profile()
     if profile:
         bedrock_kwargs["credentials_profile_name"] = profile
 
-    return init_model(
-        provider="bedrock",
-        model=model,
-        temperature=temperature,
-        **bedrock_kwargs,
-        **kwargs
-    )
+    bedrock_kwargs.update(kwargs)
+
+    try:
+        return ChatBedrockConverse(**bedrock_kwargs)
+    except Exception as e:
+        raise ModelInitializationError("bedrock", model, e)

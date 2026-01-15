@@ -70,16 +70,25 @@ class ModelService:
                 self._cache.move_to_end(cache_key)
                 return self._cache[cache_key]
 
-            # For Bedrock, add region and profile from config
+            # For Bedrock, use ChatBedrockConverse directly (handles ARNs better)
             if provider == "bedrock":
+                from langchain_aws import ChatBedrockConverse
                 from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
-                kwargs.setdefault("region_name", get_bedrock_region())
+
+                bedrock_kwargs = {
+                    "model": model,
+                    "temperature": temperature,
+                    "region_name": get_bedrock_region(),
+                }
                 profile = get_bedrock_profile()
                 if profile:
-                    kwargs.setdefault("credentials_profile_name", profile)
+                    bedrock_kwargs["credentials_profile_name"] = profile
+                bedrock_kwargs.update(kwargs)
 
-            # Create new model instance
-            model_instance = init_model(provider, model, temperature, **kwargs)
+                model_instance = ChatBedrockConverse(**bedrock_kwargs)
+            else:
+                # Create new model instance for other providers
+                model_instance = init_model(provider, model, temperature, **kwargs)
 
             # Add to cache
             self._cache[cache_key] = model_instance
