@@ -70,6 +70,14 @@ class ModelService:
                 self._cache.move_to_end(cache_key)
                 return self._cache[cache_key]
 
+            # For Bedrock, add region and profile from config
+            if provider == "bedrock":
+                from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
+                kwargs.setdefault("region_name", get_bedrock_region())
+                profile = get_bedrock_profile()
+                if profile:
+                    kwargs.setdefault("credentials_profile_name", profile)
+
             # Create new model instance
             model_instance = init_model(provider, model, temperature, **kwargs)
 

@@ -91,11 +91,12 @@ def validate_bedrock_access() -> bool:
         import boto3
         from botocore.exceptions import NoCredentialsError, ClientError
 
-        # Get region from environment or boto3 default
+        # Get region and profile from environment
         region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION")
+        profile = os.getenv("AWS_PROFILE") or os.getenv("BEDROCK_PROFILE")
 
         # Create Bedrock client - will use boto3 credential chain
-        session = boto3.Session(region_name=region)
+        session = boto3.Session(region_name=region, profile_name=profile)
         bedrock = session.client("bedrock-runtime")
 
         # Simple validation: list foundation models (doesn't cost anything)
@@ -207,6 +208,15 @@ def get_bedrock_region() -> str:
         Region name (defaults to us-east-1 if not set)
     """
     return os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION") or "us-east-1"
+
+
+def get_bedrock_profile() -> str | None:
+    """Get AWS profile for Bedrock.
+
+    Returns:
+        Profile name if set, None otherwise (uses default credential chain)
+    """
+    return os.getenv("AWS_PROFILE") or os.getenv("BEDROCK_PROFILE")
 
 
 def get_database_url() -> str:
