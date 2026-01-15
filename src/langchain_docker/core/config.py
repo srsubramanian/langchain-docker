@@ -95,9 +95,10 @@ def validate_bedrock_access() -> bool:
         region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION")
         profile = os.getenv("AWS_PROFILE") or os.getenv("BEDROCK_PROFILE")
 
-        # Create Bedrock client - will use boto3 credential chain
+        # Create Bedrock management client (not bedrock-runtime)
+        # bedrock-runtime is for invoking models, bedrock is for management APIs
         session = boto3.Session(region_name=region, profile_name=profile)
-        bedrock = session.client("bedrock-runtime")
+        bedrock = session.client("bedrock")
 
         # Simple validation: list foundation models (doesn't cost anything)
         bedrock.list_foundation_models(maxResults=1)
@@ -110,7 +111,8 @@ def validate_bedrock_access() -> bool:
             "AWS credentials not found. Run 'aws configure' or set up IAM role."
         )
     except ClientError as e:
-        if e.response['Error']['Code'] == 'UnauthorizedOperation':
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code in ('UnauthorizedOperation', 'AccessDeniedException'):
             raise APIKeyMissingError(
                 "bedrock",
                 "AWS credentials found but no access to Bedrock. Check IAM permissions."
