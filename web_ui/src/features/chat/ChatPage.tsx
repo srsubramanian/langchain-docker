@@ -15,13 +15,14 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { useSessionStore, useSettingsStore } from '@/stores';
 import { chatApi, sessionsApi, modelsApi } from '@/api';
-import type { ProviderInfo, Message, SessionSummary } from '@/types/api';
+import type { ProviderInfo, ProviderDetails, ModelInfo, Message, SessionSummary } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
 
 export function ChatPage() {
   const [input, setInput] = useState('');
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [threads, setThreads] = useState<SessionSummary[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
@@ -51,6 +52,18 @@ export function ChatPage() {
   useEffect(() => {
     modelsApi.listProviders().then(setProviders).catch(console.error);
   }, []);
+
+  // Fetch available models when provider changes
+  useEffect(() => {
+    if (provider) {
+      modelsApi
+        .getProviderDetails(provider)
+        .then((details) => {
+          setAvailableModels(details.available_models);
+        })
+        .catch(console.error);
+    }
+  }, [provider]);
 
   // Fetch thread history
   const loadThreads = useCallback(async () => {
@@ -255,7 +268,11 @@ export function ChatPage() {
                         <SelectItem value="default">
                           Default ({availableProvider?.default_model || 'auto'})
                         </SelectItem>
-                        {/* Models can be loaded from provider details */}
+                        {availableModels.map((m) => (
+                          <SelectItem key={m.name} value={m.name}>
+                            {m.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
