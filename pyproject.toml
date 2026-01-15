@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "srsubramanian", email = "subramanian_psg@yahoo.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "apscheduler>=3.11.2",
     "arize-phoenix>=12.25.1",

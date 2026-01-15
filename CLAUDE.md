@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a comprehensive demonstration of LangChain foundational models, managed using `uv` (modern Python package manager). The project showcases examples for basic model invocation, customization, multi-provider support, agents, and streaming. It works as both a CLI tool and importable Python library.
 
-Python version: 3.11+
+Python version: 3.13+
 
 ## Development Commands
 

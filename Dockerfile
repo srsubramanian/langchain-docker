@@ -1,7 +1,6 @@
 # Multi-stage Dockerfile for LangChain Docker application
-# Supports both FastAPI backend and Chainlit UI
 
-FROM python:3.11-slim AS base
+FROM python:3.13-slim AS base
 
 # Set working directory
 WORKDIR /app
@@ -19,7 +18,6 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml ./
 COPY README.md ./
 COPY src/ ./src/
-COPY chainlit_app/ ./chainlit_app/
 
 # Copy lock file if it exists
 COPY uv.lock* ./
@@ -35,10 +33,8 @@ RUN if [ -f uv.lock ]; then \
 # Copy environment file (template)
 COPY .env.example .env.example
 
-# Expose ports
-# 8000 for FastAPI backend
-# 8001 for Chainlit UI
-EXPOSE 8000 8001
+# Expose port for FastAPI backend
+EXPOSE 8000
 
 # Health check for FastAPI backend
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
