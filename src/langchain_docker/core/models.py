@@ -153,6 +153,7 @@ def get_bedrock_model(
     # Build kwargs for ChatBedrockConverse
     bedrock_kwargs = {
         "model": model,
+        "provider": "anthropic",
         "temperature": temperature,
         "region_name": get_bedrock_region(),
     }

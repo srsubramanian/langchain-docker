@@ -77,6 +77,7 @@ class ModelService:
 
                 bedrock_kwargs = {
                     "model": model,
+                    "provider": "anthropic",
                     "temperature": temperature,
                     "region_name": get_bedrock_region(),
                 }
