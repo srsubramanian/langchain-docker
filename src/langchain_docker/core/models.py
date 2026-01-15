@@ -151,18 +151,19 @@ def get_bedrock_model(
         available_models = get_bedrock_models()
         model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
-    # Create boto3 session with profile explicitly
+    # Create boto3 session and bedrock-runtime client with profile
     boto_session = boto3.Session(
         region_name=get_bedrock_region(),
         profile_name=get_bedrock_profile(),
     )
+    bedrock_client = boto_session.client("bedrock-runtime")
 
     # Build kwargs for ChatBedrockConverse
     bedrock_kwargs = {
         "model": model,
         "provider": "anthropic",
         "temperature": temperature,
-        "boto3_session": boto_session,
+        "client": bedrock_client,
     }
 
     bedrock_kwargs.update(kwargs)

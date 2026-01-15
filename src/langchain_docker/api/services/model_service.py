@@ -76,17 +76,18 @@ class ModelService:
                 from langchain_aws import ChatBedrockConverse
                 from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
 
-                # Create boto3 session with profile explicitly
+                # Create boto3 session and bedrock-runtime client with profile
                 boto_session = boto3.Session(
                     region_name=get_bedrock_region(),
                     profile_name=get_bedrock_profile(),
                 )
+                bedrock_client = boto_session.client("bedrock-runtime")
 
                 bedrock_kwargs = {
                     "model": model,
                     "provider": "anthropic",
                     "temperature": temperature,
-                    "boto3_session": boto_session,
+                    "client": bedrock_client,
                 }
                 bedrock_kwargs.update(kwargs)
 

@@ -82,11 +82,14 @@ def basic_invoke_example(
             profile_name=profile,
         )
 
+        # Create bedrock-runtime client from session
+        bedrock_client = boto_session.client("bedrock-runtime")
+
         bedrock_kwargs = {
             "model": model,
             "provider": "anthropic",
             "temperature": temperature,
-            "boto3_session": boto_session,
+            "client": bedrock_client,
         }
 
         chat_model = ChatBedrockConverse(**bedrock_kwargs)
