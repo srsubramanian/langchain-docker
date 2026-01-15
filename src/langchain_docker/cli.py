@@ -48,7 +48,7 @@ Examples:
     basic_parser.add_argument(
         "--provider",
         default="openai",
-        choices=["openai", "anthropic", "google"],
+        choices=["openai", "anthropic", "google", "bedrock"],
         help="Model provider (default: openai)",
     )
     basic_parser.add_argument(
@@ -70,7 +70,7 @@ Examples:
     customize_parser.add_argument(
         "--provider",
         default="openai",
-        choices=["openai", "anthropic", "google"],
+        choices=["openai", "anthropic", "google", "bedrock"],
         help="Model provider (default: openai)",
     )
     customize_parser.add_argument(
@@ -92,7 +92,7 @@ Examples:
     agent_parser.add_argument(
         "--provider",
         default="openai",
-        choices=["openai", "anthropic", "google"],
+        choices=["openai", "anthropic", "google", "bedrock"],
         help="Model provider (default: openai)",
     )
     agent_parser.add_argument(
@@ -108,7 +108,7 @@ Examples:
     stream_parser.add_argument(
         "--provider",
         default="openai",
-        choices=["openai", "anthropic", "google"],
+        choices=["openai", "anthropic", "google", "bedrock"],
         help="Model provider (default: openai)",
     )
     stream_parser.add_argument(
