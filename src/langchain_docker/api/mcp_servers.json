@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "filesystem": {
+      "name": "Filesystem",
+      "description": "Read, write, and manage files on the local filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {},
+      "enabled": true,
+      "timeout_seconds": 30
+    },
+    "memory": {
+      "name": "Memory",
+      "description": "Knowledge graph-based persistent memory",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {},
+      "enabled": true,
+      "timeout_seconds": 30
+    }
+  }
+}

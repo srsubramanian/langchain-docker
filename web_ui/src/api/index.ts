@@ -4,3 +4,4 @@ export { sessionsApi } from './sessions';
 export { modelsApi } from './models';
 export { agentsApi } from './agents';
 export { skillsApi } from './skills';
+export { mcpApi } from './mcp';

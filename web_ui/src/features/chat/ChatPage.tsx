@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Loader2, Settings2 } from 'lucide-react';
+import { Send, Loader2, Settings2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,20 +14,27 @@ import {
 import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { useSessionStore, useSettingsStore } from '@/stores';
+import { useMCPStore } from '@/stores/mcpStore';
 import { chatApi, sessionsApi, modelsApi } from '@/api';
-import type { ProviderInfo, ProviderDetails, ModelInfo, Message, SessionSummary } from '@/types/api';
+import type { ProviderInfo, ProviderDetails, ModelInfo, Message, SessionSummary, StreamEvent } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
+import { MCPServerToggle } from './MCPServerToggle';
 
 export function ChatPage() {
   const [input, setInput] = useState('');
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMCPPanel, setShowMCPPanel] = useState(false);
   const [threads, setThreads] = useState<SessionSummary[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // MCP store
+  const { getEnabledServers, enabledServerIds, servers } = useMCPStore();
 
   const {
     sessionId,
@@ -163,6 +170,10 @@ export function ChatPage() {
     setError(null);
     setStreaming(true);
     clearStreamingContent();
+    setToolActivity(null);
+
+    // Get enabled MCP servers
+    const mcpServers = getEnabledServers();
 
     try {
       for await (const event of chatApi.streamMessage({
@@ -171,6 +182,7 @@ export function ChatPage() {
         provider,
         model,
         temperature,
+        mcp_servers: mcpServers.length > 0 ? mcpServers : null,
       })) {
         if (event.event === 'start') {
           if (event.session_id && !sessionId) {
@@ -178,22 +190,33 @@ export function ChatPage() {
           }
         } else if (event.event === 'token') {
           appendStreamingContent(event.content || '');
+        } else if (event.event === 'tool_call') {
+          // Show tool call activity
+          setToolActivity({ name: event.tool_name || 'Unknown', status: 'calling' });
+        } else if (event.event === 'tool_result') {
+          // Tool completed
+          setToolActivity({ name: event.tool_name || 'Unknown', status: 'done' });
+          // Clear after a short delay
+          setTimeout(() => setToolActivity(null), 1500);
         } else if (event.event === 'done') {
           if (event.message) {
             addMessage(event.message);
           }
           clearStreamingContent();
           setStreaming(false);
+          setToolActivity(null);
           // Refresh thread list to update last message
           loadThreads();
         } else if (event.event === 'error') {
           setError(event.error || 'An error occurred');
           setStreaming(false);
+          setToolActivity(null);
         }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
       setStreaming(false);
+      setToolActivity(null);
     }
   };
 
@@ -221,6 +244,12 @@ export function ChatPage() {
               <Badge variant="outline">{provider}</Badge>
               {model && <Badge variant="secondary">{model}</Badge>}
               <Badge variant="secondary">temp: {temperature}</Badge>
+              {enabledServerIds.length > 0 && (
+                <Badge variant="default" className="bg-teal-600">
+                  <Wrench className="mr-1 h-3 w-3" />
+                  {enabledServerIds.length} MCP
+                </Badge>
+              )}
             </div>
             <Button
               variant="ghost"
@@ -293,6 +322,16 @@ export function ChatPage() {
             </Card>
           )}
 
+          {/* MCP Servers Panel */}
+          {showSettings && (
+            <div className="mb-4 shrink-0">
+              <MCPServerToggle
+                isOpen={showMCPPanel}
+                onToggle={() => setShowMCPPanel(!showMCPPanel)}
+              />
+            </div>
+          )}
+
           {/* Messages */}
           <ScrollArea className="flex-1" ref={scrollRef}>
             <div className="space-y-4 pb-4 pr-4">
@@ -326,10 +365,28 @@ export function ChatPage() {
                 </div>
               ))}
 
-              {isStreaming && streamingContent && (
+              {isStreaming && (
                 <div className="flex justify-start">
                   <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2">
-                    <p className="whitespace-pre-wrap">{streamingContent}</p>
+                    {toolActivity && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                        <Wrench className="h-3 w-3" />
+                        <span>
+                          {toolActivity.status === 'calling'
+                            ? `Calling ${toolActivity.name}...`
+                            : `${toolActivity.name} completed`}
+                        </span>
+                        {toolActivity.status === 'calling' && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                      </div>
+                    )}
+                    {streamingContent && (
+                      <p className="whitespace-pre-wrap">{streamingContent}</p>
+                    )}
+                    {!toolActivity && !streamingContent && (
+                      <span className="inline-block text-muted-foreground">Thinking...</span>
+                    )}
                     <span className="inline-block h-4 w-1 animate-pulse bg-foreground" />
                   </div>
                 </div>

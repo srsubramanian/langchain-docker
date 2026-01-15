@@ -6,6 +6,8 @@ from fastapi import Depends, Header
 
 from langchain_docker.api.services.agent_service import AgentService
 from langchain_docker.api.services.chat_service import ChatService
+from langchain_docker.api.services.mcp_server_manager import MCPServerManager
+from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
@@ -49,10 +51,54 @@ def get_memory_service(
     return MemoryService(config, model_service)
 
 
+# Singleton for MCP server manager
+_mcp_server_manager: MCPServerManager | None = None
+
+
+def get_mcp_server_manager() -> MCPServerManager:
+    """Get singleton MCP server manager instance.
+
+    The MCPServerManager handles subprocess lifecycle for MCP servers
+    and JSON-RPC communication over stdin/stdout.
+
+    Returns:
+        MCPServerManager instance
+    """
+    global _mcp_server_manager
+    if _mcp_server_manager is None:
+        _mcp_server_manager = MCPServerManager()
+    return _mcp_server_manager
+
+
+# Singleton for MCP tool service
+_mcp_tool_service: MCPToolService | None = None
+
+
+def get_mcp_tool_service(
+    server_manager: MCPServerManager = Depends(get_mcp_server_manager),
+) -> MCPToolService:
+    """Get singleton MCP tool service instance.
+
+    The MCPToolService handles tool discovery and LangChain integration
+    for MCP servers.
+
+    Args:
+        server_manager: MCP server manager (injected)
+
+    Returns:
+        MCPToolService instance
+    """
+    global _mcp_tool_service
+    if _mcp_tool_service is None:
+        _mcp_tool_service = MCPToolService(server_manager)
+    return _mcp_tool_service
+
+
 def get_chat_service(
     session_service: SessionService = Depends(get_session_service),
     model_service: ModelService = Depends(get_model_service),
     memory_service: MemoryService = Depends(get_memory_service),
+    mcp_tool_service: MCPToolService = Depends(get_mcp_tool_service),
 ) -> ChatService:
     """Get chat service instance.
 
@@ -60,11 +106,12 @@ def get_chat_service(
         session_service: Session service (injected)
         model_service: Model service (injected)
         memory_service: Memory service (injected)
+        mcp_tool_service: MCP tool service (injected)
 
     Returns:
         ChatService instance
     """
-    return ChatService(session_service, model_service, memory_service)
+    return ChatService(session_service, model_service, memory_service, mcp_tool_service)
 
 
 # Singleton for skill registry

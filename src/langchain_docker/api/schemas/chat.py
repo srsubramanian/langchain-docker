@@ -78,6 +78,10 @@ class ChatRequest(BaseModel):
     enable_memory: bool = Field(True, description="Enable conversation memory management")
     memory_trigger_count: int | None = Field(None, gt=0, description="Override trigger threshold for summarization")
     memory_keep_recent: int | None = Field(None, gt=0, description="Override number of recent messages to keep")
+    mcp_servers: list[str] | None = Field(
+        None,
+        description="List of MCP server IDs to enable for this request"
+    )
 
 
 class ChatResponse(BaseModel):
@@ -93,5 +97,5 @@ class ChatResponse(BaseModel):
 class StreamEvent(BaseModel):
     """Schema for streaming events."""
 
-    event: Literal["start", "token", "done", "error"]
+    event: Literal["start", "token", "tool_call", "tool_result", "done", "error"]
     data: dict[str, Any]

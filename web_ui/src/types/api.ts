@@ -15,6 +15,7 @@ export interface ChatRequest {
   stream?: boolean;
   max_tokens?: number | null;
   enable_memory?: boolean;
+  mcp_servers?: string[] | null;
 }
 
 export interface MemoryMetadata {
@@ -36,7 +37,7 @@ export interface ChatResponse {
 
 // SSE Stream events
 export interface StreamEvent {
-  event: 'start' | 'token' | 'done' | 'error';
+  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error';
   session_id?: string;
   model?: string;
   provider?: string;
@@ -44,6 +45,12 @@ export interface StreamEvent {
   message?: Message;
   conversation_length?: number;
   memory_metadata?: MemoryMetadata;
+  mcp_tools_count?: number;
+  // Tool call/result fields
+  tool_name?: string;
+  tool_id?: string;
+  arguments?: string;
+  result?: string;
   error?: string;
 }
 
@@ -300,4 +307,55 @@ export interface SkillLoadResponse {
   skill_id: string;
   name: string;
   content: string;
+}
+
+// MCP Server types
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface MCPServerInfo {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  status: 'running' | 'stopped' | 'error';
+  tools?: MCPToolInfo[] | null;
+}
+
+export interface MCPServersResponse {
+  servers: MCPServerInfo[];
+}
+
+export interface MCPServerStartResponse {
+  id: string;
+  status: 'running' | 'stopped' | 'error';
+  message: string;
+  tools?: MCPToolInfo[] | null;
+}
+
+export interface MCPServerStopResponse {
+  id: string;
+  status: 'stopped';
+  message: string;
+}
+
+export interface MCPToolsResponse {
+  server_id: string;
+  tools: MCPToolInfo[];
+}
+
+export interface MCPToolCallRequest {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface MCPToolCallResponse {
+  server_id: string;
+  tool_name: string;
+  result: unknown;
+  success: boolean;
+  error?: string | null;
 }
