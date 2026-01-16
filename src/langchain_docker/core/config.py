@@ -235,3 +235,51 @@ def is_sql_read_only() -> bool:
         True if read-only mode is enabled (default)
     """
     return os.getenv("SQL_READ_ONLY", "true").lower() == "true"
+
+
+# Jira Configuration Functions
+
+
+def get_jira_url() -> str | None:
+    """Get Jira instance URL.
+
+    Returns:
+        Jira URL if configured, None otherwise
+    """
+    return os.getenv("JIRA_URL")
+
+
+def get_jira_username() -> str | None:
+    """Get Jira username/email.
+
+    Returns:
+        Jira username if configured, None otherwise
+    """
+    return os.getenv("JIRA_USERNAME")
+
+
+def get_jira_api_token() -> str | None:
+    """Get Jira API token.
+
+    Returns:
+        Jira API token if configured, None otherwise
+    """
+    return os.getenv("JIRA_API_TOKEN")
+
+
+def get_jira_api_version() -> str:
+    """Get Jira API version.
+
+    Returns:
+        API version (defaults to "2")
+    """
+    return os.getenv("JIRA_API_VERSION", "2")
+
+
+def is_jira_configured() -> bool:
+    """Check if Jira is fully configured.
+
+    Returns:
+        True if all required Jira settings are present
+    """
+    return bool(get_jira_url() and get_jira_username() and get_jira_api_token())

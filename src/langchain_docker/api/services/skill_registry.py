@@ -22,7 +22,15 @@ from langchain_community.utilities import SQLDatabase
 SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
 from langchain_docker.api.services.demo_database import ensure_demo_database
-from langchain_docker.core.config import get_database_url, is_sql_read_only
+from langchain_docker.core.config import (
+    get_database_url,
+    get_jira_api_token,
+    get_jira_api_version,
+    get_jira_url,
+    get_jira_username,
+    is_jira_configured,
+    is_sql_read_only,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +373,407 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
             return f"Error getting schema for {table_name}: {str(e)}"
 
 
+class JiraSkill(Skill):
+    """Jira skill for read-only Jira integration.
+
+    Provides querying capabilities for Jira issues, sprints, projects, and users.
+    All operations are READ-ONLY - no create, update, delete, or transition operations.
+
+    Content is loaded from .md files in src/langchain_docker/skills/jira/
+    """
+
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        username: Optional[str] = None,
+        api_token: Optional[str] = None,
+        api_version: Optional[str] = None,
+    ):
+        """Initialize Jira skill.
+
+        Args:
+            url: Jira instance URL (defaults to JIRA_URL env var)
+            username: Jira username (defaults to JIRA_USERNAME env var)
+            api_token: Jira API token (defaults to JIRA_API_TOKEN env var)
+            api_version: API version "2" or "3" (defaults to JIRA_API_VERSION env var)
+        """
+        self.id = "jira"
+        self.name = "Jira Query Expert"
+        self.description = "Query Jira issues, sprints, projects, and users (read-only)"
+        self.category = "project_management"
+        self.is_builtin = True
+        self.url = url or get_jira_url()
+        self.username = username or get_jira_username()
+        self.api_token = api_token or get_jira_api_token()
+        self.api_version = api_version or get_jira_api_version()
+        self._skill_dir = SKILLS_DIR / "jira"
+        self._session = None
+
+    def _get_session(self):
+        """Get or create requests session with authentication.
+
+        Returns:
+            Configured requests session or None if not configured
+        """
+        if not self.url or not self.username or not self.api_token:
+            return None
+
+        if self._session is None:
+            import requests
+            from requests.auth import HTTPBasicAuth
+
+            self._session = requests.Session()
+            self._session.auth = HTTPBasicAuth(self.username, self.api_token)
+            self._session.headers.update({
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            })
+
+        return self._session
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory.
+
+        Args:
+            filename: Name of the .md file to read
+
+        Returns:
+            File content or error message if file not found
+        """
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _api_get(self, endpoint: str, params: Optional[dict] = None) -> dict:
+        """Make a GET request to the Jira API.
+
+        Args:
+            endpoint: API endpoint (e.g., "/rest/api/2/issue/PROJ-123")
+            params: Optional query parameters
+
+        Returns:
+            JSON response as dictionary or error dict
+        """
+        session = self._get_session()
+        if not session:
+            return {"error": "Jira not configured. Set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN."}
+
+        url = f"{self.url.rstrip('/')}{endpoint}"
+        try:
+            response = session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": f"Jira API error: {str(e)}"}
+
+    def load_core(self) -> str:
+        """Level 2: Load Jira skill instructions from SKILL.md.
+
+        Returns:
+            Complete skill context for Jira operations
+        """
+        # Check if Jira is configured
+        config_status = ""
+        if not is_jira_configured():
+            config_status = """
+### Configuration Status
+**Warning**: Jira is not fully configured. Set the following environment variables:
+- `JIRA_URL`: Your Jira instance URL
+- `JIRA_USERNAME`: Your username or email
+- `JIRA_API_TOKEN`: Your API token
+"""
+        else:
+            config_status = f"""
+### Configuration Status
+- Connected to: {self.url}
+- API Version: {self.api_version}
+"""
+
+        # Load static content from SKILL.md
+        static_content = self._read_md_file("SKILL.md")
+
+        return f"""## Jira Skill Activated
+{config_status}
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources from .md files.
+
+        Args:
+            resource: "jql_reference" for JQL guide
+
+        Returns:
+            Detailed resource content from the corresponding .md file
+        """
+        resource_map = {
+            "jql_reference": "jql_reference.md",
+            "jql": "jql_reference.md",  # Alias
+        }
+
+        if resource in resource_map:
+            return self._read_md_file(resource_map[resource])
+        else:
+            available = ", ".join(f"'{r}'" for r in set(resource_map.keys()))
+            return f"Unknown resource: {resource}. Available: {available}"
+
+    def search_issues(
+        self,
+        jql: str,
+        fields: Optional[list[str]] = None,
+        max_results: int = 50,
+        start_at: int = 0,
+    ) -> str:
+        """Search for issues using JQL.
+
+        Args:
+            jql: JQL query string
+            fields: Fields to return (default: key, summary, status, assignee, priority)
+            max_results: Maximum results to return (default: 50)
+            start_at: Starting index for pagination
+
+        Returns:
+            Formatted search results or error message
+        """
+        if fields is None:
+            fields = ["key", "summary", "status", "assignee", "priority", "issuetype"]
+
+        params = {
+            "jql": jql,
+            "fields": ",".join(fields),
+            "maxResults": max_results,
+            "startAt": start_at,
+        }
+
+        result = self._api_get(f"/rest/api/{self.api_version}/search", params)
+
+        if "error" in result:
+            return result["error"]
+
+        issues = result.get("issues", [])
+        total = result.get("total", 0)
+
+        if not issues:
+            return f"No issues found for query: {jql}"
+
+        output = [f"Found {total} issues (showing {len(issues)}):"]
+        for issue in issues:
+            key = issue.get("key", "")
+            fields_data = issue.get("fields", {})
+            summary = fields_data.get("summary", "No summary")
+            status = fields_data.get("status", {}).get("name", "Unknown")
+            assignee = fields_data.get("assignee", {})
+            assignee_name = assignee.get("displayName", "Unassigned") if assignee else "Unassigned"
+            priority = fields_data.get("priority", {})
+            priority_name = priority.get("name", "None") if priority else "None"
+            issue_type = fields_data.get("issuetype", {}).get("name", "Unknown")
+
+            output.append(f"\n**{key}** [{issue_type}] - {summary}")
+            output.append(f"  Status: {status} | Priority: {priority_name} | Assignee: {assignee_name}")
+
+        return "\n".join(output)
+
+    def get_issue(self, issue_key: str, fields: Optional[list[str]] = None) -> str:
+        """Get detailed information about a specific issue.
+
+        Args:
+            issue_key: Issue key (e.g., "PROJ-123")
+            fields: Specific fields to return (default: all)
+
+        Returns:
+            Formatted issue details or error message
+        """
+        params = {}
+        if fields:
+            params["fields"] = ",".join(fields)
+
+        result = self._api_get(f"/rest/api/{self.api_version}/issue/{issue_key}", params)
+
+        if "error" in result:
+            return result["error"]
+
+        key = result.get("key", issue_key)
+        fields_data = result.get("fields", {})
+
+        summary = fields_data.get("summary", "No summary")
+        description = fields_data.get("description", "No description")
+        status = fields_data.get("status", {}).get("name", "Unknown")
+        priority = fields_data.get("priority", {})
+        priority_name = priority.get("name", "None") if priority else "None"
+        issue_type = fields_data.get("issuetype", {}).get("name", "Unknown")
+        assignee = fields_data.get("assignee", {})
+        assignee_name = assignee.get("displayName", "Unassigned") if assignee else "Unassigned"
+        reporter = fields_data.get("reporter", {})
+        reporter_name = reporter.get("displayName", "Unknown") if reporter else "Unknown"
+        created = fields_data.get("created", "Unknown")
+        updated = fields_data.get("updated", "Unknown")
+        labels = fields_data.get("labels", [])
+
+        output = [
+            f"# {key}: {summary}",
+            f"",
+            f"**Type:** {issue_type}",
+            f"**Status:** {status}",
+            f"**Priority:** {priority_name}",
+            f"**Assignee:** {assignee_name}",
+            f"**Reporter:** {reporter_name}",
+            f"**Created:** {created}",
+            f"**Updated:** {updated}",
+        ]
+
+        if labels:
+            output.append(f"**Labels:** {', '.join(labels)}")
+
+        output.append(f"\n## Description\n{description}")
+
+        return "\n".join(output)
+
+    def list_projects(self) -> str:
+        """List all accessible projects.
+
+        Returns:
+            Formatted list of projects or error message
+        """
+        result = self._api_get(f"/rest/api/{self.api_version}/project")
+
+        if isinstance(result, dict) and "error" in result:
+            return result["error"]
+
+        if not result:
+            return "No projects found or accessible."
+
+        output = ["**Available Projects:**\n"]
+        for project in result:
+            key = project.get("key", "")
+            name = project.get("name", "")
+            output.append(f"- **{key}**: {name}")
+
+        return "\n".join(output)
+
+    def get_sprints(self, board_id: int, state: str = "active") -> str:
+        """Get sprints for a board.
+
+        Args:
+            board_id: Agile board ID
+            state: Sprint state filter (active, closed, future)
+
+        Returns:
+            Formatted list of sprints or error message
+        """
+        params = {"state": state}
+        result = self._api_get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
+
+        if "error" in result:
+            return result["error"]
+
+        sprints = result.get("values", [])
+
+        if not sprints:
+            return f"No {state} sprints found for board {board_id}."
+
+        output = [f"**{state.title()} Sprints for Board {board_id}:**\n"]
+        for sprint in sprints:
+            sprint_id = sprint.get("id", "")
+            name = sprint.get("name", "")
+            state_name = sprint.get("state", "")
+            start_date = sprint.get("startDate", "N/A")
+            end_date = sprint.get("endDate", "N/A")
+
+            output.append(f"- **{name}** (ID: {sprint_id})")
+            output.append(f"  State: {state_name} | Start: {start_date} | End: {end_date}")
+
+        return "\n".join(output)
+
+    def get_sprint_issues(self, sprint_id: int, fields: Optional[list[str]] = None) -> str:
+        """Get all issues in a sprint.
+
+        Args:
+            sprint_id: Sprint ID
+            fields: Fields to return
+
+        Returns:
+            Formatted list of sprint issues or error message
+        """
+        if fields is None:
+            fields = ["key", "summary", "status", "assignee", "priority", "issuetype"]
+
+        params = {"fields": ",".join(fields)}
+        result = self._api_get(f"/rest/agile/1.0/sprint/{sprint_id}/issue", params)
+
+        if "error" in result:
+            return result["error"]
+
+        issues = result.get("issues", [])
+
+        if not issues:
+            return f"No issues found in sprint {sprint_id}."
+
+        output = [f"**Issues in Sprint {sprint_id}:**\n"]
+        for issue in issues:
+            key = issue.get("key", "")
+            fields_data = issue.get("fields", {})
+            summary = fields_data.get("summary", "No summary")
+            status = fields_data.get("status", {}).get("name", "Unknown")
+            assignee = fields_data.get("assignee", {})
+            assignee_name = assignee.get("displayName", "Unassigned") if assignee else "Unassigned"
+
+            output.append(f"- **{key}**: {summary}")
+            output.append(f"  Status: {status} | Assignee: {assignee_name}")
+
+        return "\n".join(output)
+
+    def get_changelog(self, issue_key: str) -> str:
+        """Get the change history for an issue.
+
+        Args:
+            issue_key: Issue key (e.g., "PROJ-123")
+
+        Returns:
+            Formatted changelog or error message
+        """
+        params = {"expand": "changelog"}
+        result = self._api_get(f"/rest/api/{self.api_version}/issue/{issue_key}", params)
+
+        if "error" in result:
+            return result["error"]
+
+        changelog = result.get("changelog", {})
+        histories = changelog.get("histories", [])
+
+        if not histories:
+            return f"No change history found for {issue_key}."
+
+        output = [f"**Change History for {issue_key}:**\n"]
+        for history in histories[:20]:  # Limit to last 20 changes
+            author = history.get("author", {}).get("displayName", "Unknown")
+            created = history.get("created", "Unknown")
+            items = history.get("items", [])
+
+            output.append(f"\n**{created}** by {author}:")
+            for item in items:
+                field = item.get("field", "")
+                from_str = item.get("fromString", "None")
+                to_str = item.get("toString", "None")
+                output.append(f"  - {field}: '{from_str}' → '{to_str}'")
+
+        return "\n".join(output)
+
+
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
 
@@ -641,6 +1050,10 @@ class SkillRegistry:
         # XLSX skill (from Anthropic skills repository)
         xlsx_skill = XLSXSkill()
         self.register(xlsx_skill)
+
+        # Jira skill (read-only Jira integration)
+        jira_skill = JiraSkill()
+        self.register(jira_skill)
 
     def register(self, skill: Skill) -> None:
         """Register a skill.

@@ -176,6 +176,92 @@ class ToolRegistry:
             )
         )
 
+        # Jira tools - read-only project management
+        self.register(
+            ToolTemplate(
+                id="load_jira_skill",
+                name="Load Jira Skill",
+                description="Load Jira skill with context and guidelines (progressive disclosure)",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_load_jira_skill_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_search",
+                name="Search Jira Issues",
+                description="Search for Jira issues using JQL (Jira Query Language)",
+                category="project_management",
+                parameters=[
+                    ToolParameter(
+                        name="max_results",
+                        type="number",
+                        description="Maximum number of results to return",
+                        default=50,
+                        required=False,
+                    )
+                ],
+                factory=self._create_jira_search_tool,
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_issue",
+                name="Get Jira Issue",
+                description="Get detailed information about a specific Jira issue",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_get_issue_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_list_projects",
+                name="List Jira Projects",
+                description="List all accessible Jira projects",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_list_projects_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_sprints",
+                name="Get Jira Sprints",
+                description="Get sprints for a Jira board",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_get_sprints_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_changelog",
+                name="Get Jira Changelog",
+                description="Get the change history for a Jira issue",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_get_changelog_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_jql_reference",
+                name="JQL Reference",
+                description="Load JQL (Jira Query Language) reference documentation",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_jql_reference_tool(),
+            )
+        )
+
     # Tool factory methods
     def _create_add_tool(self) -> Callable:
         """Create add tool."""
@@ -343,6 +429,138 @@ class ToolRegistry:
             return sql_skill.load_details("samples")
 
         return sql_get_samples
+
+    # Jira tool factory methods
+    def _get_jira_skill(self):
+        """Get Jira skill from SkillRegistry (lazy loading)."""
+        if not hasattr(self, "_skill_registry"):
+            from langchain_docker.api.services.skill_registry import SkillRegistry
+            self._skill_registry = SkillRegistry()
+        return self._skill_registry.get_skill("jira")
+
+    def _create_load_jira_skill_tool(self) -> Callable:
+        """Create load Jira skill tool for progressive disclosure."""
+        jira_skill = self._get_jira_skill()
+
+        def load_jira_skill() -> str:
+            """Load the Jira skill with context and guidelines.
+
+            Call this tool before querying Jira to get the configuration status,
+            available operations, and JQL guidelines. This enables you to write
+            accurate queries against Jira.
+
+            Returns:
+                Jira skill context including configuration and guidelines
+            """
+            return jira_skill.load_core()
+
+        return load_jira_skill
+
+    def _create_jira_search_tool(self, max_results: int = 50) -> Callable:
+        """Create Jira search tool with configurable max results."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_search(jql: str) -> str:
+            """Search for Jira issues using JQL (Jira Query Language).
+
+            Use load_jira_skill first to get JQL guidelines and available operations.
+            Use jira_jql_reference for detailed JQL syntax help.
+
+            Args:
+                jql: JQL query string (e.g., "project = PROJ AND status = Open")
+
+            Returns:
+                Search results with issue keys, summaries, and status
+            """
+            return jira_skill.search_issues(jql, max_results=max_results)
+
+        return jira_search
+
+    def _create_jira_get_issue_tool(self) -> Callable:
+        """Create Jira get issue tool."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_get_issue(issue_key: str) -> str:
+            """Get detailed information about a specific Jira issue.
+
+            Args:
+                issue_key: Issue key (e.g., "PROJ-123")
+
+            Returns:
+                Detailed issue information including description, status, assignee, etc.
+            """
+            return jira_skill.get_issue(issue_key)
+
+        return jira_get_issue
+
+    def _create_jira_list_projects_tool(self) -> Callable:
+        """Create Jira list projects tool."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_list_projects() -> str:
+            """List all accessible Jira projects.
+
+            Returns:
+                List of projects with their keys and names
+            """
+            return jira_skill.list_projects()
+
+        return jira_list_projects
+
+    def _create_jira_get_sprints_tool(self) -> Callable:
+        """Create Jira get sprints tool."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_get_sprints(board_id: int, state: str = "active") -> str:
+            """Get sprints for a Jira board.
+
+            Args:
+                board_id: The ID of the agile board
+                state: Sprint state filter - "active", "closed", or "future"
+
+            Returns:
+                List of sprints with their IDs, names, and dates
+            """
+            return jira_skill.get_sprints(board_id, state)
+
+        return jira_get_sprints
+
+    def _create_jira_get_changelog_tool(self) -> Callable:
+        """Create Jira get changelog tool."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_get_changelog(issue_key: str) -> str:
+            """Get the change history for a Jira issue.
+
+            Args:
+                issue_key: Issue key (e.g., "PROJ-123")
+
+            Returns:
+                Change history showing who changed what and when
+            """
+            return jira_skill.get_changelog(issue_key)
+
+        return jira_get_changelog
+
+    def _create_jira_jql_reference_tool(self) -> Callable:
+        """Create Jira JQL reference tool."""
+        jira_skill = self._get_jira_skill()
+
+        def jira_jql_reference() -> str:
+            """Load JQL (Jira Query Language) reference documentation.
+
+            Returns detailed JQL syntax guide including:
+            - Field names and operators
+            - Functions (currentUser(), openSprints(), etc.)
+            - Date/time handling
+            - Common query patterns
+
+            Returns:
+                JQL reference documentation
+            """
+            return jira_skill.load_details("jql_reference")
+
+        return jira_jql_reference
 
     # Registry methods
     def register(self, template: ToolTemplate) -> None:
