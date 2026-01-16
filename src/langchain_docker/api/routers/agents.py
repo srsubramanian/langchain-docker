@@ -226,8 +226,12 @@ def invoke_custom_agent_direct(
     Returns:
         Agent response with session ID for follow-up messages
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     # Include user_id in session for conversation isolation
     session_id = request.session_id or f"{user_id}:direct:{agent_id}"
+    logger.info(f"[HITL Debug] Router - request.session_id: {request.session_id}, resolved session_id: {session_id}")
 
     try:
         result = agent_service.invoke_agent_direct(

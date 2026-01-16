@@ -683,9 +683,17 @@ Guidelines:
         # Get conversation history
         history = session_data.get("messages", [])
 
+        # Debug: Log history before adding new message
+        logger.info(f"[HITL Debug] Session {sess_key} - History before new message: {len(history)} messages")
+        for i, msg in enumerate(history):
+            msg_type = type(msg).__name__
+            content_preview = str(msg.content)[:100] if hasattr(msg, 'content') else 'N/A'
+            logger.info(f"[HITL Debug]   History[{i}] {msg_type}: {content_preview}")
+
         # Add user message
         user_msg = HumanMessage(content=message)
         history.append(user_msg)
+        logger.info(f"[HITL Debug] Added user message: {message[:100]}")
 
         # Invoke agent directly
         with trace_session(sess_key):
