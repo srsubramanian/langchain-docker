@@ -143,6 +143,12 @@ Examples:
         action="store_true",
         help="Enable auto-reload for development",
     )
+    serve_parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error", "critical"],
+        help="Log level (default: info)",
+    )
 
     return parser
 
@@ -223,11 +229,20 @@ def run_serve_command(args: argparse.Namespace) -> None:
     Args:
         args: Parsed command-line arguments
     """
+    import logging
+
     try:
         import uvicorn
     except ImportError:
         print("Error: uvicorn is not installed. Install with: uv add uvicorn")
         sys.exit(1)
+
+    # Configure logging level for all loggers
+    log_level = getattr(logging, args.log_level.upper())
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
     print(f"\n{'='*60}")
     print("Starting FastAPI Server")
@@ -235,6 +250,7 @@ def run_serve_command(args: argparse.Namespace) -> None:
     print(f"Host: {args.host}")
     print(f"Port: {args.port}")
     print(f"Reload: {args.reload}")
+    print(f"Log Level: {args.log_level}")
     print(f"{'='*60}\n")
     print(f"API Documentation: http://{args.host}:{args.port}/docs")
     print(f"Health Check: http://{args.host}:{args.port}/health")
@@ -245,6 +261,7 @@ def run_serve_command(args: argparse.Namespace) -> None:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        log_level=args.log_level,
     )
 
 
