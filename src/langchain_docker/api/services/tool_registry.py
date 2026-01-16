@@ -1,7 +1,10 @@
 """Tool registry service for exposing tools as discoverable templates."""
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -433,10 +436,17 @@ class ToolRegistry:
     # Jira tool factory methods
     def _get_jira_skill(self):
         """Get Jira skill from SkillRegistry (lazy loading)."""
+        logger.info("[Jira Tool] _get_jira_skill() called")
         if not hasattr(self, "_skill_registry"):
+            logger.info("[Jira Tool] Creating new SkillRegistry instance")
             from langchain_docker.api.services.skill_registry import SkillRegistry
             self._skill_registry = SkillRegistry()
-        return self._skill_registry.get_skill("jira")
+        jira_skill = self._skill_registry.get_skill("jira")
+        logger.info(f"[Jira Tool] Retrieved jira skill: {jira_skill}")
+        if jira_skill:
+            logger.info(f"[Jira Tool] Jira URL: {jira_skill.url}")
+            logger.info(f"[Jira Tool] Jira bearer_token configured: {bool(jira_skill.bearer_token)}")
+        return jira_skill
 
     def _create_load_jira_skill_tool(self) -> Callable:
         """Create load Jira skill tool for progressive disclosure."""
@@ -459,6 +469,8 @@ class ToolRegistry:
     def _create_jira_search_tool(self, max_results: int = 50) -> Callable:
         """Create Jira search tool with configurable max results."""
         jira_skill = self._get_jira_skill()
+        logger.info(f"[Jira Tool] Creating jira_search tool with max_results={max_results}")
+        logger.info(f"[Jira Tool] jira_skill instance: {jira_skill}")
 
         def jira_search(jql: str) -> str:
             """Search for Jira issues using JQL (Jira Query Language).
@@ -472,13 +484,24 @@ class ToolRegistry:
             Returns:
                 Search results with issue keys, summaries, and status
             """
-            return jira_skill.search_issues(jql, max_results=max_results)
+            logger.info(f"[Jira Tool] jira_search() called with JQL: {jql}")
+            try:
+                result = jira_skill.search_issues(jql, max_results=max_results)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_search() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_search() exception: {type(e).__name__}: {str(e)}")
+                import traceback
+                logger.error(f"[Jira Tool] Traceback:\n{traceback.format_exc()}")
+                raise
 
         return jira_search
 
     def _create_jira_get_issue_tool(self) -> Callable:
         """Create Jira get issue tool."""
         jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_get_issue tool")
 
         def jira_get_issue(issue_key: str) -> str:
             """Get detailed information about a specific Jira issue.
@@ -489,13 +512,24 @@ class ToolRegistry:
             Returns:
                 Detailed issue information including description, status, assignee, etc.
             """
-            return jira_skill.get_issue(issue_key)
+            logger.info(f"[Jira Tool] jira_get_issue() called with issue_key: {issue_key}")
+            try:
+                result = jira_skill.get_issue(issue_key)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_get_issue() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_get_issue() exception: {type(e).__name__}: {str(e)}")
+                import traceback
+                logger.error(f"[Jira Tool] Traceback:\n{traceback.format_exc()}")
+                raise
 
         return jira_get_issue
 
     def _create_jira_list_projects_tool(self) -> Callable:
         """Create Jira list projects tool."""
         jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_list_projects tool")
 
         def jira_list_projects() -> str:
             """List all accessible Jira projects.
@@ -503,7 +537,17 @@ class ToolRegistry:
             Returns:
                 List of projects with their keys and names
             """
-            return jira_skill.list_projects()
+            logger.info("[Jira Tool] jira_list_projects() called")
+            try:
+                result = jira_skill.list_projects()
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_list_projects() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_list_projects() exception: {type(e).__name__}: {str(e)}")
+                import traceback
+                logger.error(f"[Jira Tool] Traceback:\n{traceback.format_exc()}")
+                raise
 
         return jira_list_projects
 
