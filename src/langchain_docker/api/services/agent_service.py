@@ -668,7 +668,8 @@ Guidelines:
 
             # Build the agent
             agent = self._build_agent_from_custom(agent_id, llm)
-            compiled = agent.compile()
+            # create_agent returns a compiled graph, so only compile if needed
+            compiled = agent.compile() if hasattr(agent, 'compile') else agent
 
             self._direct_sessions[sess_key] = {
                 "app": compiled,
