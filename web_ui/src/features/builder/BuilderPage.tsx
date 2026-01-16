@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Check,
@@ -16,6 +16,7 @@ import {
   Clock,
   Calendar,
   Settings,
+  GripVertical,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -119,6 +120,50 @@ export function BuilderPage() {
   const [testSessionId, setTestSessionId] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Resizable panel state
+  const [rightPanelWidth, setRightPanelWidth] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Handle resize drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !containerRef.current) return;
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newWidth = containerRect.right - e.clientX;
+
+      // Clamp between 300px and 800px (or 60% of container width)
+      const maxWidth = Math.min(800, containerRect.width * 0.6);
+      const clampedWidth = Math.max(300, Math.min(maxWidth, newWidth));
+
+      setRightPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
 
   // Fetch tools, categories, skills, and providers
   useEffect(() => {
@@ -361,9 +406,9 @@ export function BuilderPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div ref={containerRef} className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
       {/* Left Panel - Builder */}
-      <div className="flex-1 flex flex-col overflow-hidden border-r">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {showTemplates ? (
           /* Template Selection View */
           <div className="flex-1 overflow-auto">
@@ -914,8 +959,27 @@ export function BuilderPage() {
         )}
       </div>
 
+      {/* Resize Handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className={cn(
+          'w-1 hover:w-1.5 bg-border hover:bg-primary/50 cursor-col-resize transition-all flex items-center justify-center group',
+          isResizing && 'w-1.5 bg-primary/50'
+        )}
+      >
+        <div className={cn(
+          'opacity-0 group-hover:opacity-100 transition-opacity',
+          isResizing && 'opacity-100'
+        )}>
+          <GripVertical className="h-6 w-6 text-muted-foreground" />
+        </div>
+      </div>
+
       {/* Right Panel - Preview & Test */}
-      <div className="w-[400px] flex flex-col bg-muted/30">
+      <div
+        className="flex flex-col bg-muted/30"
+        style={{ width: rightPanelWidth }}
+      >
         <Tabs defaultValue="test" className="flex flex-col h-full">
           <div className="border-b px-4 py-2">
             <TabsList className="w-full">
