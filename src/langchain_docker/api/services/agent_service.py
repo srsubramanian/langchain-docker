@@ -746,10 +746,23 @@ Guidelines:
         messages = result.get("messages", [])
         final_message = messages[-1] if messages else None
 
+        # Handle content that may be a list (tool calls) or string
+        response_content = ""
+        if final_message:
+            content = final_message.content
+            if isinstance(content, str):
+                response_content = content
+            elif isinstance(content, list):
+                # Join text parts from content blocks
+                response_content = "".join(
+                    block if isinstance(block, str) else block.get("text", "")
+                    for block in content
+                )
+
         return {
             "workflow_id": workflow_id,
             "agents": workflow_data["agents"],
-            "response": final_message.content if final_message else "",
+            "response": response_content,
             "message_count": len(messages),
         }
 
