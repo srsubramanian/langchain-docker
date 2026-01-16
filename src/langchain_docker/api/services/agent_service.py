@@ -697,6 +697,13 @@ Guidelines:
         messages = result.get("messages", [])
         session_data["messages"] = messages
 
+        # Debug: Log all messages to trace the flow
+        logger.info(f"[HITL Debug] Direct invocation for {agent_id} - Total messages: {len(messages)}")
+        for i, msg in enumerate(messages):
+            msg_type = type(msg).__name__
+            content_preview = str(msg.content)[:200] if hasattr(msg, 'content') else 'N/A'
+            logger.info(f"[HITL Debug]   [{i}] {msg_type}: {content_preview}")
+
         # Find last AI message with text content
         response_content = ""
         for msg in reversed(messages):
@@ -718,7 +725,11 @@ Guidelines:
 
             if text:
                 response_content = text
+                logger.info(f"[HITL Debug] Selected response from {msg_type}: {text[:100]}...")
                 break
+
+        if not response_content:
+            logger.warning(f"[HITL Debug] No text content found in any AI message!")
 
         return {
             "agent_id": agent_id,
