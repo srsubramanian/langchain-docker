@@ -88,6 +88,7 @@ Once running:
 
 **Features:**
 - Streaming chat with provider/model selection
+- MCP (Model Context Protocol) server integration with per-chat tool toggle
 - Multi-agent workflow visualization with React Flow
 - Custom agent builder with single-page layout (LangSmith-inspired)
 - Skills management with progressive disclosure
@@ -176,6 +177,7 @@ src/langchain_docker/
 │   │   ├── __init__.py
 │   │   ├── agents.py         # Multi-agent workflow endpoints
 │   │   ├── chat.py           # Chat endpoints (streaming & non-streaming)
+│   │   ├── mcp.py            # MCP server management endpoints
 │   │   ├── models.py         # Model management endpoints
 │   │   ├── sessions.py       # Session/conversation history endpoints
 │   │   └── skills.py         # Skills CRUD and loading endpoints
@@ -183,14 +185,18 @@ src/langchain_docker/
 │   │   ├── __init__.py
 │   │   ├── agents.py         # Multi-agent workflow schemas
 │   │   ├── chat.py           # Chat request/response schemas
+│   │   ├── mcp.py            # MCP server/tool schemas
 │   │   ├── models.py         # Model schemas
 │   │   ├── sessions.py       # Session schemas
 │   │   └── skills.py         # Skill request/response schemas
+│   ├── mcp_servers.json       # MCP server configuration
 │   └── services/              # Business logic layer
 │       ├── __init__.py
 │       ├── agent_service.py  # Multi-agent workflow orchestration (LangGraph)
-│       ├── chat_service.py   # Chat orchestration
+│       ├── chat_service.py   # Chat orchestration with MCP tool support
 │       ├── demo_database.py  # Demo SQLite database with sample data
+│       ├── mcp_server_manager.py # MCP subprocess lifecycle and JSON-RPC
+│       ├── mcp_tool_service.py # MCP tool discovery and LangChain integration
 │       ├── memory_service.py # Conversation memory and summarization
 │       ├── model_service.py  # Model instance caching (LRU)
 │       ├── scheduler_service.py # APScheduler-based agent scheduling
@@ -228,16 +234,16 @@ src/langchain_docker/
 
 web_ui/                         # React Web UI (port 8001)
 ├── src/
-│   ├── api/                   # API client modules (chat, sessions, models, agents)
+│   ├── api/                   # API client modules (chat, sessions, models, agents, mcp)
 │   ├── components/
 │   │   ├── ui/               # shadcn/ui components
 │   │   └── layout/           # Header with navigation
 │   ├── features/
-│   │   ├── chat/             # ChatPage - streaming chat
+│   │   ├── chat/             # ChatPage - streaming chat with MCP toggle
 │   │   ├── multiagent/       # MultiAgentPage - React Flow visualization
 │   │   └── builder/          # BuilderPage - 4-step agent wizard
-│   ├── stores/               # Zustand stores (session, settings, user)
-│   ├── types/                # TypeScript types
+│   ├── stores/               # Zustand stores (session, settings, user, mcp)
+│   ├── types/                # TypeScript types (includes MCP types)
 │   ├── lib/                  # Utilities (cn.ts)
 │   ├── App.tsx               # Router configuration
 │   ├── main.tsx              # Entry point
@@ -295,7 +301,8 @@ The API follows a layered architecture: **Routers → Services → Core**
 **Schemas** (`src/langchain_docker/api/schemas/`):
 - Pydantic models for request/response validation
 - `agents.py`: WorkflowCreateRequest, WorkflowInvokeRequest, WorkflowInvokeResponse, BuiltinAgentInfo
-- `chat.py`: MessageSchema, ChatRequest, ChatResponse, StreamEvent, MemoryMetadata
+- `chat.py`: MessageSchema, ChatRequest (with mcp_servers field), ChatResponse, StreamEvent (with tool_call/tool_result), MemoryMetadata
+- `mcp.py`: MCPServerInfo, MCPToolInfo, MCPServersResponse, MCPServerStartResponse, MCPServerStopResponse, MCPToolsResponse
 - `sessions.py`: SessionCreate, SessionResponse, SessionList, DeleteResponse
 - `models.py`: ProviderInfo, ProviderDetails, ValidateRequest, ValidateResponse
 - `skills.py`: SkillMetadata, SkillInfo, SkillCreateRequest, SkillUpdateRequest, SkillResource, SkillScript
@@ -336,7 +343,19 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `chat_service.py`: Orchestrates chat interactions
   - Converts Pydantic schemas to LangChain messages
   - Integrates with MemoryService for context optimization
-  - Methods: `process_message()` (non-streaming), `stream_message()` (async generator)
+  - Integrates with MCPToolService for dynamic tool injection
+  - Methods: `process_message()` (non-streaming), `stream_message()` (async generator with agentic loop)
+  - Emits `tool_call` and `tool_result` SSE events during streaming
+- `mcp_server_manager.py`: MCP subprocess lifecycle management
+  - Manages stdio-based MCP server processes
+  - JSON-RPC communication over stdin/stdout
+  - Methods: `start_server()`, `stop_server()`, `send_request()`, `list_servers()`, `get_server_status()`
+  - Reads configuration from `mcp_servers.json`
+- `mcp_tool_service.py`: MCP tool discovery and LangChain integration
+  - Discovers tools via `tools/list` JSON-RPC method
+  - Converts MCP tools to LangChain `StructuredTool` instances
+  - JSON Schema to Pydantic model conversion for tool arguments
+  - Methods: `discover_tools()`, `call_tool()`, `get_langchain_tools()`
 - `scheduler_service.py`: Automated agent execution scheduler
   - APScheduler-based background scheduler with cron support
   - Methods: `add_schedule()`, `remove_schedule()`, `enable_schedule()`, `disable_schedule()`
@@ -346,7 +365,12 @@ The API follows a layered architecture: **Routers → Services → Core**
 **Routers** (`src/langchain_docker/api/routers/`):
 - FastAPI route handlers using dependency injection
 - `agents.py`: Multi-agent workflow endpoints (GET builtin, POST workflows, POST invoke, DELETE)
-- `chat.py`: POST /api/v1/chat, POST /api/v1/chat/stream (SSE)
+- `chat.py`: POST /api/v1/chat, POST /api/v1/chat/stream (SSE with tool events)
+- `mcp.py`: MCP server management endpoints
+  - GET /api/v1/mcp/servers - List all configured servers with status
+  - POST /api/v1/mcp/servers/{server_id}/start - Start an MCP server
+  - POST /api/v1/mcp/servers/{server_id}/stop - Stop an MCP server
+  - GET /api/v1/mcp/servers/{server_id}/tools - List tools provided by server
 - `models.py`: GET /api/v1/models/providers, GET /api/v1/models/providers/{provider}, POST /api/v1/models/validate
 - `sessions.py`: Full CRUD for sessions (POST, GET, LIST, DELETE)
 - `skills.py`: Skills API endpoints
@@ -367,6 +391,8 @@ The API follows a layered architecture: **Routers → Services → Core**
 **Dependencies** (`src/langchain_docker/api/dependencies.py`):
 - Singleton instances via `@lru_cache` for services
 - `get_session_service()`, `get_model_service()`, `get_chat_service()`, `get_memory_service()`
+- `get_mcp_server_manager()`: Singleton MCPServerManager for subprocess lifecycle
+- `get_mcp_tool_service()`: Singleton MCPToolService for tool discovery and execution
 - `get_skill_registry()`: Singleton SkillRegistry for progressive disclosure skills
 - `get_agent_service()`: Receives SkillRegistry to create dynamic skill-based agents
 - `get_current_user_id()`: Extracts user ID from `X-User-ID` header (defaults to "default")
@@ -447,6 +473,8 @@ web_ui/
 1. **ChatPage** (`src/features/chat/ChatPage.tsx`):
    - SSE streaming with real-time token display
    - Provider/model/temperature settings panel with dynamic model loading
+   - MCP server toggle panel to enable/disable tools per conversation
+   - Tool call/result activity indicator during streaming
    - Message history with user/assistant bubbles
    - Session persistence across page reloads
    - ThreadList sidebar with search, delete, and collapse functionality
@@ -1382,6 +1410,164 @@ curl http://localhost:8000/api/v1/sessions -H "X-User-ID: alice"
 
 # List Bob's sessions (only sees his sessions)
 curl http://localhost:8000/api/v1/sessions -H "X-User-ID: bob"
+```
+
+### MCP (Model Context Protocol) Server Integration
+
+The application supports MCP servers for extending chat capabilities with external tools. MCP servers are stdio-based processes that communicate via JSON-RPC.
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  React Web UI                                               │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  MCPServerToggle (collapsible panel in ChatPage)    │   │
+│  │  - List available servers with checkboxes           │   │
+│  │  - Show server status (running/stopped)             │   │
+│  │  - Tool count badges                                │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                         │                                   │
+│                         ▼ ChatRequest with mcp_servers[]    │
+└─────────────────────────────────────────────────────────────┘
+                          │
+┌─────────────────────────────────────────────────────────────┐
+│  FastAPI Backend                                            │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  MCPServerManager (singleton)                        │   │
+│  │  - Start/stop subprocess per server                  │   │
+│  │  - JSON-RPC over stdin/stdout                        │   │
+│  │  - Connection pooling and health monitoring          │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                         │                                   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  MCPToolService                                      │   │
+│  │  - Discover tools via tools/list RPC                 │   │
+│  │  - Convert to LangChain StructuredTool               │   │
+│  │  - Cache tool definitions per server                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                         │                                   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  ChatService (agentic loop)                          │   │
+│  │  - Inject MCP tools into model invocation            │   │
+│  │  - Stream tool_call/tool_result events               │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**MCP Server Configuration** (`src/langchain_docker/api/mcp_servers.json`):
+```json
+{
+  "servers": {
+    "filesystem": {
+      "name": "Filesystem",
+      "description": "Read, write, and manage files on the local filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {},
+      "enabled": true,
+      "timeout_seconds": 30
+    },
+    "memory": {
+      "name": "Memory",
+      "description": "Knowledge graph-based persistent memory",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {},
+      "enabled": true,
+      "timeout_seconds": 30
+    },
+    "chrome-devtools": {
+      "name": "Chrome DevTools",
+      "description": "Control and inspect Chrome browsers",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest", "--headless"],
+      "env": {},
+      "enabled": true,
+      "timeout_seconds": 60
+    }
+  }
+}
+```
+
+**Frontend MCP Store** (`web_ui/src/stores/mcpStore.ts`):
+```typescript
+interface MCPState {
+  servers: MCPServerInfo[];
+  enabledServerIds: string[];  // Persisted in localStorage
+  loading: boolean;
+  error: string | null;
+  fetchServers: () => Promise<void>;
+  toggleServer: (serverId: string) => void;
+  startServer: (serverId: string) => Promise<void>;
+  stopServer: (serverId: string) => Promise<void>;
+  getEnabledServers: () => string[];
+}
+```
+
+**Testing MCP Integration:**
+```bash
+# List MCP servers
+curl http://localhost:8000/api/v1/mcp/servers
+
+# Start a server
+curl -X POST http://localhost:8000/api/v1/mcp/servers/filesystem/start
+
+# List tools for a server
+curl http://localhost:8000/api/v1/mcp/servers/filesystem/tools
+
+# Chat with MCP tools enabled
+curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "List files in /tmp",
+    "provider": "openai",
+    "mcp_servers": ["filesystem"]
+  }'
+
+# Stop a server
+curl -X POST http://localhost:8000/api/v1/mcp/servers/filesystem/stop
+```
+
+**Adding a New MCP Server:**
+1. Add server configuration to `mcp_servers.json`:
+   ```json
+   "my-server": {
+     "name": "My Server",
+     "description": "Description of what the server does",
+     "command": "npx",
+     "args": ["-y", "my-mcp-server-package"],
+     "env": {"MY_VAR": "value"},
+     "enabled": true,
+     "timeout_seconds": 30
+   }
+   ```
+2. Restart the backend to load the new configuration
+3. The server will appear in the UI's MCP Server panel
+
+**Tool Call Flow:**
+```
+User: "List files in /tmp"
+         │
+         ▼
+ChatService: Binds MCP tools to model
+         │
+         ▼
+Model: Decides to call "list_directory" tool
+         │
+         ▼
+SSE Event: {"event": "tool_call", "tool_name": "list_directory", ...}
+         │
+         ▼
+MCPToolService: Executes tool via JSON-RPC
+         │
+         ▼
+SSE Event: {"event": "tool_result", "result": "[file1, file2, ...]"}
+         │
+         ▼
+Model: Generates final response with tool context
+         │
+         ▼
+SSE Event: {"event": "done", "message": {...}}
 ```
 
 ## Build System
