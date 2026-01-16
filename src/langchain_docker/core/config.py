@@ -267,6 +267,15 @@ def get_jira_api_token() -> str | None:
     return os.getenv("JIRA_API_TOKEN")
 
 
+def get_jira_bearer_token() -> str | None:
+    """Get Jira Bearer token (Personal Access Token).
+
+    Returns:
+        Bearer token if configured, None otherwise
+    """
+    return os.getenv("JIRA_BEARER_TOKEN")
+
+
 def get_jira_api_version() -> str:
     """Get Jira API version.
 
@@ -280,6 +289,10 @@ def is_jira_configured() -> bool:
     """Check if Jira is fully configured.
 
     Returns:
-        True if all required Jira settings are present
+        True if bearer token OR basic auth credentials are present
     """
+    # Bearer token takes precedence
+    if get_jira_url() and get_jira_bearer_token():
+        return True
+    # Fall back to basic auth
     return bool(get_jira_url() and get_jira_username() and get_jira_api_token())

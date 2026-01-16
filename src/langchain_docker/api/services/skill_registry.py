@@ -26,6 +26,7 @@ from langchain_docker.core.config import (
     get_database_url,
     get_jira_api_token,
     get_jira_api_version,
+    get_jira_bearer_token,
     get_jira_url,
     get_jira_username,
     is_jira_configured,
@@ -387,6 +388,7 @@ class JiraSkill(Skill):
         url: Optional[str] = None,
         username: Optional[str] = None,
         api_token: Optional[str] = None,
+        bearer_token: Optional[str] = None,
         api_version: Optional[str] = None,
     ):
         """Initialize Jira skill.
@@ -395,6 +397,7 @@ class JiraSkill(Skill):
             url: Jira instance URL (defaults to JIRA_URL env var)
             username: Jira username (defaults to JIRA_USERNAME env var)
             api_token: Jira API token (defaults to JIRA_API_TOKEN env var)
+            bearer_token: Jira Bearer token (defaults to JIRA_BEARER_TOKEN env var)
             api_version: API version "2" or "3" (defaults to JIRA_API_VERSION env var)
         """
         self.id = "jira"
@@ -405,6 +408,7 @@ class JiraSkill(Skill):
         self.url = url or get_jira_url()
         self.username = username or get_jira_username()
         self.api_token = api_token or get_jira_api_token()
+        self.bearer_token = bearer_token or get_jira_bearer_token()
         self.api_version = api_version or get_jira_api_version()
         self._skill_dir = SKILLS_DIR / "jira"
         self._session = None
@@ -412,18 +416,33 @@ class JiraSkill(Skill):
     def _get_session(self):
         """Get or create requests session with authentication.
 
+        Supports both Bearer token (preferred) and Basic Auth (fallback).
+
         Returns:
             Configured requests session or None if not configured
         """
-        if not self.url or not self.username or not self.api_token:
+        if not self.url:
+            return None
+
+        # Need either bearer token or basic auth credentials
+        if not self.bearer_token and (not self.username or not self.api_token):
             return None
 
         if self._session is None:
             import requests
-            from requests.auth import HTTPBasicAuth
 
             self._session = requests.Session()
-            self._session.auth = HTTPBasicAuth(self.username, self.api_token)
+
+            # Prefer Bearer token if available
+            if self.bearer_token:
+                self._session.headers.update({
+                    "Authorization": f"Bearer {self.bearer_token}",
+                })
+            else:
+                # Fall back to Basic Auth
+                from requests.auth import HTTPBasicAuth
+                self._session.auth = HTTPBasicAuth(self.username, self.api_token)
+
             self._session.headers.update({
                 "Accept": "application/json",
                 "Content-Type": "application/json",
