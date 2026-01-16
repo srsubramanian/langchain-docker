@@ -8,6 +8,7 @@ import {
   Bot,
   Plus,
   Sparkles,
+  ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -28,6 +29,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Database,
   TrendingUp,
   Bot,
+  ClipboardList,
 };
 
 function TemplateCard({
