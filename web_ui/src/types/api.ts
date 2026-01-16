@@ -158,6 +158,9 @@ export interface CustomAgentInfo {
   description: string;
   schedule?: ScheduleInfo | null;
   created_at: string;
+  provider?: string;
+  model?: string | null;
+  temperature?: number;
 }
 
 export interface CustomAgentCreateRequest {
@@ -168,6 +171,9 @@ export interface CustomAgentCreateRequest {
   skills?: string[];
   schedule?: ScheduleConfig | null;
   metadata?: Record<string, unknown>;
+  provider?: string;
+  model?: string | null;
+  temperature?: number;
 }
 
 export interface CustomAgentCreateResponse {

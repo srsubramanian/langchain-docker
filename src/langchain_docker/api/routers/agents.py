@@ -113,6 +113,9 @@ def create_custom_agent(
             skill_ids=request.skills,
             schedule_config=schedule_config,
             metadata=request.metadata,
+            provider=request.provider,
+            model=request.model,
+            temperature=request.temperature,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -171,6 +174,9 @@ def get_custom_agent(
         description=agent.system_prompt[:100] + "..." if len(agent.system_prompt) > 100 else agent.system_prompt,
         schedule=schedule_info,
         created_at=agent.created_at.isoformat(),
+        provider=agent.provider,
+        model=agent.model,
+        temperature=agent.temperature,
     )
 
 

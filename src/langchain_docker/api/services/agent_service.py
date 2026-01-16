@@ -38,6 +38,9 @@ class CustomAgent:
     skill_ids: list[str] = field(default_factory=list)  # Skills to include
     schedule: Optional[ScheduleConfig] = None  # Schedule configuration
     metadata: dict = field(default_factory=dict)
+    provider: str = "openai"  # Model provider (openai, anthropic, google, bedrock)
+    model: Optional[str] = None  # Specific model name (uses provider default if None)
+    temperature: float = 0.7  # Temperature for responses
 
 
 # Built-in tools for demo agents
@@ -292,6 +295,9 @@ Guidelines:
         skill_ids: Optional[list[str]] = None,
         schedule_config: Optional[dict] = None,
         metadata: Optional[dict] = None,
+        provider: str = "openai",
+        model: Optional[str] = None,
+        temperature: float = 0.7,
     ) -> CustomAgent:
         """Create a custom agent from tool selections and skills.
 
@@ -307,6 +313,9 @@ Guidelines:
                 - trigger_prompt: str
                 - timezone: str (default: "UTC")
             metadata: Optional additional metadata
+            provider: Model provider to use (openai, anthropic, google, bedrock)
+            model: Specific model name (uses provider default if None)
+            temperature: Temperature for model responses (0.0-2.0)
 
         Returns:
             Created CustomAgent
@@ -347,6 +356,9 @@ Guidelines:
             skill_ids=skill_ids,
             schedule=schedule,
             metadata=metadata or {},
+            provider=provider,
+            model=model,
+            temperature=temperature,
         )
         self._custom_agents[agent_id] = agent
 
@@ -384,11 +396,11 @@ Guidelines:
             # Create a simple workflow for this agent and invoke it
             workflow_id = f"_scheduled_{agent_id}_{datetime.utcnow().timestamp()}"
 
-            # Build the agent
+            # Build the agent using the agent's configured provider/model/temperature
             llm = self.model_service.get_or_create(
-                provider="openai",  # Default provider for scheduled execution
-                model=None,
-                temperature=0.0,
+                provider=agent.provider,
+                model=agent.model,
+                temperature=agent.temperature,
             )
 
             # Invoke the agent directly
@@ -501,6 +513,9 @@ Guidelines:
                 "description": a.system_prompt[:100] + "..." if len(a.system_prompt) > 100 else a.system_prompt,
                 "created_at": a.created_at.isoformat(),
                 "schedule": None,
+                "provider": a.provider,
+                "model": a.model,
+                "temperature": a.temperature,
             }
             # Include schedule info if present
             if a.schedule:

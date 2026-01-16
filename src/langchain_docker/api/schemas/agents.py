@@ -114,6 +114,20 @@ class CustomAgentCreateRequest(BaseModel):
         default_factory=dict,
         description="Optional metadata for the agent",
     )
+    provider: str = Field(
+        "openai",
+        description="Model provider to use (openai, anthropic, google, bedrock)",
+    )
+    model: Optional[str] = Field(
+        None,
+        description="Model name (uses provider default if not specified)",
+    )
+    temperature: float = Field(
+        0.7,
+        ge=0.0,
+        le=2.0,
+        description="Temperature for model responses (0.0-2.0)",
+    )
 
 
 class ScheduleInfo(BaseModel):
@@ -136,6 +150,9 @@ class CustomAgentInfo(BaseModel):
     description: str = Field(..., description="Truncated system prompt")
     schedule: Optional[ScheduleInfo] = Field(None, description="Schedule configuration")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
+    provider: str = Field("openai", description="Model provider")
+    model: Optional[str] = Field(None, description="Model name")
+    temperature: float = Field(0.7, description="Temperature setting")
 
 
 class CustomAgentCreateResponse(BaseModel):

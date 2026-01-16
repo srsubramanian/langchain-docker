@@ -15,6 +15,7 @@ import {
   Plus,
   Clock,
   Calendar,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,8 +25,10 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible } from '@/components/ui/collapsible';
-import { agentsApi, skillsApi } from '@/api';
-import type { ToolTemplate, SkillMetadata, ScheduleConfig } from '@/types/api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { agentsApi, skillsApi, modelsApi } from '@/api';
+import type { ToolTemplate, SkillMetadata, ScheduleConfig, ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { TemplateSelector } from './TemplateSelector';
 import type { AgentTemplate } from './templates';
@@ -98,6 +101,13 @@ export function BuilderPage() {
   const [triggerPrompt, setTriggerPrompt] = useState('');
   const [selectedPreset, setSelectedPreset] = useState<string | null>('0 9 * * *');
 
+  // Model settings state
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState('openai');
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [temperature, setTemperature] = useState(0.7);
+
   // Template selection state
   const [showTemplates, setShowTemplates] = useState(!isEditing);
 
@@ -109,20 +119,34 @@ export function BuilderPage() {
   const [testError, setTestError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch tools, categories, and skills
+  // Fetch tools, categories, skills, and providers
   useEffect(() => {
     Promise.all([
       agentsApi.listTools(),
       agentsApi.listToolCategories(),
       skillsApi.list(),
+      modelsApi.listProviders(),
     ])
-      .then(([toolsData, categoriesData, skillsData]) => {
+      .then(([toolsData, categoriesData, skillsData, providersData]) => {
         setTools(toolsData);
         setCategories(categoriesData);
         setSkills(skillsData.skills);
+        setProviders(providersData);
       })
       .catch(console.error);
   }, []);
+
+  // Fetch available models when provider changes
+  useEffect(() => {
+    if (selectedProvider) {
+      modelsApi
+        .getProviderDetails(selectedProvider)
+        .then((details) => {
+          setAvailableModels(details.available_models);
+        })
+        .catch(console.error);
+    }
+  }, [selectedProvider]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -164,6 +188,34 @@ export function BuilderPage() {
     }
   };
 
+  const handleProviderChange = (provider: string) => {
+    setSelectedProvider(provider);
+    setSelectedModel(null); // Reset model when provider changes
+    // Reset test workflow when provider changes
+    if (testWorkflowId) {
+      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      setTestWorkflowId(null);
+    }
+  };
+
+  const handleModelChange = (model: string) => {
+    setSelectedModel(model === 'default' ? null : model);
+    // Reset test workflow when model changes
+    if (testWorkflowId) {
+      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      setTestWorkflowId(null);
+    }
+  };
+
+  const handleTemperatureChange = (value: number[]) => {
+    setTemperature(value[0]);
+    // Reset test workflow when temperature changes
+    if (testWorkflowId) {
+      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      setTestWorkflowId(null);
+    }
+  };
+
   const canCreate = () => {
     const hasValidName = name.trim().length >= 1 && name.trim().length <= 50;
     const hasValidPrompt = systemPrompt.trim().length >= 10;
@@ -196,6 +248,9 @@ export function BuilderPage() {
         tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
         skills: selectedSkills,
         schedule,
+        provider: selectedProvider,
+        model: selectedModel,
+        temperature,
       });
       // Cleanup test workflow
       if (testWorkflowId) {
@@ -231,6 +286,9 @@ export function BuilderPage() {
           system_prompt: systemPrompt.trim() || 'You are a helpful assistant.',
           tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
           skills: selectedSkills,
+          provider: selectedProvider,
+          model: selectedModel,
+          temperature,
         });
 
         // Create a workflow with the temporary agent
@@ -238,6 +296,8 @@ export function BuilderPage() {
         await agentsApi.createWorkflow({
           workflow_id: workflowId,
           agents: [tempAgentId],
+          provider: selectedProvider,
+          model: selectedModel || undefined,
         });
         setTestWorkflowId(workflowId);
       }
@@ -294,6 +354,10 @@ export function BuilderPage() {
     setSystemPrompt('');
     setSelectedTools([]);
     setSelectedSkills([]);
+    // Reset model settings
+    setSelectedProvider('openai');
+    setSelectedModel(null);
+    setTemperature(0.7);
   };
 
   const avatarColor = name ? getAvatarColor(name) : 'bg-primary';
@@ -416,6 +480,85 @@ export function BuilderPage() {
                     <p className="text-xs text-muted-foreground">
                       Minimum 10 characters. {systemPrompt.length} characters entered.
                     </p>
+                  </div>
+                </Collapsible>
+
+                {/* Model Settings Section */}
+                <Collapsible
+                  title="Model Settings"
+                  icon={<Settings className="h-4 w-4 text-muted-foreground" />}
+                  defaultOpen={false}
+                  badge={
+                    <Badge variant="secondary" className="ml-2 text-xs">
+                      {selectedProvider}{selectedModel ? ` / ${selectedModel}` : ''}
+                    </Badge>
+                  }
+                >
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Configure which LLM provider and model your agent will use.
+                    </p>
+
+                    {/* Provider Selection */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Provider</label>
+                      <Select value={selectedProvider} onValueChange={handleProviderChange}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select provider" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {providers
+                            .filter((p) => p.configured)
+                            .map((p) => (
+                              <SelectItem key={p.name} value={p.name}>
+                                {p.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Model Selection */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Model</label>
+                      <Select
+                        value={selectedModel || 'default'}
+                        onValueChange={handleModelChange}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">
+                            Default ({providers.find((p) => p.name === selectedProvider)?.default_model || 'auto'})
+                          </SelectItem>
+                          {availableModels.map((m) => (
+                            <SelectItem key={m.name} value={m.name}>
+                              {m.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Temperature Slider */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-sm font-medium">Temperature</label>
+                        <span className="text-sm text-muted-foreground">{temperature.toFixed(1)}</span>
+                      </div>
+                      <Slider
+                        value={[temperature]}
+                        onValueChange={handleTemperatureChange}
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        className="w-full"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Lower values make responses more focused, higher values more creative.
+                      </p>
+                    </div>
                   </div>
                 </Collapsible>
 
