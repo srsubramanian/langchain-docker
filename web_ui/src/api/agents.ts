@@ -10,6 +10,8 @@ import type {
   WorkflowCreateResponse,
   WorkflowInvokeRequest,
   WorkflowInvokeResponse,
+  DirectInvokeRequest,
+  DirectInvokeResponse,
 } from '@/types/api';
 
 export const agentsApi = {
@@ -49,6 +51,22 @@ export const agentsApi = {
   async deleteCustomAgent(agentId: string): Promise<{ agent_id: string; message: string }> {
     const { data } = await apiClient.delete<{ agent_id: string; message: string }>(`/api/v1/agents/custom/${agentId}`);
     return data;
+  },
+
+  // Direct agent invocation (no supervisor) for human-in-the-loop
+  async invokeAgentDirect(agentId: string, request: DirectInvokeRequest): Promise<DirectInvokeResponse> {
+    const { data } = await apiClient.post<DirectInvokeResponse>(
+      `/api/v1/agents/custom/${agentId}/invoke`,
+      request,
+      { timeout: 120000 } // 2 minute timeout for agent execution
+    );
+    return data;
+  },
+
+  async clearAgentSession(agentId: string, sessionId?: string): Promise<void> {
+    await apiClient.delete(`/api/v1/agents/custom/${agentId}/session`, {
+      params: sessionId ? { session_id: sessionId } : undefined,
+    });
   },
 
   // Workflows

@@ -111,11 +111,12 @@ export function BuilderPage() {
   // Template selection state
   const [showTemplates, setShowTemplates] = useState(!isEditing);
 
-  // Test chat state
+  // Test chat state (using direct agent invocation for human-in-the-loop)
   const [testMessages, setTestMessages] = useState<TestMessage[]>([]);
   const [testInput, setTestInput] = useState('');
   const [isTesting, setIsTesting] = useState(false);
-  const [testWorkflowId, setTestWorkflowId] = useState<string | null>(null);
+  const [testAgentId, setTestAgentId] = useState<string | null>(null);
+  const [testSessionId, setTestSessionId] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -153,67 +154,56 @@ export function BuilderPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [testMessages]);
 
-  // Cleanup test workflow on unmount
+  // Cleanup test agent on unmount
   useEffect(() => {
     return () => {
-      if (testWorkflowId) {
-        agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      if (testAgentId) {
+        agentsApi.deleteCustomAgent(testAgentId).catch(() => {});
       }
     };
-  }, [testWorkflowId]);
+  }, [testAgentId]);
 
   const filteredTools = selectedCategory
     ? tools.filter((t) => t.category === selectedCategory)
     : tools;
 
+  const resetTestAgent = () => {
+    // Cleanup existing test agent when config changes
+    if (testAgentId) {
+      agentsApi.deleteCustomAgent(testAgentId).catch(() => {});
+      setTestAgentId(null);
+      setTestSessionId(null);
+    }
+  };
+
   const toggleTool = (toolId: string) => {
     setSelectedTools((prev) =>
       prev.includes(toolId) ? prev.filter((id) => id !== toolId) : [...prev, toolId]
     );
-    // Reset test workflow when tools change
-    if (testWorkflowId) {
-      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
-    }
+    resetTestAgent();
   };
 
   const toggleSkill = (skillId: string) => {
     setSelectedSkills((prev) =>
       prev.includes(skillId) ? prev.filter((id) => id !== skillId) : [...prev, skillId]
     );
-    // Reset test workflow when skills change
-    if (testWorkflowId) {
-      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
-    }
+    resetTestAgent();
   };
 
   const handleProviderChange = (provider: string) => {
     setSelectedProvider(provider);
     setSelectedModel(null); // Reset model when provider changes
-    // Reset test workflow when provider changes
-    if (testWorkflowId) {
-      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
-    }
+    resetTestAgent();
   };
 
   const handleModelChange = (model: string) => {
     setSelectedModel(model === 'default' ? null : model);
-    // Reset test workflow when model changes
-    if (testWorkflowId) {
-      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
-    }
+    resetTestAgent();
   };
 
   const handleTemperatureChange = (value: number[]) => {
     setTemperature(value[0]);
-    // Reset test workflow when temperature changes
-    if (testWorkflowId) {
-      agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
-    }
+    resetTestAgent();
   };
 
   const canCreate = () => {
@@ -252,9 +242,9 @@ export function BuilderPage() {
         model: selectedModel,
         temperature,
       });
-      // Cleanup test workflow
-      if (testWorkflowId) {
-        await agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
+      // Cleanup test agent
+      if (testAgentId) {
+        await agentsApi.deleteCustomAgent(testAgentId).catch(() => {});
       }
       navigate('/agents');
     } catch (err) {
@@ -275,13 +265,13 @@ export function BuilderPage() {
 
     try {
       // Create a temporary custom agent for testing if needed
-      let workflowId = testWorkflowId;
+      let agentId = testAgentId;
 
-      if (!workflowId) {
+      if (!agentId) {
         // Create a temporary agent
-        const tempAgentId = `test-agent-${Date.now()}`;
+        agentId = `test-agent-${Date.now()}`;
         await agentsApi.createCustomAgent({
-          agent_id: tempAgentId,
+          agent_id: agentId,
           name: name.trim() || 'Test Agent',
           system_prompt: systemPrompt.trim() || 'You are a helpful assistant.',
           tools: selectedTools.map((id) => ({ tool_id: id, config: {} })),
@@ -290,22 +280,17 @@ export function BuilderPage() {
           model: selectedModel,
           temperature,
         });
-
-        // Create a workflow with the temporary agent
-        workflowId = `test-workflow-${Date.now()}`;
-        await agentsApi.createWorkflow({
-          workflow_id: workflowId,
-          agents: [tempAgentId],
-          provider: selectedProvider,
-          model: selectedModel || undefined,
-        });
-        setTestWorkflowId(workflowId);
+        setTestAgentId(agentId);
       }
 
-      // Invoke the workflow
-      const result = await agentsApi.invokeWorkflow(workflowId, {
+      // Invoke the agent directly (no supervisor) for human-in-the-loop support
+      const result = await agentsApi.invokeAgentDirect(agentId, {
         message: userMessage,
+        session_id: testSessionId,
       });
+
+      // Store session ID for follow-up messages
+      setTestSessionId(result.session_id);
 
       setTestMessages((prev) => [
         ...prev,
@@ -326,9 +311,12 @@ export function BuilderPage() {
   const handleClearTest = async () => {
     setTestMessages([]);
     setTestError(null);
-    if (testWorkflowId) {
-      await agentsApi.deleteWorkflow(testWorkflowId).catch(() => {});
-      setTestWorkflowId(null);
+    if (testAgentId) {
+      // Clear the session and delete the test agent
+      await agentsApi.clearAgentSession(testAgentId, testSessionId || undefined).catch(() => {});
+      await agentsApi.deleteCustomAgent(testAgentId).catch(() => {});
+      setTestAgentId(null);
+      setTestSessionId(null);
     }
   };
 

@@ -163,6 +163,7 @@ class AgentService:
         self.model_service = model_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
+        self._direct_sessions: dict[str, dict] = {}  # For direct agent invocation (no supervisor)
         self._tool_registry = ToolRegistry()
 
         # Import SkillRegistry here to avoid circular imports if not provided
@@ -618,6 +619,127 @@ Guidelines:
             name=safe_name,
             system_prompt=system_prompt,
         )
+
+    def invoke_agent_direct(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        provider: str = "openai",
+        model: Optional[str] = None,
+    ) -> dict:
+        """Invoke a custom agent directly without supervisor.
+
+        This allows the agent to interact directly with the user for
+        human-in-the-loop scenarios (e.g., asking for confirmation).
+
+        Args:
+            agent_id: Custom agent ID
+            message: User message
+            session_id: Session ID for conversation continuity
+            provider: Model provider
+            model: Model name (optional)
+
+        Returns:
+            Agent response with conversation state
+
+        Raises:
+            ValueError: If agent not found
+        """
+        if agent_id not in self._custom_agents:
+            raise ValueError(f"Custom agent not found: {agent_id}")
+
+        custom = self._custom_agents[agent_id]
+
+        # Use session_id or create one based on agent_id
+        sess_key = session_id or f"direct-{agent_id}"
+
+        # Get or create session
+        if sess_key not in self._direct_sessions:
+            # Get model - use agent's configured provider/model if available
+            agent_provider = custom.provider if hasattr(custom, 'provider') else provider
+            agent_model = custom.model if hasattr(custom, 'model') else model
+
+            llm = self.model_service.get_or_create(
+                provider=agent_provider,
+                model=agent_model,
+                temperature=custom.temperature if hasattr(custom, 'temperature') else 0.7,
+            )
+
+            # Build the agent
+            agent = self._build_agent_from_custom(agent_id, llm)
+            compiled = agent.compile()
+
+            self._direct_sessions[sess_key] = {
+                "app": compiled,
+                "agent_id": agent_id,
+                "messages": [],
+            }
+
+        session_data = self._direct_sessions[sess_key]
+        app = session_data["app"]
+
+        # Get conversation history
+        history = session_data.get("messages", [])
+
+        # Add user message
+        user_msg = HumanMessage(content=message)
+        history.append(user_msg)
+
+        # Invoke agent directly
+        with trace_session(sess_key):
+            result = app.invoke(
+                {"messages": history},
+                config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+            )
+
+        # Extract and store messages
+        messages = result.get("messages", [])
+        session_data["messages"] = messages
+
+        # Find last AI message with text content
+        response_content = ""
+        for msg in reversed(messages):
+            msg_type = type(msg).__name__
+            if msg_type not in ("AIMessage", "AIMessageChunk"):
+                continue
+
+            content = msg.content
+            text = ""
+
+            if isinstance(content, str) and content.strip():
+                text = content
+            elif isinstance(content, list):
+                text = "".join(
+                    block if isinstance(block, str) else block.get("text", "")
+                    for block in content
+                    if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
+                ).strip()
+
+            if text:
+                response_content = text
+                break
+
+        return {
+            "agent_id": agent_id,
+            "session_id": sess_key,
+            "response": response_content,
+            "message_count": len(messages),
+        }
+
+    def clear_direct_session(self, session_id: str) -> bool:
+        """Clear a direct agent session.
+
+        Args:
+            session_id: Session to clear
+
+        Returns:
+            True if cleared, False if not found
+        """
+        if session_id in self._direct_sessions:
+            del self._direct_sessions[session_id]
+            return True
+        return False
 
     def create_workflow(
         self,

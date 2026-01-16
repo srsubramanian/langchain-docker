@@ -250,3 +250,25 @@ class WorkflowDeleteResponse(BaseModel):
 
     workflow_id: str = Field(..., description="Deleted workflow ID")
     deleted: bool = Field(..., description="Whether the workflow was deleted")
+
+
+# Direct Agent Invocation (no supervisor)
+
+
+class DirectInvokeRequest(BaseModel):
+    """Request to invoke an agent directly (no supervisor)."""
+
+    message: str = Field(..., description="User message")
+    session_id: Optional[str] = Field(
+        None,
+        description="Session ID for conversation continuity",
+    )
+
+
+class DirectInvokeResponse(BaseModel):
+    """Response from direct agent invocation."""
+
+    agent_id: str = Field(..., description="Agent ID")
+    session_id: str = Field(..., description="Session ID for follow-up messages")
+    response: str = Field(..., description="Agent response")
+    message_count: int = Field(..., description="Number of messages in conversation")

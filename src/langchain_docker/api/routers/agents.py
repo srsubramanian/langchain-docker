@@ -11,6 +11,8 @@ from langchain_docker.api.schemas.agents import (
     CustomAgentCreateResponse,
     CustomAgentDeleteResponse,
     CustomAgentInfo,
+    DirectInvokeRequest,
+    DirectInvokeResponse,
     ScheduleInfo,
     ToolTemplateSchema,
     WorkflowCreateRequest,
@@ -202,6 +204,61 @@ def delete_custom_agent(
         agent_id=agent_id,
         deleted=True,
     )
+
+
+@router.post("/custom/{agent_id}/invoke", response_model=DirectInvokeResponse)
+def invoke_custom_agent_direct(
+    agent_id: str,
+    request: DirectInvokeRequest,
+    user_id: str = Depends(get_current_user_id),
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Invoke a custom agent directly without supervisor.
+
+    This endpoint allows direct interaction with a custom agent, enabling
+    human-in-the-loop scenarios where the agent can ask for confirmation
+    and the user can respond.
+
+    Args:
+        agent_id: Custom agent ID
+        request: Message to process
+
+    Returns:
+        Agent response with session ID for follow-up messages
+    """
+    # Include user_id in session for conversation isolation
+    session_id = request.session_id or f"{user_id}:direct:{agent_id}"
+
+    try:
+        result = agent_service.invoke_agent_direct(
+            agent_id=agent_id,
+            message=request.message,
+            session_id=session_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return DirectInvokeResponse(**result)
+
+
+@router.delete("/custom/{agent_id}/session", status_code=204)
+def clear_direct_session(
+    agent_id: str,
+    session_id: str = None,
+    user_id: str = Depends(get_current_user_id),
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Clear a direct agent session's conversation history.
+
+    Use this to reset the conversation state for a custom agent.
+
+    Args:
+        agent_id: Custom agent ID
+        session_id: Session ID to clear (optional, defaults to user's default session)
+    """
+    sess_key = session_id or f"{user_id}:direct:{agent_id}"
+    agent_service.clear_direct_session(sess_key)
+    return None
 
 
 # Built-in Agent Endpoints

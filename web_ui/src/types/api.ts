@@ -219,6 +219,19 @@ export interface WorkflowInvokeResponse {
   session_id?: string | null;
 }
 
+// Direct agent invocation (no supervisor) for human-in-the-loop
+export interface DirectInvokeRequest {
+  message: string;
+  session_id?: string | null;
+}
+
+export interface DirectInvokeResponse {
+  agent_id: string;
+  session_id: string;
+  response: string;
+  message_count: number;
+}
+
 // Health types
 export interface HealthResponse {
   status: string;
