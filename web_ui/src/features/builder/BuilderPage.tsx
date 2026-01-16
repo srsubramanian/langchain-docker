@@ -373,6 +373,16 @@ export function BuilderPage() {
       tools.some((t) => t.id === toolName)
     );
     setSelectedTools(toolIds);
+    // Apply template's model settings if specified
+    if (template.provider) {
+      setSelectedProvider(template.provider);
+    }
+    if (template.model) {
+      setSelectedModel(template.model);
+    }
+    if (template.temperature !== undefined) {
+      setTemperature(template.temperature);
+    }
     setShowTemplates(false);
   };
 

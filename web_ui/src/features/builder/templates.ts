@@ -7,6 +7,10 @@ export interface AgentTemplate {
   systemPrompt: string;
   tools: string[];
   category: 'productivity' | 'analysis' | 'communication' | 'development';
+  // Optional model settings
+  provider?: string;
+  model?: string;
+  temperature?: number;
 }
 
 export const agentTemplates: AgentTemplate[] = [
@@ -141,6 +145,7 @@ When asked about issues, be specific and provide:
 Be proactive in suggesting useful queries and analyses that could help the user understand their project status better.`,
     tools: ['load_jira_skill', 'jira_search', 'jira_get_issue', 'jira_list_projects', 'jira_get_sprints', 'jira_get_changelog', 'jira_jql_reference'],
     category: 'productivity',
+    provider: 'bedrock',
   },
 ];
 
