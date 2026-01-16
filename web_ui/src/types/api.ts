@@ -2,12 +2,14 @@
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  images?: string[];  // Base64 data URIs for uploaded images
   timestamp?: string;
   metadata?: Record<string, unknown>;
 }
 
 export interface ChatRequest {
   message: string;
+  images?: string[];  // Base64 data URIs for images
   session_id?: string | null;
   provider?: string;
   model?: string | null;

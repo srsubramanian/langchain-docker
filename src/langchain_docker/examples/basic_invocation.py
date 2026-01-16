@@ -24,7 +24,7 @@ def _get_default_model(provider: str) -> str:
 
     defaults = {
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-3-5-sonnet-20241022",
+        "anthropic": "claude-sonnet-4-20250514",
         "google": "gemini-2.0-flash-exp",
     }
     return defaults.get(provider, "gpt-4o-mini")

@@ -30,7 +30,7 @@ def compare_providers() -> None:
 
     providers = [
         ("openai", "gpt-4o-mini", get_openai_model),
-        ("anthropic", "claude-3-5-sonnet-20241022", get_anthropic_model),
+        ("anthropic", "claude-sonnet-4-20250514", get_anthropic_model),
         ("google", "gemini-2.0-flash-exp", get_google_model),
     ]
 
@@ -85,9 +85,9 @@ def provider_specific_features() -> None:
 
     print("Anthropic Models:")
     print("-" * 40)
-    print("- claude-3-5-sonnet-20241022 (balanced)")
-    print("- claude-3-5-haiku-20241022 (fast)")
-    print("- claude-3-opus-20240229 (most capable)")
+    print("- claude-sonnet-4-20250514 (most balanced, recommended)")
+    print("- claude-opus-4-20250514 (most capable)")
+    print("- claude-haiku-4-20250110 (fastest, cost-effective)")
     print()
 
     print("Google Models:")

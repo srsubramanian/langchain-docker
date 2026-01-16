@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Loader2, Settings2, Wrench } from 'lucide-react';
+import { Send, Loader2, Settings2, Wrench, ImageIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -31,7 +31,9 @@ export function ChatPage() {
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // MCP store
   const { getEnabledServers, enabledServerIds, servers } = useMCPStore();
@@ -155,6 +157,53 @@ export function ChatPage() {
     }
   };
 
+  // Image upload handlers
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        console.error('Invalid file type:', file.type);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        setSelectedImages((prev) => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Reset input to allow selecting the same file again
+    e.target.value = '';
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Handle paste from clipboard
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault(); // Prevent default paste behavior for images
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          setSelectedImages((prev) => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || isStreaming) return;
@@ -162,11 +211,13 @@ export function ChatPage() {
     const userMessage: Message = {
       role: 'user',
       content: input.trim(),
+      images: selectedImages.length > 0 ? [...selectedImages] : undefined,
       timestamp: new Date().toISOString(),
     };
 
     addMessage(userMessage);
     setInput('');
+    setSelectedImages([]); // Clear images after adding to message
     setError(null);
     setStreaming(true);
     clearStreamingContent();
@@ -178,6 +229,7 @@ export function ChatPage() {
     try {
       for await (const event of chatApi.streamMessage({
         message: userMessage.content,
+        images: userMessage.images,
         session_id: sessionId,
         provider,
         model,
@@ -360,6 +412,20 @@ export function ChatPage() {
                         : 'bg-muted'
                     )}
                   >
+                    {/* Display images if present */}
+                    {message.images && message.images.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {message.images.map((img, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={img}
+                            alt={`Uploaded image ${imgIdx + 1}`}
+                            className="max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity"
+                            onClick={() => window.open(img, '_blank')}
+                          />
+                        ))}
+                      </div>
+                    )}
                     <p className="whitespace-pre-wrap">{message.content}</p>
                   </div>
                 </div>
@@ -403,22 +469,69 @@ export function ChatPage() {
           </ScrollArea>
 
           {/* Input */}
-          <form onSubmit={handleSubmit} className="mt-4 flex gap-2 shrink-0">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={isLoading || isStreaming}
-              className="flex-1"
-            />
-            <Button type="submit" disabled={isLoading || isStreaming || !input.trim()}>
-              {isLoading || isStreaming ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
-          </form>
+          <div className="mt-4 shrink-0">
+            {/* Image Preview */}
+            {selectedImages.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2 p-2 bg-muted/50 rounded-lg">
+                {selectedImages.map((img, idx) => (
+                  <div key={idx} className="relative group">
+                    <img
+                      src={img}
+                      alt={`Preview ${idx + 1}`}
+                      className="h-16 w-16 object-cover rounded"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveImage(idx)}
+                      className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              {/* Hidden file input */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*"
+                multiple
+                onChange={handleImageSelect}
+              />
+
+              {/* Image upload button */}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || isStreaming}
+                title="Upload images"
+              >
+                <ImageIcon className="h-4 w-4" />
+              </Button>
+
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onPaste={handlePaste}
+                placeholder="Type a message or paste an image..."
+                disabled={isLoading || isStreaming}
+                className="flex-1"
+              />
+              <Button type="submit" disabled={isLoading || isStreaming || !input.trim()}>
+                {isLoading || isStreaming ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </form>
+          </div>
         </div>
       </div>
     </div>

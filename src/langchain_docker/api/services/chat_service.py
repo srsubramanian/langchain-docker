@@ -42,6 +42,60 @@ class ChatService:
         self.memory_service = memory_service
         self.mcp_tool_service = mcp_tool_service
 
+    def _parse_data_uri(self, uri: str) -> tuple[str, str]:
+        """Parse data URI into mime type and base64 data.
+
+        Args:
+            uri: Data URI (e.g., 'data:image/png;base64,iVBORw0KGgo...')
+
+        Returns:
+            Tuple of (mime_type, base64_data)
+        """
+        # data:image/png;base64,iVBORw0KGgo...
+        header, data = uri.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+        return mime_type, data
+
+    def _build_user_message(
+        self, text: str, images: list[str] | None, provider: str
+    ) -> HumanMessage:
+        """Build a HumanMessage with optional image content.
+
+        Args:
+            text: Text message content
+            images: Optional list of base64 data URIs
+            provider: Model provider (for format-specific handling)
+
+        Returns:
+            HumanMessage with text and/or image content
+        """
+        if not images:
+            return HumanMessage(content=text)
+
+        # Build multimodal content blocks
+        content: list[dict] = [{"type": "text", "text": text}]
+
+        for image_uri in images:
+            if provider == "anthropic":
+                # Anthropic format: base64 with source
+                mime_type, data = self._parse_data_uri(image_uri)
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": data
+                    }
+                })
+            else:
+                # OpenAI/Google/Bedrock format: image_url
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": image_uri}
+                })
+
+        return HumanMessage(content=content)
+
     def process_message(self, request: ChatRequest, user_id: str = "default") -> ChatResponse:
         """Process a chat message (non-streaming).
 
@@ -55,8 +109,10 @@ class ChatService:
         # Get or create session (scoped to user)
         session = self.session_service.get_or_create(request.session_id, user_id=user_id)
 
-        # Add user message to session
-        user_message = HumanMessage(content=request.message)
+        # Add user message to session (with optional images)
+        user_message = self._build_user_message(
+            request.message, request.images, request.provider
+        )
         session.messages.append(user_message)
 
         # Process conversation memory (NEW)
@@ -107,8 +163,10 @@ class ChatService:
         # Get or create session (scoped to user)
         session = self.session_service.get_or_create(request.session_id, user_id=user_id)
 
-        # Add user message to session
-        user_message = HumanMessage(content=request.message)
+        # Add user message to session (with optional images)
+        user_message = self._build_user_message(
+            request.message, request.images, request.provider
+        )
         session.messages.append(user_message)
 
         # Process conversation memory (NEW)

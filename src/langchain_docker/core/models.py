@@ -78,14 +78,14 @@ def get_openai_model(
 
 
 def get_anthropic_model(
-    model: str = "claude-3-5-sonnet-20241022",
+    model: str = "claude-sonnet-4-20250514",
     temperature: float = 0.0,
     **kwargs: Any,
 ) -> BaseChatModel:
     """Get a pre-configured Anthropic model.
 
     Args:
-        model: Anthropic model name (default: claude-3-5-sonnet-20241022)
+        model: Anthropic model name (default: claude-sonnet-4-20250514)
         temperature: Temperature for response generation
         **kwargs: Additional Anthropic-specific parameters
 

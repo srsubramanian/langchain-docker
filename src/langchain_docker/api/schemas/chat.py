@@ -69,6 +69,10 @@ class ChatRequest(BaseModel):
     """Request schema for chat endpoint."""
 
     message: str = Field(..., min_length=1, description="User message")
+    images: list[str] | None = Field(
+        None,
+        description="List of base64 data URIs for images (e.g., 'data:image/png;base64,...')"
+    )
     session_id: str | None = Field(None, description="Session ID for conversation history")
     provider: str = Field("openai", description="Model provider")
     model: str | None = Field(None, description="Model name (uses provider default if not specified)")

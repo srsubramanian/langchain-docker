@@ -118,7 +118,7 @@ class ModelService:
 
         defaults = {
             "openai": "gpt-4o-mini",
-            "anthropic": "claude-3-5-sonnet-20241022",
+            "anthropic": "claude-sonnet-4-20250514",
             "google": "gemini-2.0-flash-exp",
         }
 
@@ -215,9 +215,9 @@ class ModelService:
                 ModelInfo(name="gpt-4-turbo", description="Balanced performance"),
             ],
             "anthropic": [
-                ModelInfo(name="claude-3-5-sonnet-20241022", description="Balanced performance"),
-                ModelInfo(name="claude-3-5-haiku-20241022", description="Fast and efficient"),
-                ModelInfo(name="claude-3-opus-20240229", description="Most capable"),
+                ModelInfo(name="claude-sonnet-4-20250514", description="Most balanced, recommended for most use cases"),
+                ModelInfo(name="claude-opus-4-20250514", description="Most capable, for complex tasks"),
+                ModelInfo(name="claude-haiku-4-20250110", description="Fastest, most cost-effective"),
             ],
             "google": [
                 ModelInfo(name="gemini-2.0-flash-exp", description="Experimental, fast"),
@@ -243,7 +243,13 @@ class ModelService:
             Description string
         """
         # Simple mapping - can be enhanced
-        if "claude-3-5-sonnet" in model_id:
+        if "claude-sonnet-4" in model_id:
+            return "Claude Sonnet 4 - Most balanced"
+        elif "claude-opus-4" in model_id:
+            return "Claude Opus 4 - Most capable"
+        elif "claude-haiku-4" in model_id:
+            return "Claude Haiku 4 - Fastest"
+        elif "claude-3-5-sonnet" in model_id:
             return "Claude 3.5 Sonnet - Balanced performance"
         elif "claude-3-5-haiku" in model_id:
             return "Claude 3.5 Haiku - Fast and efficient"
