@@ -33,6 +33,8 @@ import type { ToolTemplate, SkillMetadata, ScheduleConfig, ProviderInfo, ModelIn
 import { cn } from '@/lib/cn';
 import { TemplateSelector } from './TemplateSelector';
 import type { AgentTemplate } from './templates';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface TestMessage {
   role: 'user' | 'assistant';
@@ -1227,7 +1229,15 @@ export function BuilderPage() {
                                 : 'bg-muted'
                             )}
                           >
-                            <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                            {msg.role === 'assistant' ? (
+                              <div className="text-sm prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                            )}
                           </div>
                           {msg.role === 'user' && (
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
