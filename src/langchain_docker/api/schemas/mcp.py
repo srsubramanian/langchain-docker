@@ -27,6 +27,8 @@ class MCPServerInfo(BaseModel):
         ...,
         description="Current server status"
     )
+    is_custom: bool = Field(False, description="Whether this is a custom HTTP server")
+    url: str | None = Field(None, description="Server URL for custom HTTP servers")
     tools: list[MCPToolInfo] | None = Field(
         None,
         description="Available tools (only when running)"
@@ -102,3 +104,28 @@ class MCPToolCallResponse(BaseModel):
     result: Any = Field(..., description="Tool execution result")
     success: bool = Field(True, description="Whether the call succeeded")
     error: str | None = Field(None, description="Error message if failed")
+
+
+class MCPServerCreateRequest(BaseModel):
+    """Request to add a custom HTTP MCP server."""
+
+    url: str = Field(..., description="Server URL (e.g., http://localhost:3001)")
+    name: str | None = Field(None, description="Display name (defaults to URL)")
+    description: str = Field("", description="Optional description")
+    timeout_seconds: int = Field(30, ge=5, le=300, description="Request timeout")
+
+
+class MCPServerCreateResponse(BaseModel):
+    """Response after creating a custom MCP server."""
+
+    id: str = Field(..., description="Generated server identifier")
+    name: str = Field(..., description="Server display name")
+    url: str = Field(..., description="Server URL")
+    message: str = Field("", description="Status message")
+
+
+class MCPServerDeleteResponse(BaseModel):
+    """Response after deleting a custom MCP server."""
+
+    id: str = Field(..., description="Deleted server identifier")
+    deleted: bool = Field(True, description="Whether deletion was successful")

@@ -9,6 +9,9 @@ from langchain_docker.api.dependencies import (
     get_mcp_tool_service,
 )
 from langchain_docker.api.schemas.mcp import (
+    MCPServerCreateRequest,
+    MCPServerCreateResponse,
+    MCPServerDeleteResponse,
     MCPServerInfo,
     MCPServersResponse,
     MCPServerStartResponse,
@@ -33,7 +36,7 @@ async def list_servers(
     """List all configured MCP servers with their status.
 
     Returns:
-        List of MCP servers with id, name, description, enabled, and status.
+        List of MCP servers with id, name, description, enabled, status, is_custom, and url.
     """
     servers_data = server_manager.list_servers()
     servers = [
@@ -43,11 +46,122 @@ async def list_servers(
             description=s["description"],
             enabled=s["enabled"],
             status=s["status"],
+            is_custom=s.get("is_custom", False),
+            url=s.get("url"),
             tools=None,
         )
         for s in servers_data
     ]
     return MCPServersResponse(servers=servers)
+
+
+@router.post("/servers", response_model=MCPServerCreateResponse)
+async def create_server(
+    request: MCPServerCreateRequest,
+    server_manager: MCPServerManager = Depends(get_mcp_server_manager),
+) -> MCPServerCreateResponse:
+    """Add a custom HTTP MCP server.
+
+    Args:
+        request: Server creation request with URL and optional name/description.
+
+    Returns:
+        Created server info with generated ID.
+
+    Raises:
+        HTTPException: If server already exists or URL is invalid.
+    """
+    from urllib.parse import urlparse
+
+    # Parse URL to generate server ID
+    parsed = urlparse(request.url)
+    if not parsed.hostname:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid URL: missing hostname"
+        )
+
+    # Generate ID from URL (e.g., "localhost-3001")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    server_id = f"{parsed.hostname}-{port}".replace(".", "-")
+
+    # Check for duplicates
+    existing_servers = server_manager.list_servers()
+    if any(s["id"] == server_id for s in existing_servers):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Server '{server_id}' already exists"
+        )
+
+    # Generate name if not provided
+    name = request.name or f"Custom: {parsed.hostname}:{port}"
+
+    try:
+        server_manager.add_custom_server(
+            server_id=server_id,
+            name=name,
+            url=request.url,
+            description=request.description,
+            timeout_seconds=request.timeout_seconds,
+        )
+
+        logger.info(f"Created custom MCP server: {server_id} ({request.url})")
+
+        return MCPServerCreateResponse(
+            id=server_id,
+            name=name,
+            url=request.url,
+            message="Server added successfully",
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/servers/{server_id}", response_model=MCPServerDeleteResponse)
+async def delete_server(
+    server_id: str,
+    server_manager: MCPServerManager = Depends(get_mcp_server_manager),
+    tool_service: MCPToolService = Depends(get_mcp_tool_service),
+) -> MCPServerDeleteResponse:
+    """Delete a custom MCP server.
+
+    Args:
+        server_id: The server identifier to delete.
+
+    Returns:
+        Deletion confirmation.
+
+    Raises:
+        HTTPException: If server not found or is a builtin server.
+    """
+    try:
+        # Stop server if running
+        status = server_manager.get_server_status(server_id)
+        if status == "running":
+            await server_manager.stop_server(server_id)
+            tool_service.clear_cache(server_id)
+
+        # Delete the server
+        server_manager.delete_custom_server(server_id)
+
+        logger.info(f"Deleted custom MCP server: {server_id}")
+
+        return MCPServerDeleteResponse(
+            id=server_id,
+            deleted=True,
+        )
+
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Server '{server_id}' not found"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
 
 
 @router.post(

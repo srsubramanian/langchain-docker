@@ -17,6 +17,8 @@ interface MCPState {
   disableServer: (serverId: string) => void;
   startServer: (serverId: string) => Promise<void>;
   stopServer: (serverId: string) => Promise<void>;
+  createServer: (url: string, name?: string) => Promise<void>;
+  deleteServer: (serverId: string) => Promise<void>;
   setError: (error: string | null) => void;
   getEnabledServers: () => string[];
 }
@@ -104,6 +106,41 @@ export const useMCPStore = create<MCPState>()(
             error: err instanceof Error ? err.message : 'Failed to stop MCP server',
             loading: false,
           });
+        }
+      },
+
+      createServer: async (url, name) => {
+        set({ loading: true, error: null });
+        try {
+          await mcpApi.createServer({ url, name });
+          // Refresh server list
+          await get().fetchServers();
+        } catch (err) {
+          set({
+            error: err instanceof Error ? err.message : 'Failed to add MCP server',
+            loading: false,
+          });
+          throw err;
+        }
+      },
+
+      deleteServer: async (serverId) => {
+        set({ loading: true, error: null });
+        try {
+          await mcpApi.deleteServer(serverId);
+          // Remove from local state
+          const { servers, enabledServerIds } = get();
+          set({
+            servers: servers.filter((s) => s.id !== serverId),
+            enabledServerIds: enabledServerIds.filter((id) => id !== serverId),
+            loading: false,
+          });
+        } catch (err) {
+          set({
+            error: err instanceof Error ? err.message : 'Failed to delete MCP server',
+            loading: false,
+          });
+          throw err;
         }
       },
 

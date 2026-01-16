@@ -324,6 +324,8 @@ export interface MCPServerInfo {
   description: string;
   enabled: boolean;
   status: 'running' | 'stopped' | 'error';
+  is_custom?: boolean;
+  url?: string | null;
   tools?: MCPToolInfo[] | null;
 }
 
@@ -360,4 +362,23 @@ export interface MCPToolCallResponse {
   result: unknown;
   success: boolean;
   error?: string | null;
+}
+
+export interface MCPServerCreateRequest {
+  url: string;
+  name?: string;
+  description?: string;
+  timeout_seconds?: number;
+}
+
+export interface MCPServerCreateResponse {
+  id: string;
+  name: string;
+  url: string;
+  message: string;
+}
+
+export interface MCPServerDeleteResponse {
+  id: string;
+  deleted: boolean;
 }

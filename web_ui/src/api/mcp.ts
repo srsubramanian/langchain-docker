@@ -2,6 +2,9 @@ import { apiClient } from './client';
 import type {
   MCPServersResponse,
   MCPServerInfo,
+  MCPServerCreateRequest,
+  MCPServerCreateResponse,
+  MCPServerDeleteResponse,
   MCPServerStartResponse,
   MCPServerStopResponse,
   MCPToolsResponse,
@@ -59,6 +62,29 @@ export const mcpApi = {
     const { data } = await apiClient.post<MCPToolCallResponse>(
       `/api/v1/mcp/servers/${serverId}/tools/call`,
       request
+    );
+    return data;
+  },
+
+  /**
+   * Create a custom HTTP MCP server.
+   */
+  async createServer(
+    request: MCPServerCreateRequest
+  ): Promise<MCPServerCreateResponse> {
+    const { data } = await apiClient.post<MCPServerCreateResponse>(
+      '/api/v1/mcp/servers',
+      request
+    );
+    return data;
+  },
+
+  /**
+   * Delete a custom MCP server.
+   */
+  async deleteServer(serverId: string): Promise<MCPServerDeleteResponse> {
+    const { data } = await apiClient.delete<MCPServerDeleteResponse>(
+      `/api/v1/mcp/servers/${serverId}`
     );
     return data;
   },

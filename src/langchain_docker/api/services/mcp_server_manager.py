@@ -6,9 +6,14 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+import httpx
 
 logger = logging.getLogger(__name__)
+
+# Path for custom server configurations
+CUSTOM_SERVERS_PATH = Path.home() / ".langchain-docker" / "custom_mcp_servers.json"
 
 
 @dataclass
@@ -18,11 +23,16 @@ class MCPServerConfig:
     id: str
     name: str
     description: str
-    command: str
+    # For stdio-based (subprocess) servers
+    command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    # For HTTP-based servers
+    url: str | None = None
     enabled: bool = True
     timeout_seconds: int = 30
+    is_custom: bool = False
+    transport: Literal["stdio", "http"] = "stdio"
 
 
 @dataclass
@@ -52,12 +62,14 @@ class MCPServerManager:
             )
         self._config_path = config_path
         self._servers: dict[str, MCPServerConfig] = {}
-        self._connections: dict[str, MCPConnection] = {}
+        self._connections: dict[str, MCPConnection] = {}  # For stdio servers
+        self._http_active: set[str] = set()  # For HTTP servers
         self._lock = asyncio.Lock()
         self._load_config()
 
     def _load_config(self) -> None:
         """Load server configurations from JSON file."""
+        # Load builtin servers
         try:
             with open(self._config_path) as f:
                 data = json.load(f)
@@ -72,30 +84,134 @@ class MCPServerManager:
                     env=config.get("env", {}),
                     enabled=config.get("enabled", True),
                     timeout_seconds=config.get("timeout_seconds", 30),
+                    is_custom=False,
+                    transport="stdio",
                 )
-            logger.info(f"Loaded {len(self._servers)} MCP server configurations")
+            logger.info(f"Loaded {len(self._servers)} builtin MCP server configurations")
         except FileNotFoundError:
             logger.warning(f"MCP config file not found: {self._config_path}")
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in MCP config: {e}")
 
+        # Load custom servers
+        self._load_custom_config()
+
+    def _load_custom_config(self) -> None:
+        """Load custom servers from user config file."""
+        if not CUSTOM_SERVERS_PATH.exists():
+            return
+
+        try:
+            with open(CUSTOM_SERVERS_PATH) as f:
+                data = json.load(f)
+
+            for server_id, config in data.get("servers", {}).items():
+                self._servers[server_id] = MCPServerConfig(
+                    id=server_id,
+                    name=config.get("name", server_id),
+                    description=config.get("description", ""),
+                    url=config.get("url"),
+                    timeout_seconds=config.get("timeout_seconds", 30),
+                    is_custom=True,
+                    transport="http",
+                )
+            logger.info(f"Loaded {sum(1 for s in self._servers.values() if s.is_custom)} custom MCP servers")
+        except FileNotFoundError:
+            pass
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in custom MCP config: {e}")
+
+    def _save_custom_config(self) -> None:
+        """Save custom servers to user config file."""
+        CUSTOM_SERVERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        custom_servers = {
+            server_id: {
+                "name": config.name,
+                "description": config.description,
+                "url": config.url,
+                "timeout_seconds": config.timeout_seconds,
+            }
+            for server_id, config in self._servers.items()
+            if config.is_custom
+        }
+        with open(CUSTOM_SERVERS_PATH, "w") as f:
+            json.dump({"servers": custom_servers}, f, indent=2)
+        logger.info(f"Saved {len(custom_servers)} custom MCP servers")
+
     def list_servers(self) -> list[dict[str, Any]]:
         """List all configured servers with their status.
 
         Returns:
-            List of server info dicts with id, name, description, enabled, status.
+            List of server info dicts with id, name, description, enabled, status, is_custom, url.
         """
         result = []
         for server_id, config in self._servers.items():
-            status = "running" if server_id in self._connections else "stopped"
+            status = self.get_server_status(server_id)
             result.append({
                 "id": server_id,
                 "name": config.name,
                 "description": config.description,
                 "enabled": config.enabled,
                 "status": status,
+                "is_custom": config.is_custom,
+                "url": config.url,
             })
         return result
+
+    def add_custom_server(
+        self,
+        server_id: str,
+        name: str,
+        url: str,
+        description: str = "",
+        timeout_seconds: int = 30,
+    ) -> None:
+        """Add a custom HTTP-based MCP server.
+
+        Args:
+            server_id: Unique server identifier.
+            name: Human-readable server name.
+            url: Server URL (e.g., http://localhost:3001).
+            description: Optional server description.
+            timeout_seconds: Request timeout in seconds.
+
+        Raises:
+            ValueError: If server_id already exists.
+        """
+        if server_id in self._servers:
+            raise ValueError(f"Server '{server_id}' already exists")
+
+        self._servers[server_id] = MCPServerConfig(
+            id=server_id,
+            name=name,
+            description=description,
+            url=url,
+            timeout_seconds=timeout_seconds,
+            is_custom=True,
+            transport="http",
+        )
+        self._save_custom_config()
+        logger.info(f"Added custom MCP server: {server_id} ({url})")
+
+    def delete_custom_server(self, server_id: str) -> None:
+        """Delete a custom MCP server.
+
+        Args:
+            server_id: Server identifier to delete.
+
+        Raises:
+            KeyError: If server_id is not found.
+            ValueError: If server is not a custom server.
+        """
+        if server_id not in self._servers:
+            raise KeyError(f"Server '{server_id}' not found")
+
+        if not self._servers[server_id].is_custom:
+            raise ValueError("Cannot delete builtin server")
+
+        del self._servers[server_id]
+        self._save_custom_config()
+        logger.info(f"Deleted custom MCP server: {server_id}")
 
     def get_server_status(self, server_id: str) -> str:
         """Get the status of a specific server.
@@ -108,6 +224,14 @@ class MCPServerManager:
         """
         if server_id not in self._servers:
             return "error"
+
+        config = self._servers[server_id]
+
+        # HTTP servers use _http_active set
+        if config.transport == "http":
+            return "running" if server_id in self._http_active else "stopped"
+
+        # Stdio servers use _connections dict
         if server_id in self._connections:
             conn = self._connections[server_id]
             if conn.process.returncode is None:
@@ -115,14 +239,64 @@ class MCPServerManager:
             return "error"
         return "stopped"
 
-    async def start_server(self, server_id: str) -> MCPConnection:
-        """Start an MCP server subprocess.
+    async def _send_http_request(
+        self,
+        url: str,
+        method: str,
+        params: dict | None = None,
+        timeout: int = 30,
+    ) -> dict:
+        """Send a JSON-RPC request over HTTP.
+
+        Args:
+            url: Server base URL.
+            method: The RPC method name.
+            params: Optional parameters for the method.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            The result from the server response.
+
+        Raises:
+            RuntimeError: If request fails or server returns error.
+        """
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+        }
+        if params is not None:
+            request["params"] = params
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    url,
+                    json=request,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                if "error" in result:
+                    error = result["error"]
+                    raise RuntimeError(
+                        f"MCP error: {error.get('message', 'Unknown error')} "
+                        f"(code: {error.get('code', 'N/A')})"
+                    )
+
+                return result.get("result", {})
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"HTTP request failed: {e}")
+
+    async def start_server(self, server_id: str) -> MCPConnection | None:
+        """Start an MCP server subprocess or connect to HTTP server.
 
         Args:
             server_id: The server identifier to start.
 
         Returns:
-            MCPConnection for the started server.
+            MCPConnection for stdio servers, None for HTTP servers.
 
         Raises:
             ValueError: If server_id is not configured.
@@ -131,6 +305,43 @@ class MCPServerManager:
         if server_id not in self._servers:
             raise ValueError(f"Unknown MCP server: {server_id}")
 
+        config = self._servers[server_id]
+
+        # Handle HTTP-based servers
+        if config.transport == "http":
+            async with self._lock:
+                if server_id in self._http_active:
+                    logger.info(f"HTTP server '{server_id}' already connected")
+                    return None
+
+                logger.info(f"Connecting to HTTP MCP server '{server_id}' at {config.url}")
+
+                try:
+                    # Test connection with initialize handshake
+                    await self._send_http_request(
+                        config.url,
+                        "initialize",
+                        {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "langchain-docker",
+                                "version": "0.1.0"
+                            }
+                        },
+                        config.timeout_seconds,
+                    )
+
+                    # Mark as active
+                    self._http_active.add(server_id)
+                    logger.info(f"HTTP MCP server '{server_id}' connected successfully")
+                    return None
+
+                except Exception as e:
+                    logger.error(f"Failed to connect to HTTP MCP server '{server_id}': {e}")
+                    raise RuntimeError(f"Failed to connect to MCP server at {config.url}: {e}")
+
+        # Handle stdio-based servers (existing logic)
         async with self._lock:
             # Return existing connection if running
             if server_id in self._connections:
@@ -139,8 +350,6 @@ class MCPServerManager:
                     return conn
                 # Clean up dead connection
                 del self._connections[server_id]
-
-            config = self._servers[server_id]
 
             # Prepare environment
             env = os.environ.copy()
@@ -216,11 +425,20 @@ class MCPServerManager:
         return response
 
     async def stop_server(self, server_id: str) -> None:
-        """Stop an MCP server subprocess.
+        """Stop an MCP server subprocess or disconnect from HTTP server.
 
         Args:
             server_id: The server identifier to stop.
         """
+        # Check if this is an HTTP server
+        if server_id in self._servers and self._servers[server_id].transport == "http":
+            async with self._lock:
+                if server_id in self._http_active:
+                    self._http_active.discard(server_id)
+                    logger.info(f"HTTP MCP server '{server_id}' disconnected")
+            return
+
+        # Handle stdio-based servers
         async with self._lock:
             if server_id not in self._connections:
                 return
@@ -253,9 +471,15 @@ class MCPServerManager:
             logger.info(f"MCP server '{server_id}' stopped")
 
     async def stop_all_servers(self) -> None:
-        """Stop all running MCP servers."""
+        """Stop all running MCP servers (stdio and HTTP)."""
+        # Stop stdio servers
         server_ids = list(self._connections.keys())
         for server_id in server_ids:
+            await self.stop_server(server_id)
+
+        # Disconnect HTTP servers
+        http_server_ids = list(self._http_active)
+        for server_id in http_server_ids:
             await self.stop_server(server_id)
 
     async def send_request(
@@ -281,14 +505,31 @@ class MCPServerManager:
             TimeoutError: If request times out.
             RuntimeError: If server returns an error.
         """
-        if server_id not in self._connections:
-            raise ValueError(f"MCP server '{server_id}' is not running")
+        if server_id not in self._servers:
+            raise ValueError(f"Unknown MCP server: {server_id}")
 
-        conn = self._connections[server_id]
         config = self._servers[server_id]
 
         if timeout is None:
             timeout = config.timeout_seconds
+
+        # Handle HTTP-based servers
+        if config.transport == "http":
+            if server_id not in self._http_active:
+                raise ValueError(f"HTTP MCP server '{server_id}' is not connected")
+
+            return await self._send_http_request(
+                config.url,
+                method,
+                params,
+                timeout,
+            )
+
+        # Handle stdio-based servers
+        if server_id not in self._connections:
+            raise ValueError(f"MCP server '{server_id}' is not running")
+
+        conn = self._connections[server_id]
 
         # Generate request ID
         conn.request_id += 1
