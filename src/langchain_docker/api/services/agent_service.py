@@ -705,6 +705,7 @@ Guidelines:
             "agents": agent_names,
             "provider": provider,
             "model": model,
+            "messages": [],  # Conversation history for human-in-the-loop
         }
 
         logger.info(f"Created workflow {workflow_id} with agents: {agent_names}")
@@ -717,6 +718,8 @@ Guidelines:
         session_id: Optional[str] = None,
     ) -> dict:
         """Invoke a multi-agent workflow.
+
+        Supports human-in-the-loop by preserving conversation history.
 
         Args:
             workflow_id: Workflow to invoke
@@ -735,15 +738,24 @@ Guidelines:
         workflow_data = self._workflows[workflow_id]
         app = workflow_data["app"]
 
-        # Invoke with session tracing
+        # Get existing conversation history for human-in-the-loop support
+        history = workflow_data.get("messages", [])
+
+        # Add new user message to history
+        user_msg = HumanMessage(content=message)
+        history.append(user_msg)
+
+        # Invoke with full conversation history
         with trace_session(session_id or workflow_id):
             result = app.invoke(
-                {"messages": [HumanMessage(content=message)]},
+                {"messages": history},
                 config={"metadata": {"session_id": session_id, "workflow_id": workflow_id}},
             )
 
-        # Extract final response
+        # Extract response messages and update stored history
         messages = result.get("messages", [])
+        workflow_data["messages"] = messages  # Store full conversation
+
         final_message = messages[-1] if messages else None
 
         # Handle content that may be a list (tool calls) or string
@@ -777,6 +789,22 @@ Guidelines:
         """
         if workflow_id in self._workflows:
             del self._workflows[workflow_id]
+            return True
+        return False
+
+    def clear_workflow_history(self, workflow_id: str) -> bool:
+        """Clear conversation history for a workflow.
+
+        Useful for resetting human-in-the-loop conversations.
+
+        Args:
+            workflow_id: Workflow to clear history for
+
+        Returns:
+            True if cleared, False if workflow not found
+        """
+        if workflow_id in self._workflows:
+            self._workflows[workflow_id]["messages"] = []
             return True
         return False
 

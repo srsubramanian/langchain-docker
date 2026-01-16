@@ -466,7 +466,7 @@ class JiraSkill(Skill):
         """
         session = self._get_session()
         if not session:
-            return {"error": "Jira not configured. Set JIRA_URL, JIRA_USERNAME, and JIRA_API_TOKEN."}
+            return {"error": "Jira not configured. Set JIRA_URL and JIRA_BEARER_TOKEN environment variables."}
 
         url = f"{self.url.rstrip('/')}{endpoint}"
         try:
@@ -489,8 +489,7 @@ class JiraSkill(Skill):
 ### Configuration Status
 **Warning**: Jira is not fully configured. Set the following environment variables:
 - `JIRA_URL`: Your Jira instance URL
-- `JIRA_USERNAME`: Your username or email
-- `JIRA_API_TOKEN`: Your API token
+- `JIRA_BEARER_TOKEN`: Your Personal Access Token
 """
         else:
             config_status = f"""
