@@ -222,12 +222,16 @@ src/langchain_docker/
 │   │   ├── SKILL.md           # Core skill instructions + guidelines
 │   │   ├── examples.md        # SQL query examples
 │   │   └── patterns.md        # Advanced SQL patterns
-│   └── xlsx/                  # XLSX skill content
+│   ├── xlsx/                  # XLSX skill content
+│   │   ├── __init__.py        # Skill module documentation
+│   │   ├── SKILL.md           # Core skill instructions (Level 2)
+│   │   ├── recalc.md          # Recalculation script docs
+│   │   ├── examples.md        # Code examples
+│   │   └── formatting.md      # Formatting guide
+│   └── jira/                  # Jira skill content (read-only)
 │       ├── __init__.py        # Skill module documentation
-│       ├── SKILL.md           # Core skill instructions (Level 2)
-│       ├── recalc.md          # Recalculation script docs
-│       ├── examples.md        # Code examples
-│       └── formatting.md      # Formatting guide
+│       ├── SKILL.md           # Core Jira instructions + guidelines
+│       └── jql_reference.md   # JQL syntax reference guide
 └── utils/
     ├── __init__.py            # Utility exports
     └── errors.py              # Custom exception classes
@@ -318,6 +322,8 @@ The API follows a layered architecture: **Routers → Services → Core**
 - `skill_registry.py`: Skills with progressive disclosure pattern
   - `Skill` base class with `load_core()` and `load_details()` methods
   - `SQLSkill`: Database querying with on-demand schema loading
+  - `XLSXSkill`: Spreadsheet creation, editing, and analysis
+  - `JiraSkill`: Read-only Jira integration for issues, sprints, projects, and users
   - `SkillRegistry`: Central registry for all skills (singleton via dependencies.py)
   - Progressive disclosure: Level 1 (metadata) → Level 2 (schema) → Level 3 (samples)
 - `demo_database.py`: Demo SQLite database
@@ -325,8 +331,9 @@ The API follows a layered architecture: **Routers → Services → Core**
   - Tables: customers, orders, products
   - Used by SQLSkill for testing and demos
 - `tool_registry.py`: Tool templates for custom agents
-  - Categories: math, weather, research, finance, database
+  - Categories: math, weather, research, finance, database, project_management
   - SQL tools: load_sql_skill, sql_query, sql_list_tables, sql_get_samples
+  - Jira tools: load_jira_skill, jira_search, jira_get_issue, jira_list_projects, jira_get_sprints, jira_get_changelog, jira_jql_reference
   - Methods: `register()`, `list_tools()`, `create_tool_instance()`
 - `session_service.py`: Thread-safe in-memory session storage with TTL cleanup
   - OrderedDict-based LRU storage with max 1000 sessions
@@ -958,6 +965,13 @@ All API keys and configuration are loaded from `.env` file:
 - `DATABASE_URL` (default: sqlite:///demo.db) - Database connection string
 - `SQL_READ_ONLY` (default: true) - Enforce read-only mode (only SELECT allowed)
 
+**Jira Configuration (for Jira Skill):**
+- `JIRA_URL` - Jira instance URL (e.g., https://your-instance.atlassian.net)
+- `JIRA_USERNAME` - Username or email for authentication
+- `JIRA_API_TOKEN` - API token (Cloud) or password (Server)
+  - Get your API token at: https://id.atlassian.com/manage-profile/security/api-tokens
+- `JIRA_API_VERSION` (default: "2") - REST API version ("2" or "3")
+
 ### Model Initialization
 ```python
 from langchain.chat_models import init_chat_model
@@ -1255,6 +1269,63 @@ curl -X POST http://localhost:8000/api/v1/agents/workflows/sql-demo/invoke \
   -H "Content-Type: application/json" \
   -d '{"message": "What are the top 5 customers by order total?"}'
 ```
+
+**Jira Skill Definition:**
+```python
+# In skill_registry.py
+class JiraSkill(Skill):
+    def __init__(self, url=None, username=None, api_token=None, api_version=None):
+        self.id = "jira"
+        self.name = "Jira Query Expert"
+        self.description = "Query Jira issues, sprints, projects, and users (read-only)"
+        self.category = "project_management"
+        self.url = url or get_jira_url()  # From env var
+        self.username = username or get_jira_username()
+        self.api_token = api_token or get_jira_api_token()
+        self.api_version = api_version or get_jira_api_version()
+
+    def load_core(self) -> str:
+        """Level 2: Load Jira skill context and guidelines."""
+        return f"""
+## Jira Skill Activated
+### Connected to: {self.url}
+### API Version: {self.api_version}
+{self._read_md_file("SKILL.md")}
+"""
+
+    def search_issues(self, jql: str, max_results: int = 50) -> str:
+        """Search for issues using JQL."""
+        # All operations are READ-ONLY
+        return self._api_get(f"/rest/api/{self.api_version}/search", {"jql": jql, "maxResults": max_results})
+```
+
+**Using the Jira Skill Tools:**
+```bash
+# List available skills (includes jira)
+curl http://localhost:8000/api/v1/skills
+
+# List Jira tools
+curl http://localhost:8000/api/v1/agents/tools | jq '.[] | select(.category == "project_management")'
+
+# Use Jira tools in chat (with custom agent)
+curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Search for open bugs in project DEMO",
+    "provider": "openai"
+  }'
+```
+
+**Jira Tool Categories:**
+| Tool | Description |
+|------|-------------|
+| `load_jira_skill` | Load Jira skill context and guidelines (progressive disclosure) |
+| `jira_search` | Search issues using JQL (e.g., "project = DEMO AND status = Open") |
+| `jira_get_issue` | Get detailed info for a specific issue (e.g., DEMO-123) |
+| `jira_list_projects` | List all accessible projects |
+| `jira_get_sprints` | Get sprints for a specific board |
+| `jira_get_changelog` | View issue change history |
+| `jira_jql_reference` | Load JQL syntax reference documentation |
 
 **Agent Flow (Explicit Tool Calls):**
 ```
