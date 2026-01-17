@@ -9,6 +9,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph_supervisor import create_supervisor
 
+from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
@@ -126,6 +127,7 @@ class AgentService:
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
         self._tool_registry = ToolRegistry()
+        self._capability_registry = CapabilityRegistry()
 
         # Initialize Redis agent store if URL provided
         self._agent_store = None
@@ -377,6 +379,59 @@ Guidelines:
             List of category names
         """
         return self._tool_registry.get_categories()
+
+    # Capability Registry Methods
+
+    def get_capability_registry(self) -> CapabilityRegistry:
+        """Get the capability registry.
+
+        Returns:
+            CapabilityRegistry instance
+        """
+        return self._capability_registry
+
+    def list_capabilities(self) -> list[dict]:
+        """List all available capabilities (unified tools and skills).
+
+        Returns:
+            List of capabilities with metadata
+        """
+        return self._capability_registry.to_dict_list()
+
+    def list_capability_categories(self) -> list[str]:
+        """List all capability categories.
+
+        Returns:
+            List of category names
+        """
+        return self._capability_registry.get_categories()
+
+    def get_tools_for_capabilities(
+        self,
+        capability_ids: list[str],
+        configs: Optional[dict[str, dict]] = None,
+    ) -> list[Callable]:
+        """Get all tools for a list of capabilities.
+
+        Args:
+            capability_ids: List of capability IDs to get tools from
+            configs: Optional dict mapping capability_id to config dict
+
+        Returns:
+            List of tool functions
+
+        Raises:
+            ValueError: If any capability_id is invalid
+        """
+        configs = configs or {}
+        tools = []
+        for cap_id in capability_ids:
+            cap_tools = self._capability_registry.get_tools_for_capability(
+                cap_id,
+                configs.get(cap_id),
+            )
+            tools.extend(cap_tools)
+        return tools
 
     # Custom Agent Methods
 

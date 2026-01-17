@@ -14,6 +14,7 @@ from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
+from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.skill_registry import SkillRegistry
 from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours
 
@@ -177,11 +178,36 @@ def get_skill_registry() -> SkillRegistry:
 
     Returns:
         SkillRegistry instance
+
+    Note:
+        This is kept for backward compatibility. New code should use
+        get_capability_registry() instead.
     """
     global _skill_registry
     if _skill_registry is None:
         _skill_registry = SkillRegistry()
     return _skill_registry
+
+
+# Singleton for capability registry
+_capability_registry: CapabilityRegistry | None = None
+
+
+def get_capability_registry() -> CapabilityRegistry:
+    """Get singleton capability registry instance.
+
+    The CapabilityRegistry is the unified registry for all agent capabilities,
+    replacing the separate skill_registry and tool_registry. It provides:
+    - Simple tools (math, weather, search, stock prices)
+    - Skill bundles (SQL database, Jira integration, XLSX spreadsheets)
+
+    Returns:
+        CapabilityRegistry instance
+    """
+    global _capability_registry
+    if _capability_registry is None:
+        _capability_registry = CapabilityRegistry()
+    return _capability_registry
 
 
 # Singleton for agent service

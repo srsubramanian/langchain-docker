@@ -412,3 +412,27 @@ export interface MCPServerDeleteResponse {
   id: string;
   deleted: boolean;
 }
+
+// Capability types (Unified Tools and Skills)
+export interface CapabilityParameter {
+  name: string;
+  type: string;
+  description: string;
+  default?: unknown;
+  required: boolean;
+}
+
+export interface Capability {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  type: 'tool' | 'skill_bundle';
+  tools_provided: string[];
+  parameters: CapabilityParameter[];
+}
+
+export interface CapabilityListResponse {
+  capabilities: Capability[];
+  total: number;
+}

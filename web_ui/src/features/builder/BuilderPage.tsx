@@ -24,12 +24,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible } from '@/components/ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
-import { agentsApi, skillsApi, modelsApi } from '@/api';
-import type { ToolTemplate, SkillMetadata, ScheduleConfig, ProviderInfo, ModelInfo } from '@/types/api';
+import { agentsApi, capabilitiesApi, modelsApi } from '@/api';
+import type { Capability, ScheduleConfig, ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { TemplateSelector } from './TemplateSelector';
 import type { AgentTemplate } from './templates';
@@ -88,13 +88,10 @@ export function BuilderPage() {
   // Builder state
   const [name, setName] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [tools, setTools] = useState<ToolTemplate[]>([]);
-  const [skills, setSkills] = useState<SkillMetadata[]>([]);
+  const [selectedCapabilities, setSelectedCapabilities] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [toolsOrSkillsTab, setToolsOrSkillsTab] = useState<'tools' | 'skills'>('tools');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -167,18 +164,16 @@ export function BuilderPage() {
     };
   }, [isResizing]);
 
-  // Fetch tools, categories, skills, and providers
+  // Fetch capabilities and providers
   useEffect(() => {
     Promise.all([
-      agentsApi.listTools(),
-      agentsApi.listToolCategories(),
-      skillsApi.list(),
+      capabilitiesApi.list(),
+      capabilitiesApi.listCategories(),
       modelsApi.listProviders(),
     ])
-      .then(([toolsData, categoriesData, skillsData, providersData]) => {
-        setTools(toolsData);
+      .then(([capabilitiesData, categoriesData, providersData]) => {
+        setCapabilities(capabilitiesData.capabilities);
         setCategories(categoriesData);
-        setSkills(skillsData.skills);
         setProviders(providersData);
       })
       .catch(console.error);
@@ -210,9 +205,9 @@ export function BuilderPage() {
     };
   }, [testAgentId]);
 
-  const filteredTools = selectedCategory
-    ? tools.filter((t) => t.category === selectedCategory)
-    : tools;
+  const filteredCapabilities = selectedCategory
+    ? capabilities.filter((c) => c.category === selectedCategory)
+    : capabilities;
 
   const resetTestAgent = () => {
     // Cleanup existing test agent when config changes
@@ -223,18 +218,31 @@ export function BuilderPage() {
     }
   };
 
-  const toggleTool = (toolId: string) => {
-    setSelectedTools((prev) =>
-      prev.includes(toolId) ? prev.filter((id) => id !== toolId) : [...prev, toolId]
+  const toggleCapability = (capabilityId: string) => {
+    setSelectedCapabilities((prev) =>
+      prev.includes(capabilityId) ? prev.filter((id) => id !== capabilityId) : [...prev, capabilityId]
     );
     resetTestAgent();
   };
 
-  const toggleSkill = (skillId: string) => {
-    setSelectedSkills((prev) =>
-      prev.includes(skillId) ? prev.filter((id) => id !== skillId) : [...prev, skillId]
-    );
-    resetTestAgent();
+  // Helper functions to separate tools and skills from selected capabilities
+  const getSelectedTools = () => {
+    return selectedCapabilities
+      .filter((id) => {
+        const cap = capabilities.find((c) => c.id === id);
+        return cap && cap.type === 'tool';
+      })
+      .flatMap((id) => {
+        const cap = capabilities.find((c) => c.id === id);
+        return cap ? cap.tools_provided : [];
+      });
+  };
+
+  const getSelectedSkills = () => {
+    return selectedCapabilities.filter((id) => {
+      const cap = capabilities.find((c) => c.id === id);
+      return cap && cap.type === 'skill_bundle';
+    });
   };
 
   const handleProviderChange = (provider: string) => {
@@ -256,12 +264,12 @@ export function BuilderPage() {
   const canCreate = () => {
     const hasValidName = name.trim().length >= 1 && name.trim().length <= 50;
     const hasValidPrompt = systemPrompt.trim().length >= 10;
-    const hasToolsOrSkills = selectedTools.length > 0 || selectedSkills.length > 0;
-    return hasValidName && hasValidPrompt && hasToolsOrSkills;
+    const hasCapabilities = selectedCapabilities.length > 0;
+    return hasValidName && hasValidPrompt && hasCapabilities;
   };
 
   const canTest = () => {
-    return name.trim().length >= 1 && (selectedTools.length > 0 || selectedSkills.length > 0);
+    return name.trim().length >= 1 && selectedCapabilities.length > 0;
   };
 
   const handleCreate = async () => {
@@ -278,6 +286,10 @@ export function BuilderPage() {
             timezone: 'UTC',
           }
         : null;
+
+      // Convert capabilities to tools and skills for the backend API
+      const selectedTools = getSelectedTools();
+      const selectedSkills = getSelectedSkills();
 
       await agentsApi.createCustomAgent({
         name: name.trim(),
@@ -317,6 +329,11 @@ export function BuilderPage() {
       if (!agentId) {
         // Create a temporary agent
         agentId = `test-agent-${Date.now()}`;
+
+        // Convert capabilities to tools and skills for the backend API
+        const selectedTools = getSelectedTools();
+        const selectedSkills = getSelectedSkills();
+
         await agentsApi.createCustomAgent({
           agent_id: agentId,
           name: name.trim() || 'Test Agent',
@@ -370,11 +387,14 @@ export function BuilderPage() {
   const handleSelectTemplate = (template: AgentTemplate) => {
     setName(template.name);
     setSystemPrompt(template.systemPrompt);
-    // Map template tool names to actual tool IDs
-    const toolIds = template.tools.filter((toolName) =>
-      tools.some((t) => t.id === toolName)
-    );
-    setSelectedTools(toolIds);
+    // Map template tools to capability IDs
+    // Template tools are tool_ids, we need to find which capabilities provide them
+    const capabilityIds = capabilities
+      .filter((cap) =>
+        template.tools.some((toolId) => cap.tools_provided.includes(toolId) || cap.id === toolId)
+      )
+      .map((cap) => cap.id);
+    setSelectedCapabilities(capabilityIds);
     // Apply template's model settings if specified
     if (template.provider) {
       setSelectedProvider(template.provider);
@@ -397,8 +417,7 @@ export function BuilderPage() {
     // Reset form
     setName('');
     setSystemPrompt('');
-    setSelectedTools([]);
-    setSelectedSkills([]);
+    setSelectedCapabilities([]);
     // Reset model settings
     setSelectedProvider('openai');
     setSelectedModel(null);
@@ -413,7 +432,7 @@ export function BuilderPage() {
     const messages = [];
     if (name.trim().length < 1) messages.push('Add agent name');
     if (systemPrompt.trim().length < 10) messages.push('Add instructions (min 10 chars)');
-    if (selectedTools.length === 0 && selectedSkills.length === 0) messages.push('Select at least one tool or skill');
+    if (selectedCapabilities.length === 0) messages.push('Select at least one capability');
     return messages;
   };
 
@@ -607,81 +626,42 @@ export function BuilderPage() {
                   </div>
                 </Collapsible>
 
-                {/* Toolbox Section */}
+                {/* Capabilities Section */}
                 <Collapsible
-                  title="Toolbox"
+                  title="Capabilities"
                   icon={<Wrench className="h-4 w-4 text-muted-foreground" />}
                   defaultOpen={true}
                   badge={
-                    (selectedTools.length > 0 || selectedSkills.length > 0) ? (
+                    selectedCapabilities.length > 0 ? (
                       <Badge variant="secondary" className="ml-2 text-xs">
-                        {selectedTools.length + selectedSkills.length} selected
+                        {selectedCapabilities.length} selected
                       </Badge>
                     ) : null
                   }
                 >
                   <div className="space-y-4">
                     <p className="text-sm text-muted-foreground">
-                      Equip your agent with tools and skills.
+                      Equip your agent with capabilities (tools and skills).
                     </p>
 
-                    {/* Action buttons */}
-                    <div className="flex gap-2 flex-wrap">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setToolsOrSkillsTab('tools')}
-                        className={cn(
-                          'gap-2',
-                          toolsOrSkillsTab === 'tools' && 'border-primary bg-primary/10'
-                        )}
-                      >
-                        <Plus className="h-3 w-3" />
-                        Add Tool
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setToolsOrSkillsTab('skills')}
-                        className={cn(
-                          'gap-2',
-                          toolsOrSkillsTab === 'skills' && 'border-primary bg-primary/10'
-                        )}
-                      >
-                        <Plus className="h-3 w-3" />
-                        Add Skill
-                      </Button>
-                    </div>
-
                     {/* Selected items display */}
-                    {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                    {selectedCapabilities.length > 0 && (
                       <div className="flex flex-wrap gap-2">
-                        {selectedTools.map((toolId) => {
-                          const tool = tools.find((t) => t.id === toolId);
+                        {selectedCapabilities.map((capId) => {
+                          const cap = capabilities.find((c) => c.id === capId);
                           return (
                             <Badge
-                              key={toolId}
+                              key={capId}
                               variant="secondary"
                               className="gap-1 cursor-pointer hover:bg-destructive/20"
-                              onClick={() => toggleTool(toolId)}
+                              onClick={() => toggleCapability(capId)}
                             >
-                              <Wrench className="h-3 w-3" />
-                              {tool?.name || toolId}
-                              <span className="ml-1 text-muted-foreground">x</span>
-                            </Badge>
-                          );
-                        })}
-                        {selectedSkills.map((skillId) => {
-                          const skill = skills.find((s) => s.id === skillId);
-                          return (
-                            <Badge
-                              key={skillId}
-                              variant="secondary"
-                              className="gap-1 cursor-pointer hover:bg-destructive/20"
-                              onClick={() => toggleSkill(skillId)}
-                            >
-                              <Sparkles className="h-3 w-3" />
-                              {skill?.name || skillId}
+                              {cap?.type === 'skill_bundle' ? (
+                                <Sparkles className="h-3 w-3" />
+                              ) : (
+                                <Wrench className="h-3 w-3" />
+                              )}
+                              {cap?.name || capId}
                               <span className="ml-1 text-muted-foreground">x</span>
                             </Badge>
                           );
@@ -689,141 +669,91 @@ export function BuilderPage() {
                       </div>
                     )}
 
-                    {/* Tools/Skills Selection */}
-                    <Tabs value={toolsOrSkillsTab} onValueChange={(v) => setToolsOrSkillsTab(v as 'tools' | 'skills')}>
-                      <TabsList className="w-full">
-                        <TabsTrigger value="tools" className="flex-1 gap-2">
-                          <Wrench className="h-4 w-4" />
-                          Tools ({tools.length})
-                        </TabsTrigger>
-                        <TabsTrigger value="skills" className="flex-1 gap-2">
-                          <Sparkles className="h-4 w-4" />
-                          Skills ({skills.length})
-                        </TabsTrigger>
-                      </TabsList>
+                    {/* Category filter */}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant={selectedCategory === null ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setSelectedCategory(null)}
+                      >
+                        All
+                      </Button>
+                      {categories.map((cat) => (
+                        <Button
+                          key={cat}
+                          variant={selectedCategory === cat ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setSelectedCategory(cat)}
+                        >
+                          {cat}
+                        </Button>
+                      ))}
+                    </div>
 
-                      <TabsContent value="tools" className="mt-4">
-                        {/* Category filter */}
-                        <div className="flex flex-wrap gap-2 mb-4">
-                          <Button
-                            variant={selectedCategory === null ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setSelectedCategory(null)}
-                          >
-                            All
-                          </Button>
-                          {categories.map((cat) => (
-                            <Button
-                              key={cat}
-                              variant={selectedCategory === cat ? 'default' : 'outline'}
-                              size="sm"
-                              onClick={() => setSelectedCategory(cat)}
-                            >
-                              {cat}
-                            </Button>
-                          ))}
+                    {/* Capabilities list */}
+                    <div className="grid gap-2 max-h-[300px] overflow-y-auto pr-2">
+                      {filteredCapabilities.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Wrench className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p>No capabilities available</p>
                         </div>
-
-                        <div className="grid gap-2 max-h-[300px] overflow-y-auto pr-2">
-                          {filteredTools.map((tool) => {
-                            const isSelected = selectedTools.includes(tool.id);
-                            return (
-                              <button
-                                key={tool.id}
-                                onClick={() => toggleTool(tool.id)}
+                      ) : (
+                        filteredCapabilities.map((cap) => {
+                          const isSelected = selectedCapabilities.includes(cap.id);
+                          return (
+                            <button
+                              key={cap.id}
+                              onClick={() => toggleCapability(cap.id)}
+                              className={cn(
+                                'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                                isSelected
+                                  ? 'border-primary bg-primary/10'
+                                  : 'border-border hover:bg-muted'
+                              )}
+                            >
+                              <div
                                 className={cn(
-                                  'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                                  'mt-0.5 h-4 w-4 rounded border flex items-center justify-center',
                                   isSelected
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-border hover:bg-muted'
+                                    ? 'border-primary bg-primary'
+                                    : 'border-muted-foreground'
                                 )}
                               >
-                                <div
-                                  className={cn(
-                                    'mt-0.5 h-4 w-4 rounded border flex items-center justify-center',
-                                    isSelected
-                                      ? 'border-primary bg-primary'
-                                      : 'border-muted-foreground'
+                                {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  {cap.type === 'skill_bundle' ? (
+                                    <Sparkles className="h-4 w-4 text-purple-400" />
+                                  ) : (
+                                    <Wrench className="h-4 w-4 text-blue-400" />
                                   )}
-                                >
-                                  {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium">{tool.name}</span>
-                                    <Badge variant="outline" className="text-xs">
-                                      {tool.category}
-                                    </Badge>
-                                  </div>
-                                  <p className="text-sm text-muted-foreground">{tool.description}</p>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent value="skills" className="mt-4">
-                        <p className="text-sm text-muted-foreground mb-4">
-                          Skills add specialized context and capabilities using progressive disclosure.
-                        </p>
-                        <div className="grid gap-2 max-h-[300px] overflow-y-auto pr-2">
-                          {skills.length === 0 ? (
-                            <div className="text-center py-8 text-muted-foreground">
-                              <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                              <p>No skills available</p>
-                              <Button
-                                variant="link"
-                                size="sm"
-                                onClick={() => navigate('/skills/new')}
-                                className="mt-2"
-                              >
-                                Create a skill
-                              </Button>
-                            </div>
-                          ) : (
-                            skills.map((skill) => {
-                              const isSelected = selectedSkills.includes(skill.id);
-                              return (
-                                <button
-                                  key={skill.id}
-                                  onClick={() => toggleSkill(skill.id)}
-                                  className={cn(
-                                    'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
-                                    isSelected
-                                      ? 'border-primary bg-primary/10'
-                                      : 'border-border hover:bg-muted'
-                                  )}
-                                >
-                                  <div
+                                  <span className="font-medium">{cap.name}</span>
+                                  <Badge variant="outline" className="text-xs">
+                                    {cap.category}
+                                  </Badge>
+                                  <Badge
+                                    variant="secondary"
                                     className={cn(
-                                      'mt-0.5 h-4 w-4 rounded border flex items-center justify-center',
-                                      isSelected
-                                        ? 'border-primary bg-primary'
-                                        : 'border-muted-foreground'
+                                      'text-xs',
+                                      cap.type === 'skill_bundle' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
                                     )}
                                   >
-                                    {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
-                                  </div>
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium">{skill.name}</span>
-                                      <Badge variant="outline" className="text-xs">
-                                        {skill.category}
-                                      </Badge>
-                                      <Badge variant="secondary" className="text-xs">
-                                        v{skill.version}
-                                      </Badge>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">{skill.description}</p>
-                                  </div>
-                                </button>
-                              );
-                            })
-                          )}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
+                                    {cap.type === 'skill_bundle' ? 'Skill' : 'Tool'}
+                                  </Badge>
+                                </div>
+                                <p className="text-sm text-muted-foreground">{cap.description}</p>
+                                {cap.tools_provided.length > 0 && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Provides: {cap.tools_provided.join(', ')}
+                                  </p>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </Collapsible>
 
@@ -1037,46 +967,29 @@ export function BuilderPage() {
                   </p>
                 </div>
 
-                {/* Tools Preview */}
+                {/* Capabilities Preview */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Tools ({selectedTools.length})
+                    Capabilities ({selectedCapabilities.length})
                   </p>
-                  {selectedTools.length > 0 ? (
+                  {selectedCapabilities.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
-                      {selectedTools.map((toolId) => {
-                        const tool = tools.find((t) => t.id === toolId);
+                      {selectedCapabilities.map((capId) => {
+                        const cap = capabilities.find((c) => c.id === capId);
                         return (
-                          <Badge key={toolId} variant="secondary" className="text-xs">
-                            {tool?.name || toolId}
+                          <Badge key={capId} variant="secondary" className="text-xs gap-1">
+                            {cap?.type === 'skill_bundle' ? (
+                              <Sparkles className="h-3 w-3" />
+                            ) : (
+                              <Wrench className="h-3 w-3" />
+                            )}
+                            {cap?.name || capId}
                           </Badge>
                         );
                       })}
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No tools selected yet...</p>
-                  )}
-                </div>
-
-                {/* Skills Preview */}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Skills ({selectedSkills.length})
-                  </p>
-                  {selectedSkills.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {selectedSkills.map((skillId) => {
-                        const skill = skills.find((s) => s.id === skillId);
-                        return (
-                          <Badge key={skillId} variant="secondary" className="text-xs gap-1">
-                            <Sparkles className="h-3 w-3" />
-                            {skill?.name || skillId}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No skills selected yet...</p>
+                    <p className="text-sm text-muted-foreground">No capabilities selected yet...</p>
                   )}
                 </div>
 
@@ -1090,44 +1003,42 @@ export function BuilderPage() {
                     </div>
                     <div className="h-6 w-px bg-border" />
 
-                    {/* Agent Node with Tools */}
+                    {/* Agent Node with Capabilities */}
                     <div className="flex items-center gap-3">
-                      {/* Tools on the left */}
-                      {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                      {/* Capabilities on the left */}
+                      {selectedCapabilities.length > 0 && (
                         <div className="flex flex-col gap-1 items-end">
-                          {selectedTools.slice(0, 3).map((toolId) => {
-                            const tool = tools.find((t) => t.id === toolId);
+                          {selectedCapabilities.slice(0, 5).map((capId) => {
+                            const cap = capabilities.find((c) => c.id === capId);
+                            const isSkill = cap?.type === 'skill_bundle';
                             return (
                               <div
-                                key={toolId}
+                                key={capId}
                                 className="flex items-center gap-1"
                               >
-                                <div className="px-2 py-1 bg-blue-500/20 border border-blue-500/50 rounded text-xs text-blue-400 flex items-center gap-1">
-                                  <Wrench className="h-3 w-3" />
-                                  {tool?.name?.split(' ')[0] || toolId}
+                                <div className={cn(
+                                  'px-2 py-1 border rounded text-xs flex items-center gap-1',
+                                  isSkill
+                                    ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
+                                    : 'bg-blue-500/20 border-blue-500/50 text-blue-400'
+                                )}>
+                                  {isSkill ? (
+                                    <Sparkles className="h-3 w-3" />
+                                  ) : (
+                                    <Wrench className="h-3 w-3" />
+                                  )}
+                                  {cap?.name?.split(' ')[0] || capId}
                                 </div>
-                                <div className="w-3 h-px bg-blue-500/50" />
+                                <div className={cn(
+                                  'w-3 h-px',
+                                  isSkill ? 'bg-purple-500/50' : 'bg-blue-500/50'
+                                )} />
                               </div>
                             );
                           })}
-                          {selectedSkills.slice(0, 2).map((skillId) => {
-                            const skill = skills.find((s) => s.id === skillId);
-                            return (
-                              <div
-                                key={skillId}
-                                className="flex items-center gap-1"
-                              >
-                                <div className="px-2 py-1 bg-purple-500/20 border border-purple-500/50 rounded text-xs text-purple-400 flex items-center gap-1">
-                                  <Sparkles className="h-3 w-3" />
-                                  {skill?.name?.split(' ')[0] || skillId}
-                                </div>
-                                <div className="w-3 h-px bg-purple-500/50" />
-                              </div>
-                            );
-                          })}
-                          {(selectedTools.length > 3 || selectedSkills.length > 2) && (
+                          {selectedCapabilities.length > 5 && (
                             <div className="text-xs text-muted-foreground">
-                              +{Math.max(0, selectedTools.length - 3) + Math.max(0, selectedSkills.length - 2)} more
+                              +{selectedCapabilities.length - 5} more
                             </div>
                           )}
                         </div>
@@ -1141,9 +1052,9 @@ export function BuilderPage() {
                         )}
                       >
                         {name || 'Agent'}
-                        {(selectedTools.length > 0 || selectedSkills.length > 0) && (
+                        {selectedCapabilities.length > 0 && (
                           <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center text-[10px] text-white font-bold">
-                            {selectedTools.length + selectedSkills.length}
+                            {selectedCapabilities.length}
                           </div>
                         )}
                       </div>
