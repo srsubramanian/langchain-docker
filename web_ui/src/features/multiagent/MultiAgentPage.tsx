@@ -23,9 +23,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { agentsApi } from '@/api';
+import { agentsApi, modelsApi } from '@/api';
 import { useSettingsStore } from '@/stores';
-import type { WorkflowInvokeResponse } from '@/types/api';
+import type { WorkflowInvokeResponse, ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
 
 const AGENT_PRESETS: Record<string, string[]> = {
@@ -152,7 +152,9 @@ export function MultiAgentPage() {
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
 
-  const { provider, agentPreset, setAgentPreset } = useSettingsStore();
+  const { provider, model, agentPreset, setAgentPreset, setProvider, setModel } = useSettingsStore();
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
@@ -218,6 +220,25 @@ export function MultiAgentPage() {
     };
   }, [selectedAgents, provider]);
 
+  // Fetch providers on mount (for single-agent mode)
+  useEffect(() => {
+    if (isSingleAgentMode) {
+      modelsApi.listProviders().then(setProviders).catch(console.error);
+    }
+  }, [isSingleAgentMode]);
+
+  // Fetch available models when provider changes (for single-agent mode)
+  useEffect(() => {
+    if (isSingleAgentMode && provider) {
+      modelsApi
+        .getProviderDetails(provider)
+        .then((details) => {
+          setAvailableModels(details.available_models);
+        })
+        .catch(console.error);
+    }
+  }, [isSingleAgentMode, provider]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || !workflowId) return;
@@ -251,26 +272,61 @@ export function MultiAgentPage() {
       <div className="flex h-[calc(100vh-3.5rem)] flex-col">
         {/* Header with agent info */}
         <div className="border-b bg-card px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate('/agents')}
-              title="Back to agents"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div
-              className={cn(
-                'flex h-10 w-10 items-center justify-center rounded-lg text-white font-semibold',
-                avatarColor
-              )}
-            >
-              {initials}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigate('/agents')}
+                title="Back to agents"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <div
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-lg text-white font-semibold',
+                  avatarColor
+                )}
+              >
+                {initials}
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold">{agentDisplayName}</h1>
+                <p className="text-sm text-muted-foreground">Chat with this agent</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-semibold">{agentDisplayName}</h1>
-              <p className="text-sm text-muted-foreground">Chat with this agent</p>
+            {/* Model/Provider selectors */}
+            <div className="flex items-center gap-2">
+              <Select value={provider} onValueChange={setProvider}>
+                <SelectTrigger className="h-8 w-[120px] text-xs">
+                  <SelectValue placeholder="Provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers
+                    .filter((p) => p.configured)
+                    .map((p) => (
+                      <SelectItem key={p.name} value={p.name}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={model || 'default'}
+                onValueChange={(v) => setModel(v === 'default' ? null : v)}
+              >
+                <SelectTrigger className="h-8 w-[180px] text-xs">
+                  <SelectValue placeholder="Model" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default</SelectItem>
+                  {availableModels.map((m) => (
+                    <SelectItem key={m.name} value={m.name}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>
