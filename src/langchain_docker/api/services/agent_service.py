@@ -13,6 +13,16 @@ from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.core.tracing import trace_session
 
+# Import middleware-based skills components
+from langchain_docker.skills.middleware import (
+    SkillRegistry as MiddlewareSkillRegistry,
+    SkillDefinition,
+    SkillMiddleware,
+    SkillAwareState,
+    create_load_skill_tool,
+    create_gated_tools_for_skill,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +167,7 @@ class AgentService:
 
         Args:
             model_service: Model service for LLM access
-            skill_registry: Skill registry for progressive disclosure skills
+            skill_registry: Skill registry for progressive disclosure skills (legacy)
             scheduler_service: Scheduler service for cron-based execution
         """
         self.model_service = model_service
@@ -166,11 +176,22 @@ class AgentService:
         self._direct_sessions: dict[str, dict] = {}  # For direct agent invocation (no supervisor)
         self._tool_registry = ToolRegistry()
 
-        # Import SkillRegistry here to avoid circular imports if not provided
+        # Import legacy SkillRegistry for backward compatibility
         if skill_registry is None:
             from langchain_docker.api.services.skill_registry import SkillRegistry
             skill_registry = SkillRegistry()
         self._skill_registry = skill_registry
+
+        # Initialize middleware-based skill registry
+        self._middleware_skill_registry = MiddlewareSkillRegistry()
+        self._setup_middleware_skills()
+
+        # Create skill middleware for agents
+        self._skill_middleware = SkillMiddleware(
+            registry=self._middleware_skill_registry,
+            description_format="list",
+            auto_refresh_skills=False,
+        )
 
         # Setup scheduler service
         if scheduler_service is None:
@@ -183,11 +204,69 @@ class AgentService:
         # Create dynamic agents from skill registry
         self._dynamic_agents = self._create_skill_based_agents()
 
+    def _setup_middleware_skills(self) -> None:
+        """Setup middleware-based skills by converting legacy skills.
+
+        This bridges the legacy SkillRegistry with the new middleware-based
+        SkillRegistry, creating SkillDefinition objects from existing skills.
+        """
+        # Get SQL skill from legacy registry
+        sql_skill = self._skill_registry.get_skill("write_sql")
+        if sql_skill:
+            self._middleware_skill_registry.register(SkillDefinition(
+                id="write_sql",
+                name="SQL Query Expert",
+                description="Write SQL queries against databases with schema awareness",
+                category="database",
+                core_content=sql_skill.load_core,  # Callable for lazy loading
+                detail_resources={"samples": lambda: sql_skill.load_details("samples")},
+                required_by_tools=["sql_query", "sql_list_tables", "sql_get_samples"],
+            ))
+
+        # Get Jira skill from legacy registry
+        jira_skill = self._skill_registry.get_skill("jira")
+        if jira_skill:
+            self._middleware_skill_registry.register(SkillDefinition(
+                id="jira",
+                name="Jira Project Management",
+                description="Query and manage Jira issues, projects, and sprints",
+                category="project_management",
+                core_content=jira_skill.load_core,  # Callable for lazy loading
+                detail_resources={"jql_reference": lambda: jira_skill.load_details("jql_reference")},
+                required_by_tools=[
+                    "jira_search", "jira_get_issue", "jira_list_projects",
+                    "jira_get_sprints", "jira_get_changelog"
+                ],
+            ))
+
+        # Get XLSX skill from legacy registry
+        xlsx_skill = self._skill_registry.get_skill("xlsx")
+        if xlsx_skill:
+            self._middleware_skill_registry.register(SkillDefinition(
+                id="xlsx",
+                name="Excel/XLSX Expert",
+                description="Create, read, and manipulate Excel spreadsheets",
+                category="data_processing",
+                core_content=xlsx_skill.load_core,
+                detail_resources={
+                    "examples": lambda: xlsx_skill.load_details("examples"),
+                    "formatting": lambda: xlsx_skill.load_details("formatting"),
+                },
+                required_by_tools=[],
+            ))
+
+        logger.info(f"Initialized middleware skills: {[s.id for s in self._middleware_skill_registry.list_skills()]}")
+
     def _create_skill_based_agents(self) -> dict:
         """Create agents from registered skills.
 
         Returns:
             Dictionary of skill-based agent configurations
+
+        Note:
+            This method creates agent configurations. When agents are actually
+            built (via _build_agent_from_custom or create_workflow), the
+            SkillMiddleware is attached to enable skill state tracking.
         """
         agents = {}
 
@@ -196,7 +275,10 @@ class AgentService:
         skill = self._skill_registry.get_skill("write_sql")
         if skill and isinstance(skill, SQLSkill):
             sql_skill: SQLSkill = skill  # Type hint for IDE
+
             # Create tool functions that use the skill
+            # Note: These are non-gated tools for backward compatibility
+            # When using middleware, gated tools are preferred
             def load_sql_skill() -> str:
                 """Load the SQL skill with database schema and guidelines."""
                 return sql_skill.load_core()
@@ -231,9 +313,57 @@ Guidelines:
 - Use sql_get_samples() to see sample data from tables
 - Write clean, readable SQL queries with explicit column names
 - Explain your queries and results in plain language""",
+                "use_middleware": True,  # Flag to enable middleware for this agent
+                "required_skill": "write_sql",  # Skill this agent is based on
             }
 
         return agents
+
+    def create_middleware_enabled_agent(
+        self,
+        agent_name: str,
+        llm,
+        tools: list,
+        system_prompt: str,
+        use_skills: bool = True,
+    ):
+        """Create an agent with SkillMiddleware enabled.
+
+        This method creates agents that:
+        1. Have skill descriptions automatically injected into system prompts
+        2. Track loaded skills in state (preventing duplicates)
+        3. Include load_skill and list_loaded_skills tools
+
+        Args:
+            agent_name: Name for the agent
+            llm: Language model to use
+            tools: List of tools for the agent
+            system_prompt: System prompt for the agent
+            use_skills: Whether to attach SkillMiddleware
+
+        Returns:
+            Compiled agent graph with middleware
+        """
+        if use_skills:
+            # Create agent with skill middleware
+            # Middleware tools (load_skill, list_loaded_skills) are automatically added
+            agent = create_agent(
+                model=llm,
+                tools=tools,
+                name=agent_name,
+                system_prompt=system_prompt,
+                middleware=[self._skill_middleware],
+            )
+        else:
+            # Create agent without middleware
+            agent = create_agent(
+                model=llm,
+                tools=tools,
+                name=agent_name,
+                system_prompt=system_prompt,
+            )
+
+        return agent
 
     def _get_all_builtin_agents(self) -> dict:
         """Get all builtin agents including dynamic skill-based ones.
@@ -569,12 +699,20 @@ Guidelines:
         safe_name = re.sub(r'_+', '_', safe_name)
         return safe_name.strip("_")
 
-    def _build_agent_from_custom(self, agent_id: str, llm) -> Any:
+    def _build_agent_from_custom(
+        self,
+        agent_id: str,
+        llm,
+        use_middleware: bool = False,
+    ) -> Any:
         """Build a LangChain agent from a custom agent definition.
 
         Args:
             agent_id: Custom agent ID
             llm: Language model to use
+            use_middleware: Whether to use SkillMiddleware for skill management.
+                If True, skills are managed via middleware (load_skill tool).
+                If False, skill content is directly added to system prompt.
 
         Returns:
             Compiled agent graph
@@ -595,30 +733,50 @@ Guidelines:
             )
             tools.append(tool)
 
-        # Build system prompt with skills (progressive disclosure Level 2)
+        # Build system prompt
         system_prompt = custom.system_prompt
-
-        if custom.skill_ids:
-            skill_contexts = []
-            for skill_id in custom.skill_ids:
-                skill = self._skill_registry.get_skill(skill_id)
-                if skill:
-                    # Load Level 2 content from the skill
-                    core_content = skill.load_core()
-                    skill_contexts.append(f"\n## {skill.name} Skill\n{core_content}")
-
-            if skill_contexts:
-                system_prompt = system_prompt + "\n\n# Equipped Skills\n" + "\n".join(skill_contexts)
 
         # Sanitize name for OpenAI compatibility
         safe_name = self._sanitize_agent_name(custom.name)
 
-        return create_agent(
-            model=llm,
-            tools=tools,
-            name=safe_name,
-            system_prompt=system_prompt,
-        )
+        if use_middleware and custom.skill_ids:
+            # Use middleware pattern: skills are loaded dynamically via load_skill tool
+            # The middleware will:
+            # 1. Inject skill descriptions into system prompt
+            # 2. Track loaded skills in state
+            # 3. Provide load_skill and list_loaded_skills tools
+
+            # Add hint about available skills to the prompt
+            skill_names = ", ".join(custom.skill_ids)
+            system_prompt += f"\n\n# Available Skills\nYou have access to the following skills: {skill_names}\nUse the load_skill tool to load a skill before using its domain tools."
+
+            return self.create_middleware_enabled_agent(
+                agent_name=safe_name,
+                llm=llm,
+                tools=tools,
+                system_prompt=system_prompt,
+                use_skills=True,
+            )
+        else:
+            # Legacy pattern: directly embed skill content in system prompt
+            if custom.skill_ids:
+                skill_contexts = []
+                for skill_id in custom.skill_ids:
+                    skill = self._skill_registry.get_skill(skill_id)
+                    if skill:
+                        # Load Level 2 content from the skill
+                        core_content = skill.load_core()
+                        skill_contexts.append(f"\n## {skill.name} Skill\n{core_content}")
+
+                if skill_contexts:
+                    system_prompt = system_prompt + "\n\n# Equipped Skills\n" + "\n".join(skill_contexts)
+
+            return create_agent(
+                model=llm,
+                tools=tools,
+                name=safe_name,
+                system_prompt=system_prompt,
+            )
 
     def invoke_agent_direct(
         self,
@@ -803,12 +961,26 @@ Guidelines:
             # Check built-in agents first (including skill-based ones)
             if agent_name in all_builtin:
                 config = all_builtin[agent_name]
-                agent = create_agent(
-                    model=llm,
-                    tools=config["tools"],
-                    name=config["name"],
-                    system_prompt=config["prompt"],
-                )
+                use_middleware = config.get("use_middleware", False)
+
+                if use_middleware:
+                    # Create agent with skill middleware for skill-based agents
+                    agent = self.create_middleware_enabled_agent(
+                        agent_name=config["name"],
+                        llm=llm,
+                        tools=config["tools"],
+                        system_prompt=config["prompt"],
+                        use_skills=True,
+                    )
+                else:
+                    # Create standard agent without middleware
+                    agent = create_agent(
+                        model=llm,
+                        tools=config["tools"],
+                        name=config["name"],
+                        system_prompt=config["prompt"],
+                    )
+
                 agents.append(agent)
                 agent_descriptions.append(
                     f"- {config['name']}: {config['prompt'][:50]}..."
