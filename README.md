@@ -19,7 +19,13 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Memory Management**: Intelligent conversation summarization to prevent context overflow
 - **CORS Support**: Ready for Chainlit and other frontend integrations
 
-### Memory Management (NEW!)
+### Redis Session Storage (NEW!)
+- **Persistent Sessions**: Sessions survive server restarts when Redis is configured
+- **Automatic TTL**: Sessions automatically expire after configurable time (default: 24 hours)
+- **Horizontal Scaling**: Share sessions across multiple API instances
+- **Backward Compatible**: Falls back to in-memory storage when Redis is not configured
+
+### Memory Management
 - **Automatic Summarization**: Conversations are automatically summarized when they exceed configurable thresholds
 - **Context Window Optimization**: Keep recent messages intact while summarizing older ones
 - **Configurable Thresholds**: Control when summarization triggers and how many recent messages to preserve
@@ -138,16 +144,17 @@ docker-compose down -v
 │  React Web UI   │   │  Chainlit UI    │   │  FastAPI API    │
 │  (Recommended)  │   │  (Legacy)       │◄──┤  Container      │
 │  Port: 8001     │◄──┤  Port: 8002     │   │  Port: 8000     │
-└─────────────────┘   └─────────────────┘   └─────────────────┘
+└─────────────────┘   └─────────────────┘   └────────┬────────┘
          │                    │                      │
-         └────────────────────┴──────────────────────┘
-                         Docker Network
-                              │
-                   ┌──────────▼──────────┐
-                   │   LLM Providers     │
-                   │  (OpenAI/Anthropic/ │
-                   │   Google/Bedrock)   │
-                   └─────────────────────┘
+         └────────────────────┴──────────────────────┤
+                         Docker Network              │
+              ┌──────────────────┬───────────────────┘
+              │                  │
+   ┌──────────▼──────────┐  ┌────▼────────────┐
+   │   LLM Providers     │  │     Redis       │
+   │  (OpenAI/Anthropic/ │  │   Port: 6379    │
+   │   Google/Bedrock)   │  │ (Session Store) │
+   └─────────────────────┘  └─────────────────┘
 ```
 
 ### Benefits of Docker
@@ -328,13 +335,19 @@ When using Docker Compose, the stack includes:
 │  Phoenix    │     │  FastAPI    │     │  React UI   │     │  Chainlit   │
 │  Port: 6006 │◄────│  Port: 8000 │◄────│  Port: 8001 │     │  Port: 8002 │
 │  (Tracing)  │     │  (Backend)  │     │ (Recommend) │     │  (Legacy)   │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-       │                    │                    │                  │
-       └────────────────────┴────────────────────┴──────────────────┘
+└─────────────┘     └──────┬──────┘     └─────────────┘     └─────────────┘
+       │                   │                    │                  │
+       │            ┌──────▼──────┐             │                  │
+       │            │    Redis    │             │                  │
+       │            │  Port: 6379 │             │                  │
+       │            │  (Sessions) │             │                  │
+       │            └─────────────┘             │                  │
+       └───────────────────┴────────────────────┴──────────────────┘
                               Docker Network
 ```
 
 Phoenix traces are automatically sent from the API backend and visualized in the Phoenix UI.
+Sessions are persisted to Redis for durability across restarts.
 
 ## Usage
 
@@ -764,6 +777,158 @@ Each response includes memory metadata for observability:
 - **Cost Optimization**: Reduce token usage in long conversations
 - **Maintain Context**: Important information is preserved in summaries
 - **Improved Performance**: Smaller context windows mean faster responses
+
+### Redis Session Storage
+
+Redis provides persistent session storage that survives server restarts. Without Redis, sessions are stored in-memory and lost when the server restarts.
+
+#### Starting Redis
+
+**Option 1: Docker (Recommended)**
+```bash
+# Start Redis container with persistence
+docker run -d \
+  --name langchain-redis \
+  -p 6379:6379 \
+  -v redis-data:/data \
+  redis:7-alpine \
+  redis-server --appendonly yes
+
+# Verify Redis is running
+docker exec langchain-redis redis-cli ping
+# Should return: PONG
+```
+
+**Option 2: Docker Compose (Automatic)**
+
+Redis is automatically started when using Docker Compose:
+```bash
+docker-compose up
+```
+
+#### Configuration
+
+Add to your `.env` file:
+```bash
+# Redis connection URL (optional - omit for in-memory storage)
+REDIS_URL=redis://localhost:6379/0
+
+# Session TTL in hours (default: 24)
+SESSION_TTL_HOURS=24
+```
+
+**Connection URL formats:**
+```bash
+# Local Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Redis with password
+REDIS_URL=redis://:mypassword@localhost:6379/0
+
+# Remote Redis
+REDIS_URL=redis://user:password@redis.example.com:6379/0
+
+# Docker Compose internal network
+REDIS_URL=redis://redis:6379/0
+```
+
+#### Redis CLI Commands
+
+```bash
+# Connect to Redis CLI
+docker exec -it langchain-redis redis-cli
+
+# List all session keys
+KEYS session:*
+
+# List all user session indexes
+KEYS user:*:sessions
+
+# View a specific session (JSON data)
+GET session:<session_id>
+
+# Check session TTL (seconds remaining)
+TTL session:<session_id>
+
+# Count total sessions
+DBSIZE
+
+# Delete a specific session
+DEL session:<session_id>
+
+# Clear all sessions (CAUTION!)
+FLUSHDB
+
+# Monitor real-time Redis commands
+MONITOR
+```
+
+#### Redis GUI (Optional)
+
+For a web-based UI to browse Redis data:
+
+```bash
+# Start redis-commander
+docker run -d \
+  --name redis-commander \
+  -p 8081:8081 \
+  --link langchain-redis:redis \
+  -e REDIS_HOSTS=local:redis:6379 \
+  rediscommander/redis-commander:latest
+```
+
+Access at: http://localhost:8081
+
+#### Session Data Structure
+
+Sessions are stored as JSON with the following structure:
+```json
+{
+  "session_id": "uuid",
+  "user_id": "alice",
+  "messages": [
+    {"type": "HumanMessage", "content": "Hello"},
+    {"type": "AIMessage", "content": "Hi there!"}
+  ],
+  "created_at": "2024-01-01T00:00:00",
+  "updated_at": "2024-01-01T00:01:00",
+  "session_type": "chat",
+  "conversation_summary": null,
+  "metadata": {}
+}
+```
+
+#### Testing Persistence
+
+```bash
+# 1. Start Redis
+docker run -d --name langchain-redis -p 6379:6379 redis:7-alpine
+
+# 2. Start API with Redis
+export REDIS_URL=redis://localhost:6379/0
+uv run langchain-docker serve
+
+# 3. Chat at http://localhost:3000/chat
+
+# 4. Check session in Redis
+docker exec langchain-redis redis-cli KEYS "session:*"
+
+# 5. Restart the API server (Ctrl+C, then start again)
+uv run langchain-docker serve
+
+# 6. Refresh browser - session persists!
+```
+
+#### Stopping Redis
+
+```bash
+# Stop and remove container
+docker stop langchain-redis && docker rm langchain-redis
+
+# Or keep data for next time
+docker stop langchain-redis
+docker start langchain-redis  # Resume later
+```
 
 ## React Web UI (Recommended)
 
