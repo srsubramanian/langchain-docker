@@ -210,19 +210,29 @@ export interface WorkflowCreateResponse {
 export interface WorkflowInvokeRequest {
   message: string;
   session_id?: string | null;
+  // Memory options for unified conversation management
+  enable_memory?: boolean;
+  memory_trigger_count?: number | null;
+  memory_keep_recent?: number | null;
 }
 
 export interface WorkflowInvokeResponse {
   workflow_id: string;
   response: string;
-  agents_used: string[];
-  session_id?: string | null;
+  agents: string[];
+  message_count: number;
+  session_id: string;
+  memory_metadata?: MemoryMetadata | null;
 }
 
 // Direct agent invocation (no supervisor) for human-in-the-loop
 export interface DirectInvokeRequest {
   message: string;
   session_id?: string | null;
+  // Memory options for unified conversation management
+  enable_memory?: boolean;
+  memory_trigger_count?: number | null;
+  memory_keep_recent?: number | null;
 }
 
 export interface DirectInvokeResponse {
@@ -230,6 +240,7 @@ export interface DirectInvokeResponse {
   session_id: string;
   response: string;
   message_count: number;
+  memory_metadata?: MemoryMetadata | null;
 }
 
 // Health types

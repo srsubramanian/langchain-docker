@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from langchain_docker.api.schemas.chat import MemoryMetadata
+
 
 # Schedule Schemas
 
@@ -232,7 +234,22 @@ class WorkflowInvokeRequest(BaseModel):
     message: str = Field(..., description="User message to process")
     session_id: Optional[str] = Field(
         None,
-        description="Session ID for tracing",
+        description="Session ID for persistence and conversation continuity",
+    )
+    # Memory options for unified conversation management
+    enable_memory: bool = Field(
+        True,
+        description="Enable memory management (summarization for long conversations)",
+    )
+    memory_trigger_count: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Override: Number of messages before triggering summarization",
+    )
+    memory_keep_recent: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Override: Number of recent messages to keep after summarization",
     )
 
 
@@ -243,6 +260,11 @@ class WorkflowInvokeResponse(BaseModel):
     agents: list[str] = Field(..., description="Agents that participated")
     response: str = Field(..., description="Final response from the workflow")
     message_count: int = Field(..., description="Number of messages in the conversation")
+    session_id: str = Field(..., description="Session ID for conversation persistence")
+    memory_metadata: Optional[MemoryMetadata] = Field(
+        None,
+        description="Metadata about memory management (summarization)",
+    )
 
 
 class WorkflowDeleteResponse(BaseModel):
@@ -263,6 +285,21 @@ class DirectInvokeRequest(BaseModel):
         None,
         description="Session ID for conversation continuity",
     )
+    # Memory options for unified conversation management
+    enable_memory: bool = Field(
+        True,
+        description="Enable memory management (summarization for long conversations)",
+    )
+    memory_trigger_count: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Override: Number of messages before triggering summarization",
+    )
+    memory_keep_recent: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Override: Number of recent messages to keep after summarization",
+    )
 
 
 class DirectInvokeResponse(BaseModel):
@@ -272,3 +309,7 @@ class DirectInvokeResponse(BaseModel):
     session_id: str = Field(..., description="Session ID for follow-up messages")
     response: str = Field(..., description="Agent response")
     message_count: int = Field(..., description="Number of messages in conversation")
+    memory_metadata: Optional[MemoryMetadata] = Field(
+        None,
+        description="Metadata about memory management (summarization)",
+    )

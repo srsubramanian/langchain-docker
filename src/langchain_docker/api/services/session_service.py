@@ -17,7 +17,13 @@ from langchain_docker.utils.errors import SessionNotFoundError
 
 @dataclass
 class Session:
-    """In-memory session data structure."""
+    """In-memory session data structure.
+
+    Supports multiple session types:
+    - "chat": Standard chat conversations (default)
+    - "workflow": Multi-agent workflow sessions
+    - "direct_agent": Direct single-agent sessions
+    """
 
     session_id: str
     user_id: str = "default"
@@ -28,6 +34,8 @@ class Session:
     conversation_summary: str | None = None
     summary_message_count: int = 0
     last_summarized_at: datetime | None = None
+    # Session type for unified memory across all flows
+    session_type: str = "chat"  # "chat" | "workflow" | "direct_agent"
 
 
 class SessionService:

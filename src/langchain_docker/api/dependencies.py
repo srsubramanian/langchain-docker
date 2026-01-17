@@ -139,12 +139,16 @@ _agent_service: AgentService | None = None
 
 def get_agent_service(
     model_service: ModelService = Depends(get_model_service),
+    session_service: SessionService = Depends(get_session_service),
+    memory_service: MemoryService = Depends(get_memory_service),
     skill_registry: SkillRegistry = Depends(get_skill_registry),
 ) -> AgentService:
     """Get agent service instance.
 
     Args:
         model_service: Model service (injected)
+        session_service: Session service for unified memory (injected)
+        memory_service: Memory service for summarization (injected)
         skill_registry: Skill registry (injected)
 
     Returns:
@@ -152,7 +156,12 @@ def get_agent_service(
     """
     global _agent_service
     if _agent_service is None:
-        _agent_service = AgentService(model_service, skill_registry)
+        _agent_service = AgentService(
+            model_service=model_service,
+            session_service=session_service,
+            memory_service=memory_service,
+            skill_registry=skill_registry,
+        )
     return _agent_service
 
 

@@ -221,23 +221,23 @@ def invoke_custom_agent_direct(
 
     Args:
         agent_id: Custom agent ID
-        request: Message to process
+        request: Message to process with memory options
 
     Returns:
-        Agent response with session ID for follow-up messages
+        Agent response with session ID and memory metadata
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     # Include user_id in session for conversation isolation
     session_id = request.session_id or f"{user_id}:direct:{agent_id}"
-    logger.info(f"[HITL Debug] Router - request.session_id: {request.session_id}, resolved session_id: {session_id}")
 
     try:
         result = agent_service.invoke_agent_direct(
             agent_id=agent_id,
             message=request.message,
             session_id=session_id,
+            user_id=user_id,
+            enable_memory=request.enable_memory,
+            memory_trigger_count=request.memory_trigger_count,
+            memory_keep_recent=request.memory_keep_recent,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -338,22 +338,27 @@ def invoke_workflow(
     """Invoke a multi-agent workflow.
 
     The supervisor will delegate the task to appropriate specialized agents.
+    Sessions are persisted and support memory summarization for long conversations.
 
     Args:
         workflow_id: ID of the workflow to invoke
-        request: Message to process
+        request: Message to process with memory options
 
     Returns:
-        Workflow response with agent outputs
+        Workflow response with session_id and memory metadata
     """
-    # Include user_id in session for tracing
-    session_id = request.session_id or f"{user_id}:{workflow_id}"
+    # Include user_id in session for persistence and tracing
+    session_id = request.session_id or f"{user_id}:workflow:{workflow_id}"
 
     try:
         result = agent_service.invoke_workflow(
             workflow_id=workflow_id,
             message=request.message,
             session_id=session_id,
+            user_id=user_id,
+            enable_memory=request.enable_memory,
+            memory_trigger_count=request.memory_trigger_count,
+            memory_keep_recent=request.memory_keep_recent,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

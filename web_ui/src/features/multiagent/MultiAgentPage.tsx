@@ -149,6 +149,7 @@ export function MultiAgentPage() {
 
   const [input, setInput] = useState('');
   const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null); // For session persistence
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<WorkflowInvokeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -191,6 +192,12 @@ export function MultiAgentPage() {
   useEffect(() => {
     let currentWorkflowId: string | null = null;
     let isCancelled = false;
+
+    // Clear conversation state when switching workflows/presets
+    setSessionId(null);
+    setMessages([]);
+    setResponse(null);
+    setError(null);
 
     if (selectedAgents.length > 0) {
       agentsApi
@@ -254,8 +261,10 @@ export function MultiAgentPage() {
     try {
       const result = await agentsApi.invokeWorkflow(workflowId, {
         message: userMessage,
+        session_id: sessionId, // Pass session ID for conversation continuity
       });
       setResponse(result);
+      setSessionId(result.session_id); // Store session ID for subsequent requests
       setMessages((prev) => [...prev, { role: 'assistant', content: result.response }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Workflow execution failed');
@@ -539,10 +548,10 @@ export function MultiAgentPage() {
           </Button>
         </form>
 
-        {response?.agents_used && response.agents_used.length > 0 && (
+        {response?.agents && response.agents.length > 0 && (
           <div className="mt-4">
             <p className="text-sm text-muted-foreground">
-              Agents used: {response.agents_used.join(', ')}
+              Agents used: {response.agents.join(', ')}
             </p>
           </div>
         )}

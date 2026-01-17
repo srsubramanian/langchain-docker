@@ -11,6 +11,7 @@ from langgraph_supervisor import create_supervisor
 
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
+from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.core.tracing import trace_session
 
 # Import middleware-based skills components
@@ -162,18 +163,29 @@ class AgentService:
     Supports both built-in agents and custom user-defined agents.
     """
 
-    def __init__(self, model_service: ModelService, skill_registry=None, scheduler_service=None):
+    def __init__(
+        self,
+        model_service: ModelService,
+        session_service: Optional[SessionService] = None,
+        memory_service=None,  # Type: MemoryService (optional to avoid circular import)
+        skill_registry=None,
+        scheduler_service=None,
+    ):
         """Initialize agent service.
 
         Args:
             model_service: Model service for LLM access
+            session_service: Session service for unified memory management
+            memory_service: Memory service for conversation summarization
             skill_registry: Skill registry for progressive disclosure skills (legacy)
             scheduler_service: Scheduler service for cron-based execution
         """
         self.model_service = model_service
+        self.session_service = session_service
+        self.memory_service = memory_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
-        self._direct_sessions: dict[str, dict] = {}  # For direct agent invocation (no supervisor)
+        self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
         self._tool_registry = ToolRegistry()
 
         # Import legacy SkillRegistry for backward compatibility
@@ -783,23 +795,33 @@ Guidelines:
         agent_id: str,
         message: str,
         session_id: Optional[str] = None,
+        user_id: str = "default",
         provider: str = "openai",
         model: Optional[str] = None,
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
     ) -> dict:
         """Invoke a custom agent directly without supervisor.
 
         This allows the agent to interact directly with the user for
         human-in-the-loop scenarios (e.g., asking for confirmation).
+        Uses SessionService for persistence and MemoryService for summarization
+        when available.
 
         Args:
             agent_id: Custom agent ID
             message: User message
             session_id: Session ID for conversation continuity
+            user_id: User ID for session scoping
             provider: Model provider
             model: Model name (optional)
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
 
         Returns:
-            Agent response with conversation state
+            Agent response with conversation state, session_id, and memory_metadata
 
         Raises:
             ValueError: If agent not found
@@ -809,100 +831,104 @@ Guidelines:
 
         custom = self._custom_agents[agent_id]
 
-        # Use session_id or create one based on agent_id
-        sess_key = session_id or f"direct-{agent_id}"
+        # Use session_id or create one based on agent_id and user_id
+        sess_key = session_id or f"{user_id}:direct:{agent_id}"
 
-        # Get or create session
+        # Get model - use agent's configured provider/model if available
+        agent_provider = custom.provider if hasattr(custom, 'provider') else provider
+        agent_model = custom.model if hasattr(custom, 'model') else model
+        memory_metadata = None
+
+        # Get or create compiled agent (cached in _direct_sessions for performance)
         if sess_key not in self._direct_sessions:
-            # Get model - use agent's configured provider/model if available
-            agent_provider = custom.provider if hasattr(custom, 'provider') else provider
-            agent_model = custom.model if hasattr(custom, 'model') else model
-
             llm = self.model_service.get_or_create(
                 provider=agent_provider,
                 model=agent_model,
                 temperature=custom.temperature if hasattr(custom, 'temperature') else 0.7,
             )
 
-            # Build the agent
             agent = self._build_agent_from_custom(agent_id, llm)
-            # create_agent returns a compiled graph, so only compile if needed
             compiled = agent.compile() if hasattr(agent, 'compile') else agent
 
             self._direct_sessions[sess_key] = {
                 "app": compiled,
                 "agent_id": agent_id,
-                "messages": [],
             }
 
-        session_data = self._direct_sessions[sess_key]
-        app = session_data["app"]
+        app = self._direct_sessions[sess_key]["app"]
 
-        # Get conversation history
-        history = session_data.get("messages", [])
-
-        # Debug: Log history before adding new message
-        logger.info(f"[HITL Debug] Session {sess_key} - History before new message: {len(history)} messages")
-        for i, msg in enumerate(history):
-            msg_type = type(msg).__name__
-            content_preview = str(msg.content)[:100] if hasattr(msg, 'content') else 'N/A'
-            logger.info(f"[HITL Debug]   History[{i}] {msg_type}: {content_preview}")
-
-        # Add user message
-        user_msg = HumanMessage(content=message)
-        history.append(user_msg)
-        logger.info(f"[HITL Debug] Added user message: {message[:100]}")
-
-        # Invoke agent directly
-        with trace_session(sess_key):
-            result = app.invoke(
-                {"messages": history},
-                config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+        # Use SessionService if available for unified memory
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_key,
+                user_id=user_id,
+                metadata={"agent_id": agent_id, "session_type": "direct_agent"},
             )
+            # Update session type if not already set
+            if session.session_type == "chat":
+                session.session_type = "direct_agent"
 
-        # Extract and store messages
-        messages = result.get("messages", [])
-        session_data["messages"] = messages
+            # Add user message to session
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
 
-        # Debug: Log all messages to trace the flow
-        logger.info(f"[HITL Debug] Direct invocation for {agent_id} - Total messages: {len(messages)}")
-        for i, msg in enumerate(messages):
-            msg_type = type(msg).__name__
-            content_preview = str(msg.content)[:200] if hasattr(msg, 'content') else 'N/A'
-            logger.info(f"[HITL Debug]   [{i}] {msg_type}: {content_preview}")
+            logger.debug(f"[Direct Agent] Session {sess_key} - {len(session.messages)} messages")
 
-        # Find last AI message with text content
-        response_content = ""
-        for msg in reversed(messages):
-            msg_type = type(msg).__name__
-            if msg_type not in ("AIMessage", "AIMessageChunk"):
-                continue
+            # Apply memory summarization if MemoryService is available
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, agent_provider, agent_model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
 
-            content = msg.content
-            text = ""
+            # Invoke agent with optimized context
+            with trace_session(sess_key):
+                result = app.invoke(
+                    {"messages": context_messages},
+                    config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+                )
 
-            if isinstance(content, str) and content.strip():
-                text = content
-            elif isinstance(content, list):
-                text = "".join(
-                    block if isinstance(block, str) else block.get("text", "")
-                    for block in content
-                    if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
-                ).strip()
+            # Extract response messages and update session
+            messages = result.get("messages", [])
+            session.messages = messages
+            session.updated_at = datetime.utcnow()
+        else:
+            # Fallback: Use legacy _direct_sessions storage
+            if "messages" not in self._direct_sessions[sess_key]:
+                self._direct_sessions[sess_key]["messages"] = []
 
-            if text:
-                response_content = text
-                logger.info(f"[HITL Debug] Selected response from {msg_type}: {text[:100]}...")
-                break
+            history = self._direct_sessions[sess_key]["messages"]
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+
+            logger.debug(f"[Direct Agent Legacy] Session {sess_key} - {len(history)} messages")
+
+            with trace_session(sess_key):
+                result = app.invoke(
+                    {"messages": history},
+                    config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+                )
+
+            messages = result.get("messages", [])
+            self._direct_sessions[sess_key]["messages"] = messages
+
+        # Extract response content
+        response_content = self._extract_response_content(messages)
 
         if not response_content:
-            logger.warning(f"[HITL Debug] No text content found in any AI message!")
+            logger.warning(f"[Direct Agent] No text content found in any AI message for {agent_id}")
 
         return {
             "agent_id": agent_id,
             "session_id": sess_key,
             "response": response_content,
             "message_count": len(messages),
+            "memory_metadata": memory_metadata,
         }
 
     def clear_direct_session(self, session_id: str) -> bool:
@@ -1030,18 +1056,28 @@ Guidelines:
         workflow_id: str,
         message: str,
         session_id: Optional[str] = None,
+        user_id: str = "default",
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
     ) -> dict:
         """Invoke a multi-agent workflow.
 
         Supports human-in-the-loop by preserving conversation history.
+        Uses SessionService for persistence and MemoryService for summarization
+        when available.
 
         Args:
             workflow_id: Workflow to invoke
             message: User message
-            session_id: Optional session ID for tracing
+            session_id: Optional session ID for persistence
+            user_id: User ID for session scoping
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
 
         Returns:
-            Workflow result with agent responses
+            Workflow result with agent responses, session_id, and memory_metadata
 
         Raises:
             ValueError: If workflow not found
@@ -1051,30 +1087,125 @@ Guidelines:
 
         workflow_data = self._workflows[workflow_id]
         app = workflow_data["app"]
+        provider = workflow_data.get("provider", "openai")
+        model = workflow_data.get("model")
 
-        # Get existing conversation history for human-in-the-loop support
-        history = workflow_data.get("messages", [])
+        # Determine session ID
+        sess_id = session_id or f"{user_id}:workflow:{workflow_id}"
+        memory_metadata = None
 
-        # Add new user message to history
-        user_msg = HumanMessage(content=message)
-        history.append(user_msg)
-
-        # Invoke with full conversation history
-        with trace_session(session_id or workflow_id):
-            result = app.invoke(
-                {"messages": history},
-                config={"metadata": {"session_id": session_id, "workflow_id": workflow_id}},
+        # Use SessionService if available for unified memory
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_id,
+                user_id=user_id,
+                metadata={"workflow_id": workflow_id, "session_type": "workflow"},
             )
+            # Update session type if not already set
+            if session.session_type == "chat":
+                session.session_type = "workflow"
 
-        # Extract response messages and update stored history
-        messages = result.get("messages", [])
-        workflow_data["messages"] = messages  # Store full conversation
+            # Add user message to session
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            # Apply memory summarization if MemoryService is available
+            if enable_memory and self.memory_service is not None:
+                # Create a minimal request object for MemoryService
+                memory_request = self._create_memory_request(
+                    message, provider, model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+
+            # Invoke with optimized context
+            with trace_session(sess_id):
+                result = app.invoke(
+                    {"messages": context_messages},
+                    config={"metadata": {"session_id": sess_id, "workflow_id": workflow_id}},
+                )
+
+            # Extract response messages and update session
+            messages = result.get("messages", [])
+            session.messages = messages
+            session.updated_at = datetime.utcnow()
+
+            # Also update legacy workflow storage for backward compatibility
+            workflow_data["messages"] = messages
+        else:
+            # Fallback: Use legacy workflow-based storage
+            history = workflow_data.get("messages", [])
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+
+            with trace_session(sess_id):
+                result = app.invoke(
+                    {"messages": history},
+                    config={"metadata": {"session_id": sess_id, "workflow_id": workflow_id}},
+                )
+
+            messages = result.get("messages", [])
+            workflow_data["messages"] = messages
 
         # Find the last AI message with actual text content
-        # (The last message might be a tool call without text)
+        response_content = self._extract_response_content(messages)
+
+        return {
+            "workflow_id": workflow_id,
+            "agents": workflow_data["agents"],
+            "response": response_content,
+            "message_count": len(messages),
+            "session_id": sess_id,
+            "memory_metadata": memory_metadata,
+        }
+
+    def _create_memory_request(
+        self,
+        message: str,
+        provider: str,
+        model: Optional[str],
+        enable_memory: bool,
+        memory_trigger_count: Optional[int],
+        memory_keep_recent: Optional[int],
+    ):
+        """Create a minimal request object compatible with MemoryService.
+
+        Args:
+            message: User message
+            provider: Model provider
+            model: Model name
+            enable_memory: Whether memory is enabled
+            memory_trigger_count: Trigger threshold override
+            memory_keep_recent: Keep recent override
+
+        Returns:
+            Object with attributes expected by MemoryService
+        """
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            message=message,
+            provider=provider,
+            model=model,
+            enable_memory=enable_memory,
+            memory_trigger_count=memory_trigger_count,
+            memory_keep_recent=memory_keep_recent,
+        )
+
+    def _extract_response_content(self, messages: list) -> str:
+        """Extract the last AI response content from messages.
+
+        Args:
+            messages: List of messages from workflow invocation
+
+        Returns:
+            Response text content
+        """
         response_content = ""
         for msg in reversed(messages):
-            # Skip non-AI messages (HumanMessage, ToolMessage, etc.)
             msg_type = type(msg).__name__
             if msg_type not in ("AIMessage", "AIMessageChunk"):
                 continue
@@ -1085,7 +1216,6 @@ Guidelines:
             if isinstance(content, str) and content.strip():
                 text = content
             elif isinstance(content, list):
-                # Join text parts from content blocks
                 text = "".join(
                     block if isinstance(block, str) else block.get("text", "")
                     for block in content
@@ -1096,12 +1226,7 @@ Guidelines:
                 response_content = text
                 break
 
-        return {
-            "workflow_id": workflow_id,
-            "agents": workflow_data["agents"],
-            "response": response_content,
-            "message_count": len(messages),
-        }
+        return response_content
 
     def delete_workflow(self, workflow_id: str) -> bool:
         """Delete a workflow.
