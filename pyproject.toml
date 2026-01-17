@@ -26,6 +26,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
     "python-dotenv>=1.2.1",
+    "redis>=5.0.0",
     "sqlalchemy>=2.0.0",
     "sse-starlette>=3.0.4",
     "uvicorn[standard]>=0.40.0",

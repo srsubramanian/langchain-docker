@@ -12,17 +12,22 @@ from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.api.services.skill_registry import SkillRegistry
-from langchain_docker.core.config import Config
+from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours
 
 
 @lru_cache
 def get_session_service() -> SessionService:
     """Get singleton session service instance.
 
+    Uses Redis for persistent storage if REDIS_URL is configured,
+    otherwise falls back to in-memory storage.
+
     Returns:
         SessionService instance
     """
-    return SessionService()
+    redis_url = get_redis_url()
+    ttl_hours = get_session_ttl_hours()
+    return SessionService(ttl_hours=ttl_hours, redis_url=redis_url)
 
 
 @lru_cache

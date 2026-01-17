@@ -1,4 +1,23 @@
 services:
+  # Redis for persistent session storage
+  redis:
+    image: redis:7-alpine
+    container_name: langchain-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - langchain-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   # Phoenix Tracing Server
   phoenix:
     image: arizephoenix/phoenix:latest
@@ -35,8 +54,13 @@ services:
       # TRACING_PROVIDER is set in .env (langsmith, phoenix, or none)
       # PHOENIX_ENDPOINT only used when TRACING_PROVIDER=phoenix
       - PHOENIX_ENDPOINT=http://phoenix:6006/v1/traces
+      # Redis for persistent session storage
+      - REDIS_URL=redis://redis:6379/0
+      - SESSION_TTL_HOURS=24
     command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
     depends_on:
+      redis:
+        condition: service_healthy
       phoenix:
         condition: service_healthy
     healthcheck:
@@ -69,5 +93,7 @@ networks:
     driver: bridge
 
 volumes:
+  redis-data:
+    driver: local
   phoenix-data:
     driver: local

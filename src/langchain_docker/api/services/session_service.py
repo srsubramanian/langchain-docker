@@ -41,23 +41,38 @@ class Session:
 class SessionService:
     """Service for managing conversation sessions.
 
-    Provides in-memory storage with TTL cleanup and thread-safe access.
+    Supports both in-memory storage and Redis-backed persistent storage.
+    When redis_url is provided, sessions persist across server restarts.
     """
 
-    def __init__(self, ttl_hours: int = 24):
+    def __init__(self, ttl_hours: int = 24, redis_url: str | None = None):
         """Initialize session service.
 
         Args:
             ttl_hours: Time-to-live for sessions in hours
+            redis_url: Redis URL for persistent storage (None = in-memory)
         """
-        self._sessions: OrderedDict[str, Session] = OrderedDict()
-        self._lock = threading.Lock()
-        self._ttl_seconds = ttl_hours * 3600
-        self._cleanup_thread: Optional[threading.Thread] = None
-        self._stop_cleanup = threading.Event()
+        self._ttl_hours = ttl_hours
+        self._redis_url = redis_url
 
-        # Start background cleanup thread
-        self._start_cleanup_thread()
+        if redis_url:
+            # Use Redis-backed storage
+            from langchain_docker.api.services.redis_session_store import (
+                RedisSessionStore,
+            )
+            self._store = RedisSessionStore(redis_url, ttl_hours)
+            self._using_redis = True
+        else:
+            # Use in-memory storage
+            self._sessions: OrderedDict[str, Session] = OrderedDict()
+            self._lock = threading.Lock()
+            self._ttl_seconds = ttl_hours * 3600
+            self._cleanup_thread: Optional[threading.Thread] = None
+            self._stop_cleanup = threading.Event()
+            self._using_redis = False
+
+            # Start background cleanup thread for in-memory storage
+            self._start_cleanup_thread()
 
     def _start_cleanup_thread(self) -> None:
         """Start background thread for session cleanup."""
@@ -92,6 +107,10 @@ class SessionService:
         Returns:
             Created session
         """
+        if self._using_redis:
+            return self._store.create(user_id, metadata)
+
+        # In-memory storage
         session = Session(
             session_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -115,6 +134,10 @@ class SessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
+        if self._using_redis:
+            return self._store.get(session_id)
+
+        # In-memory storage
         with self._lock:
             if session_id not in self._sessions:
                 raise SessionNotFoundError(session_id)
@@ -136,6 +159,10 @@ class SessionService:
         Returns:
             Existing or new session
         """
+        if self._using_redis:
+            return self._store.get_or_create(session_id, user_id, metadata)
+
+        # In-memory storage
         if session_id:
             try:
                 return self.get(session_id)
@@ -168,6 +195,10 @@ class SessionService:
         Returns:
             Tuple of (sessions list, total count)
         """
+        if self._using_redis:
+            return self._store.list(limit, offset, user_id)
+
+        # In-memory storage
         with self._lock:
             sessions = list(self._sessions.values())
             # Filter by user if specified
@@ -187,6 +218,10 @@ class SessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
+        if self._using_redis:
+            return self._store.delete(session_id)
+
+        # In-memory storage
         with self._lock:
             if session_id not in self._sessions:
                 raise SessionNotFoundError(session_id)
@@ -198,6 +233,10 @@ class SessionService:
         Returns:
             Number of sessions deleted
         """
+        if self._using_redis:
+            return self._store.clear()
+
+        # In-memory storage
         with self._lock:
             count = len(self._sessions)
             self._sessions.clear()
@@ -212,6 +251,10 @@ class SessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
+        if self._using_redis:
+            return self._store.update_timestamp(session_id)
+
+        # In-memory storage
         session = self.get(session_id)
         session.updated_at = datetime.utcnow()
 
@@ -255,8 +298,24 @@ class SessionService:
             metadata=session.metadata,
         )
 
+    def save(self, session: Session) -> None:
+        """Save session changes (required for Redis, no-op for in-memory).
+
+        For Redis storage, this persists changes to Redis.
+        For in-memory storage, changes are already reflected in the object.
+
+        Args:
+            session: Session to save
+        """
+        if self._using_redis:
+            self._store.save(session)
+        # In-memory storage: no-op, changes are already in the object
+
     def shutdown(self) -> None:
         """Shutdown the service and cleanup thread."""
-        self._stop_cleanup.set()
-        if self._cleanup_thread:
-            self._cleanup_thread.join(timeout=1)
+        if self._using_redis:
+            self._store.shutdown()
+        else:
+            self._stop_cleanup.set()
+            if self._cleanup_thread:
+                self._cleanup_thread.join(timeout=1)

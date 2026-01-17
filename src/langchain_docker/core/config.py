@@ -40,6 +40,8 @@ class Config:
     tracing_provider: str = "phoenix"
     database_url: str = "sqlite:///demo.db"
     sql_read_only: bool = True
+    redis_url: str | None = None
+    session_ttl_hours: int = 24
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -61,6 +63,8 @@ class Config:
             tracing_provider=os.getenv("TRACING_PROVIDER", "phoenix").lower(),
             database_url=os.getenv("DATABASE_URL", "sqlite:///demo.db"),
             sql_read_only=os.getenv("SQL_READ_ONLY", "true").lower() == "true",
+            redis_url=os.getenv("REDIS_URL") or None,
+            session_ttl_hours=int(os.getenv("SESSION_TTL_HOURS", "24")),
         )
 
 
@@ -274,3 +278,24 @@ def is_jira_configured() -> bool:
         True if URL and Bearer token are present
     """
     return bool(get_jira_url() and get_jira_bearer_token())
+
+
+# Redis Configuration Functions
+
+
+def get_redis_url() -> str | None:
+    """Get Redis URL from environment.
+
+    Returns:
+        Redis URL if configured, None otherwise (falls back to in-memory)
+    """
+    return os.getenv("REDIS_URL") or None
+
+
+def get_session_ttl_hours() -> int:
+    """Get session TTL in hours.
+
+    Returns:
+        Session TTL hours (defaults to 24)
+    """
+    return int(os.getenv("SESSION_TTL_HOURS", "24"))
