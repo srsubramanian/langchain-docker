@@ -13,7 +13,6 @@ from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.core.tracing import trace_session
-from langchain_docker.core.demo_data import WEATHER_DATA, MOCK_STOCK_PRICES
 
 # Import middleware-based skills components
 from langchain_docker.skills.middleware import (
@@ -55,76 +54,26 @@ class CustomAgent:
     temperature: float = 0.7  # Temperature for responses
 
 
-# Built-in tools for demo agents
-def add(a: float, b: float) -> float:
-    """Add two numbers together."""
-    return a + b
-
-
-def subtract(a: float, b: float) -> float:
-    """Subtract b from a."""
-    return a - b
-
-
-def multiply(a: float, b: float) -> float:
-    """Multiply two numbers together."""
-    return a * b
-
-
-def divide(a: float, b: float) -> float:
-    """Divide a by b. Returns error if b is zero."""
-    if b == 0:
-        return float("inf")
-    return a / b
-
-
-def get_current_weather(location: str) -> str:
-    """Get the current weather for a location (demo - returns mock data)."""
-    location_lower = location.lower()
-    for city, weather in WEATHER_DATA.items():
-        if city in location_lower:
-            return f"Weather in {location}: {weather}"
-    return f"Weather in {location}: Sunny, 70°F (21°C), clear skies (default)"
-
-
-def search_web(query: str) -> str:
-    """Search the web for information (demo - returns mock data)."""
-    # Mock search results for demo
-    return f"Search results for '{query}': This is a demo search result. In production, integrate with a real search API like Tavily, SerpAPI, or DuckDuckGo."
-
-
-def get_stock_price(symbol: str) -> str:
-    """Get the current stock price for a symbol (demo - returns mock data)."""
-    symbol_upper = symbol.upper()
-    if symbol_upper in MOCK_STOCK_PRICES:
-        return f"{symbol_upper}: ${MOCK_STOCK_PRICES[symbol_upper]:.2f}"
-    return f"{symbol_upper}: $100.00 (demo price)"
-
-
-# SQL tools will be created dynamically using SkillRegistry
-# See AgentService._create_sql_tools() for implementation
-
-
-# Agent configurations
+# Agent configurations - tools are referenced by ID and resolved via ToolRegistry
 BUILTIN_AGENTS = {
     "math_expert": {
         "name": "math_expert",
-        "tools": [add, subtract, multiply, divide],
+        "tool_ids": ["add", "subtract", "multiply", "divide"],
         "prompt": "You are a math expert. Use the provided tools to solve mathematical problems. Always show your work step by step.",
     },
     "weather_expert": {
         "name": "weather_expert",
-        "tools": [get_current_weather],
+        "tool_ids": ["get_weather"],
         "prompt": "You are a weather expert. Use the weather tool to get current conditions for any location.",
     },
     "research_expert": {
         "name": "research_expert",
-        "tools": [search_web],
+        "tool_ids": ["search_web"],
         "prompt": "You are a research expert with web search capabilities. Search for information to answer questions accurately.",
     },
     "finance_expert": {
         "name": "finance_expert",
-        "tools": [get_stock_price],
+        "tool_ids": ["get_stock_price"],
         "prompt": "You are a finance expert. Use the stock price tool to get current market data and provide financial insights.",
     },
     # sql_expert is created dynamically in AgentService using SkillRegistry
@@ -377,14 +326,19 @@ Guidelines:
             List of agent configurations
         """
         all_agents = self._get_all_builtin_agents()
-        return [
-            {
+        result = []
+        for config in all_agents.values():
+            # Handle both tool_ids (new style) and tools (dynamic agents)
+            if "tool_ids" in config:
+                tool_names = config["tool_ids"]
+            else:
+                tool_names = [t.__name__ for t in config["tools"]]
+            result.append({
                 "name": config["name"],
-                "tools": [t.__name__ for t in config["tools"]],
+                "tools": tool_names,
                 "description": config["prompt"][:100] + "...",
-            }
-            for config in all_agents.values()
-        ]
+            })
+        return result
 
     # Tool Registry Methods
 
@@ -974,12 +928,21 @@ Guidelines:
                 config = all_builtin[agent_name]
                 use_middleware = config.get("use_middleware", False)
 
+                # Get tools - from tool_ids (new style) or tools (dynamic agents)
+                if "tool_ids" in config:
+                    tools = [
+                        self._tool_registry.create_tool_instance(tid)
+                        for tid in config["tool_ids"]
+                    ]
+                else:
+                    tools = config["tools"]
+
                 if use_middleware:
                     # Create agent with skill middleware for skill-based agents
                     agent = self.create_middleware_enabled_agent(
                         agent_name=config["name"],
                         llm=llm,
-                        tools=config["tools"],
+                        tools=tools,
                         system_prompt=config["prompt"],
                         use_skills=True,
                     )
@@ -987,7 +950,7 @@ Guidelines:
                     # Create standard agent without middleware
                     agent = create_agent(
                         model=llm,
-                        tools=config["tools"],
+                        tools=tools,
                         name=config["name"],
                         system_prompt=config["prompt"],
                     )
