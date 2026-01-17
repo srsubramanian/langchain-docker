@@ -1129,6 +1129,17 @@ class SkillRegistry:
             for skill in self._skills.values()
         ]
 
+    def get_all_skills(self) -> list["Skill"]:
+        """Get all registered Skill objects.
+
+        This method returns the actual Skill instances, not dictionaries.
+        Useful for migration or when direct access to Skill methods is needed.
+
+        Returns:
+            List of Skill objects
+        """
+        return list(self._skills.values())
+
     def get_skill_summary(self) -> str:
         """Get a summary of available skills for agent prompts.
 

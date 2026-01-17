@@ -349,7 +349,7 @@ class SkillRegistry:
         }
 
         count = 0
-        for skill in legacy_registry.list_skills():
+        for skill in legacy_registry.get_all_skills():
             # Get metadata for this skill, or use defaults
             metadata = SKILL_METADATA.get(skill.id, {})
             required_tools = metadata.get("required_by_tools", [])
