@@ -94,6 +94,7 @@ class AgentService:
     """Service for creating and managing multi-agent workflows.
 
     Supports both built-in agents and custom user-defined agents.
+    Custom agents can be persisted to Redis for durability across restarts.
     """
 
     def __init__(
@@ -104,6 +105,7 @@ class AgentService:
         skill_registry=None,
         scheduler_service=None,
         checkpointer=None,  # Type: BaseCheckpointSaver (optional for agent persistence)
+        redis_url: Optional[str] = None,  # Redis URL for persistent agent storage
     ):
         """Initialize agent service.
 
@@ -114,6 +116,7 @@ class AgentService:
             skill_registry: Skill registry for progressive disclosure skills (legacy)
             scheduler_service: Scheduler service for cron-based execution
             checkpointer: LangGraph checkpointer for agent state persistence
+            redis_url: Redis URL for persistent custom agent storage (optional)
         """
         self.model_service = model_service
         self.session_service = session_service
@@ -123,6 +126,13 @@ class AgentService:
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
         self._tool_registry = ToolRegistry()
+
+        # Initialize Redis agent store if URL provided
+        self._agent_store = None
+        if redis_url:
+            from langchain_docker.api.services.redis_agent_store import RedisAgentStore
+            self._agent_store = RedisAgentStore(redis_url)
+            self._load_agents_from_redis()
 
         # Import legacy SkillRegistry for backward compatibility
         if skill_registry is None:
@@ -160,6 +170,47 @@ class AgentService:
         """
         count = self._middleware_skill_registry.load_from_legacy(self._skill_registry)
         logger.info(f"Initialized {count} middleware skills: {[s.id for s in self._middleware_skill_registry.list_skills()]}")
+
+    def _load_agents_from_redis(self) -> None:
+        """Load all custom agents from Redis into memory cache.
+
+        This is called on startup when Redis is configured to restore
+        agents from persistent storage.
+        """
+        if self._agent_store is None:
+            return
+
+        try:
+            agents = self._agent_store.list_all()
+            for agent in agents:
+                self._custom_agents[agent.id] = agent
+            logger.info(f"Loaded {len(agents)} custom agents from Redis")
+        except Exception as e:
+            logger.error(f"Failed to load agents from Redis: {e}")
+
+    def _save_agent_to_redis(self, agent: CustomAgent) -> None:
+        """Save a custom agent to Redis if store is configured.
+
+        Args:
+            agent: CustomAgent to persist
+        """
+        if self._agent_store is not None:
+            try:
+                self._agent_store.save(agent)
+            except Exception as e:
+                logger.error(f"Failed to save agent {agent.id} to Redis: {e}")
+
+    def _delete_agent_from_redis(self, agent_id: str) -> None:
+        """Delete a custom agent from Redis if store is configured.
+
+        Args:
+            agent_id: Agent ID to delete
+        """
+        if self._agent_store is not None:
+            try:
+                self._agent_store.delete(agent_id)
+            except Exception as e:
+                logger.error(f"Failed to delete agent {agent_id} from Redis: {e}")
 
     def _create_skill_based_agents(self) -> dict:
         """Create agents from registered skills.
@@ -405,6 +456,9 @@ Guidelines:
         )
         self._custom_agents[agent_id] = agent
 
+        # Persist to Redis if configured
+        self._save_agent_to_redis(agent)
+
         # Register schedule if provided
         if schedule:
             self._scheduler_service.add_schedule(
@@ -453,7 +507,10 @@ Guidelines:
             with trace_session(workflow_id):
                 result = compiled.invoke(
                     {"messages": [HumanMessage(content=trigger_prompt)]},
-                    config={"metadata": {"agent_id": agent_id, "scheduled": True}},
+                    config={
+                        "configurable": {"thread_id": workflow_id},
+                        "metadata": {"agent_id": agent_id, "scheduled": True},
+                    },
                 )
 
             # Log the result
@@ -586,6 +643,8 @@ Guidelines:
             # Remove any associated schedule
             self._scheduler_service.remove_schedule(agent_id)
             del self._custom_agents[agent_id]
+            # Delete from Redis if configured
+            self._delete_agent_from_redis(agent_id)
             logger.info(f"Deleted custom agent: {agent_id}")
             return True
         return False
@@ -791,7 +850,10 @@ Guidelines:
             with trace_session(sess_key):
                 result = app.invoke(
                     {"messages": context_messages},
-                    config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                    },
                 )
 
             # Extract response messages and update session
@@ -812,7 +874,10 @@ Guidelines:
             with trace_session(sess_key):
                 result = app.invoke(
                     {"messages": history},
-                    config={"metadata": {"session_id": sess_key, "agent_id": agent_id}},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                    },
                 )
 
             messages = result.get("messages", [])
@@ -1037,7 +1102,10 @@ Guidelines:
             with trace_session(sess_id):
                 result = app.invoke(
                     {"messages": context_messages},
-                    config={"metadata": {"session_id": sess_id, "workflow_id": workflow_id}},
+                    config={
+                        "configurable": {"thread_id": sess_id},
+                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id},
+                    },
                 )
 
             # Extract response messages and update session
@@ -1056,7 +1124,10 @@ Guidelines:
             with trace_session(sess_id):
                 result = app.invoke(
                     {"messages": history},
-                    config={"metadata": {"session_id": sess_id, "workflow_id": workflow_id}},
+                    config={
+                        "configurable": {"thread_id": sess_id},
+                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id},
+                    },
                 )
 
             messages = result.get("messages", [])

@@ -208,12 +208,14 @@ def get_agent_service(
     global _agent_service
     if _agent_service is None:
         checkpointer = get_checkpointer()
+        redis_url = get_redis_url()
         _agent_service = AgentService(
             model_service=model_service,
             session_service=session_service,
             memory_service=memory_service,
             skill_registry=skill_registry,
             checkpointer=checkpointer,
+            redis_url=redis_url,
         )
     return _agent_service
 
