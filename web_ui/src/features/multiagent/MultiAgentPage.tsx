@@ -27,6 +27,8 @@ import { agentsApi, modelsApi } from '@/api';
 import { useSettingsStore } from '@/stores';
 import type { WorkflowInvokeResponse, ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const AGENT_PRESETS: Record<string, string[]> = {
   all: ['math_expert', 'weather_expert', 'research_expert', 'finance_expert'],
@@ -379,7 +381,15 @@ export function MultiAgentPage() {
                           : 'bg-muted'
                       )}
                     >
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      {msg.role === 'assistant' ? (
+                        <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -483,7 +493,15 @@ export function MultiAgentPage() {
                       : 'bg-muted'
                   )}
                 >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {msg.role === 'assistant' ? (
+                    <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  )}
                 </div>
               </div>
             ))}
