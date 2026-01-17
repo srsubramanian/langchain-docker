@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from langchain_docker.core.demo_data import WEATHER_DATA, MOCK_STOCK_PRICES
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,19 +308,12 @@ class ToolRegistry:
 
     def _create_weather_tool(self, default_city: str = "San Francisco") -> Callable:
         """Create weather tool with configurable default city."""
-        weather_data = {
-            "san francisco": "Sunny, 68°F (20°C), light breeze",
-            "new york": "Cloudy, 55°F (13°C), chance of rain",
-            "london": "Rainy, 50°F (10°C), overcast",
-            "tokyo": "Clear, 72°F (22°C), humid",
-            "paris": "Partly cloudy, 62°F (17°C), pleasant",
-        }
 
         def get_current_weather(location: str = None) -> str:
             """Get the current weather for a location."""
             loc = location or default_city
             location_lower = loc.lower()
-            for city, weather in weather_data.items():
+            for city, weather in WEATHER_DATA.items():
                 if city in location_lower:
                     return f"Weather in {loc}: {weather}"
             return f"Weather in {loc}: Sunny, 70°F (21°C), clear skies (default)"
@@ -339,19 +334,12 @@ class ToolRegistry:
 
     def _create_stock_tool(self) -> Callable:
         """Create stock price tool."""
-        mock_prices = {
-            "AAPL": 178.50,
-            "GOOGL": 141.25,
-            "MSFT": 378.90,
-            "AMZN": 178.25,
-            "META": 505.75,
-        }
 
         def get_stock_price(symbol: str) -> str:
             """Get the current stock price for a symbol (demo - returns mock data)."""
             symbol_upper = symbol.upper()
-            if symbol_upper in mock_prices:
-                return f"{symbol_upper}: ${mock_prices[symbol_upper]:.2f}"
+            if symbol_upper in MOCK_STOCK_PRICES:
+                return f"{symbol_upper}: ${MOCK_STOCK_PRICES[symbol_upper]:.2f}"
             return f"{symbol_upper}: $100.00 (demo price)"
 
         return get_stock_price

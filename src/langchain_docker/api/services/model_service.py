@@ -8,7 +8,7 @@ from langchain.chat_models import BaseChatModel
 
 from langchain_docker.api.schemas.models import ModelInfo, ProviderDetails, ProviderInfo
 from langchain_docker.core.config import get_api_key
-from langchain_docker.core.models import get_supported_providers, init_model
+from langchain_docker.core.models import get_supported_providers, init_model, create_bedrock_client
 from langchain_docker.utils.errors import InvalidProviderError
 
 
@@ -72,22 +72,13 @@ class ModelService:
 
             # For Bedrock, use ChatBedrockConverse directly (handles ARNs better)
             if provider == "bedrock":
-                import boto3
                 from langchain_aws import ChatBedrockConverse
-                from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
-
-                # Create boto3 session and bedrock-runtime client with profile
-                boto_session = boto3.Session(
-                    region_name=get_bedrock_region(),
-                    profile_name=get_bedrock_profile(),
-                )
-                bedrock_client = boto_session.client("bedrock-runtime")
 
                 bedrock_kwargs = {
                     "model": model,
                     "provider": "anthropic",
                     "temperature": temperature,
-                    "client": bedrock_client,
+                    "client": create_bedrock_client(),
                 }
                 bedrock_kwargs.update(kwargs)
 

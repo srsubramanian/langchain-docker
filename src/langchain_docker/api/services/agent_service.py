@@ -13,6 +13,7 @@ from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.core.tracing import trace_session
+from langchain_docker.core.demo_data import WEATHER_DATA, MOCK_STOCK_PRICES
 
 # Import middleware-based skills components
 from langchain_docker.skills.middleware import (
@@ -79,16 +80,8 @@ def divide(a: float, b: float) -> float:
 
 def get_current_weather(location: str) -> str:
     """Get the current weather for a location (demo - returns mock data)."""
-    # Mock weather data for demo
-    weather_data = {
-        "san francisco": "Sunny, 68°F (20°C), light breeze",
-        "new york": "Cloudy, 55°F (13°C), chance of rain",
-        "london": "Rainy, 50°F (10°C), overcast",
-        "tokyo": "Clear, 72°F (22°C), humid",
-        "paris": "Partly cloudy, 62°F (17°C), pleasant",
-    }
     location_lower = location.lower()
-    for city, weather in weather_data.items():
+    for city, weather in WEATHER_DATA.items():
         if city in location_lower:
             return f"Weather in {location}: {weather}"
     return f"Weather in {location}: Sunny, 70°F (21°C), clear skies (default)"
@@ -102,17 +95,9 @@ def search_web(query: str) -> str:
 
 def get_stock_price(symbol: str) -> str:
     """Get the current stock price for a symbol (demo - returns mock data)."""
-    # Mock stock data for demo
-    mock_prices = {
-        "AAPL": 178.50,
-        "GOOGL": 141.25,
-        "MSFT": 378.90,
-        "AMZN": 178.25,
-        "META": 505.75,
-    }
     symbol_upper = symbol.upper()
-    if symbol_upper in mock_prices:
-        return f"{symbol_upper}: ${mock_prices[symbol_upper]:.2f}"
+    if symbol_upper in MOCK_STOCK_PRICES:
+        return f"{symbol_upper}: ${MOCK_STOCK_PRICES[symbol_upper]:.2f}"
     return f"{symbol_upper}: $100.00 (demo price)"
 
 

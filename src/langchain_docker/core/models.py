@@ -121,6 +121,26 @@ def get_google_model(
     return init_model("google", model, temperature, **kwargs)
 
 
+def create_bedrock_client():
+    """Create a boto3 bedrock-runtime client using configured credentials.
+
+    Returns:
+        boto3 bedrock-runtime client configured with region and profile
+
+    Note:
+        Uses get_bedrock_region() and get_bedrock_profile() from config
+        to determine AWS region and profile settings.
+    """
+    import boto3
+    from langchain_docker.core.config import get_bedrock_region, get_bedrock_profile
+
+    boto_session = boto3.Session(
+        region_name=get_bedrock_region(),
+        profile_name=get_bedrock_profile(),
+    )
+    return boto_session.client("bedrock-runtime")
+
+
 def get_bedrock_model(
     model: str | None = None,
     temperature: float = 0.0,
@@ -140,9 +160,8 @@ def get_bedrock_model(
         APIKeyMissingError: If AWS credentials are not configured
         ModelInitializationError: If model initialization fails
     """
-    import boto3
     from langchain_aws import ChatBedrockConverse
-    from langchain_docker.core.config import get_bedrock_models, get_bedrock_region, get_bedrock_profile
+    from langchain_docker.core.config import get_bedrock_models
 
     validate_api_key("bedrock")
 
@@ -151,19 +170,12 @@ def get_bedrock_model(
         available_models = get_bedrock_models()
         model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
-    # Create boto3 session and bedrock-runtime client with profile
-    boto_session = boto3.Session(
-        region_name=get_bedrock_region(),
-        profile_name=get_bedrock_profile(),
-    )
-    bedrock_client = boto_session.client("bedrock-runtime")
-
     # Build kwargs for ChatBedrockConverse
     bedrock_kwargs = {
         "model": model,
         "provider": "anthropic",
         "temperature": temperature,
-        "client": bedrock_client,
+        "client": create_bedrock_client(),
     }
 
     bedrock_kwargs.update(kwargs)

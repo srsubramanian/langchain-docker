@@ -8,6 +8,13 @@ from dotenv import load_dotenv
 
 from langchain_docker.utils.errors import APIKeyMissingError
 
+# Provider to environment variable mapping
+PROVIDER_KEY_MAP = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GOOGLE_API_KEY",
+}
+
 
 @dataclass
 class Config:
@@ -143,13 +150,7 @@ def validate_api_key(provider: str) -> str:
         return "AWS_CREDENTIALS_VALID"  # Not an actual key, just a flag
 
     # Existing logic for other providers
-    provider_key_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GOOGLE_API_KEY",
-    }
-
-    env_var = provider_key_map.get(provider.lower())
+    env_var = PROVIDER_KEY_MAP.get(provider.lower())
     if not env_var:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -174,13 +175,7 @@ def get_api_key(provider: str) -> str | None:
     if provider.lower() == "bedrock":
         return "AWS_CREDENTIALS_CONFIGURED"
 
-    provider_key_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GOOGLE_API_KEY",
-    }
-
-    env_var = provider_key_map.get(provider.lower())
+    env_var = PROVIDER_KEY_MAP.get(provider.lower())
     if not env_var:
         return None
 
