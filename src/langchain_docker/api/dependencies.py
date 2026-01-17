@@ -1,8 +1,11 @@
 """Dependency injection for FastAPI."""
 
+import logging
 from functools import lru_cache
 
 from fastapi import Depends, Header
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_docker.api.services.agent_service import AgentService
 from langchain_docker.api.services.chat_service import ChatService
@@ -13,6 +16,8 @@ from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.api.services.skill_registry import SkillRegistry
 from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -28,6 +33,47 @@ def get_session_service() -> SessionService:
     redis_url = get_redis_url()
     ttl_hours = get_session_ttl_hours()
     return SessionService(ttl_hours=ttl_hours, redis_url=redis_url)
+
+
+# Singleton for checkpointer
+_checkpointer: BaseCheckpointSaver | None = None
+
+
+def get_checkpointer() -> BaseCheckpointSaver:
+    """Get singleton checkpointer for LangGraph agent persistence.
+
+    Uses RedisSaver if REDIS_URL is configured for production persistence,
+    otherwise falls back to InMemorySaver for development/testing.
+
+    The checkpointer enables:
+    - Conversation persistence across agent invocations
+    - Skill loading state tracking via SkillMiddleware
+    - Human-in-the-loop workflows (future)
+
+    Returns:
+        BaseCheckpointSaver instance (RedisSaver or InMemorySaver)
+    """
+    global _checkpointer
+    if _checkpointer is not None:
+        return _checkpointer
+
+    redis_url = get_redis_url()
+    if redis_url:
+        try:
+            from langgraph.checkpoint.redis import RedisSaver
+
+            # Create RedisSaver directly with URL (from_conn_string is a context manager)
+            _checkpointer = RedisSaver(redis_url=redis_url)
+            _checkpointer.setup()
+            logger.info(f"LangGraph checkpointer using Redis: {redis_url}")
+        except Exception as e:
+            logger.warning(f"Failed to create RedisSaver, falling back to InMemorySaver: {e}")
+            _checkpointer = InMemorySaver()
+    else:
+        _checkpointer = InMemorySaver()
+        logger.info("LangGraph checkpointer using InMemorySaver (no Redis URL configured)")
+
+    return _checkpointer
 
 
 @lru_cache
@@ -161,11 +207,13 @@ def get_agent_service(
     """
     global _agent_service
     if _agent_service is None:
+        checkpointer = get_checkpointer()
         _agent_service = AgentService(
             model_service=model_service,
             session_service=session_service,
             memory_service=memory_service,
             skill_registry=skill_registry,
+            checkpointer=checkpointer,
         )
     return _agent_service
 

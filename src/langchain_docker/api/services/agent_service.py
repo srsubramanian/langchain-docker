@@ -103,6 +103,7 @@ class AgentService:
         memory_service=None,  # Type: MemoryService (optional to avoid circular import)
         skill_registry=None,
         scheduler_service=None,
+        checkpointer=None,  # Type: BaseCheckpointSaver (optional for agent persistence)
     ):
         """Initialize agent service.
 
@@ -112,10 +113,12 @@ class AgentService:
             memory_service: Memory service for conversation summarization
             skill_registry: Skill registry for progressive disclosure skills (legacy)
             scheduler_service: Scheduler service for cron-based execution
+            checkpointer: LangGraph checkpointer for agent state persistence
         """
         self.model_service = model_service
         self.session_service = session_service
         self.memory_service = memory_service
+        self._checkpointer = checkpointer
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
@@ -234,6 +237,7 @@ Guidelines:
         1. Have skill descriptions automatically injected into system prompts
         2. Track loaded skills in state (preventing duplicates)
         3. Include load_skill and list_loaded_skills tools
+        4. Persist state across invocations via checkpointer (if configured)
 
         Args:
             agent_name: Name for the agent
@@ -243,10 +247,10 @@ Guidelines:
             use_skills: Whether to attach SkillMiddleware
 
         Returns:
-            Compiled agent graph with middleware
+            Compiled agent graph with middleware and checkpointing
         """
         if use_skills:
-            # Create agent with skill middleware
+            # Create agent with skill middleware and optional checkpointing
             # Middleware tools (load_skill, list_loaded_skills) are automatically added
             agent = create_agent(
                 model=llm,
@@ -254,14 +258,16 @@ Guidelines:
                 name=agent_name,
                 system_prompt=system_prompt,
                 middleware=[self._skill_middleware],
+                checkpointer=self._checkpointer,
             )
         else:
-            # Create agent without middleware
+            # Create agent without middleware but with checkpointing
             agent = create_agent(
                 model=llm,
                 tools=tools,
                 name=agent_name,
                 system_prompt=system_prompt,
+                checkpointer=self._checkpointer,
             )
 
         return agent
@@ -682,6 +688,7 @@ Guidelines:
                 tools=tools,
                 name=safe_name,
                 system_prompt=system_prompt,
+                checkpointer=self._checkpointer,
             )
 
     def invoke_agent_direct(
@@ -902,12 +909,13 @@ Guidelines:
                         use_skills=True,
                     )
                 else:
-                    # Create standard agent without middleware
+                    # Create standard agent without middleware but with checkpointing
                     agent = create_agent(
                         model=llm,
                         tools=tools,
                         name=config["name"],
                         system_prompt=config["prompt"],
+                        checkpointer=self._checkpointer,
                     )
 
                 agents.append(agent)
