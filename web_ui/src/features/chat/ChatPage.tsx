@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { useSessionStore, useSettingsStore } from '@/stores';
 import { useMCPStore } from '@/stores/mcpStore';
 import { chatApi, sessionsApi, modelsApi } from '@/api';
-import type { ProviderInfo, ProviderDetails, ModelInfo, Message, SessionSummary, StreamEvent } from '@/types/api';
+import type { ProviderInfo, ModelInfo, Message, SessionSummary } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
 import { MCPServerToggle } from './MCPServerToggle';
@@ -36,7 +36,7 @@ export function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // MCP store
-  const { getEnabledServers, enabledServerIds, servers } = useMCPStore();
+  const { getEnabledServers, enabledServerIds } = useMCPStore();
 
   const {
     sessionId,
