@@ -25,7 +25,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { agentsApi, modelsApi } from '@/api';
 import { useSettingsStore } from '@/stores';
-import type { WorkflowInvokeResponse, ProviderInfo, ModelInfo } from '@/types/api';
+import type { WorkflowInvokeResponse, DirectInvokeResponse, ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -151,9 +151,10 @@ export function MultiAgentPage() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null); // For session persistence
   const [isLoading, setIsLoading] = useState(false);
-  const [response, setResponse] = useState<WorkflowInvokeResponse | null>(null);
+  const [response, setResponse] = useState<WorkflowInvokeResponse | DirectInvokeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [isReady, setIsReady] = useState(false); // Track if agent/workflow is ready
 
   const { provider, model, agentPreset, setAgentPreset, setProvider, setModel } = useSettingsStore();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -161,6 +162,9 @@ export function MultiAgentPage() {
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
+  const customAgentId = searchParams.get('id'); // Custom agent ID
+  const agentType = searchParams.get('type'); // 'custom' or undefined (built-in)
+  const isCustomAgent = agentType === 'custom' && !!customAgentId;
   const isSingleAgentMode = !!singleAgentName;
 
   // Determine which agents to use - memoize to prevent unnecessary effect reruns
@@ -188,7 +192,7 @@ export function MultiAgentPage() {
     }
   }, [agentPreset, selectedAgents, setNodes, setEdges, isSingleAgentMode]);
 
-  // Create workflow when agents change
+  // Create workflow when agents change (only for built-in agents)
   useEffect(() => {
     let currentWorkflowId: string | null = null;
     let isCancelled = false;
@@ -198,7 +202,15 @@ export function MultiAgentPage() {
     setMessages([]);
     setResponse(null);
     setError(null);
+    setIsReady(false);
 
+    // For custom agents, no workflow needed - just mark as ready
+    if (isCustomAgent) {
+      setIsReady(true);
+      return;
+    }
+
+    // For built-in agents, create a workflow
     if (selectedAgents.length > 0) {
       agentsApi
         .createWorkflow({
@@ -209,6 +221,7 @@ export function MultiAgentPage() {
           if (!isCancelled) {
             currentWorkflowId = result.workflow_id;
             setWorkflowId(result.workflow_id);
+            setIsReady(true);
           } else {
             // Effect was cancelled, clean up the workflow we just created
             agentsApi.deleteWorkflow(result.workflow_id).catch(console.error);
@@ -217,6 +230,7 @@ export function MultiAgentPage() {
         .catch((err) => {
           if (!isCancelled) {
             console.error('Failed to create workflow:', err);
+            setError('Failed to create workflow. Please try again.');
           }
         });
     }
@@ -227,7 +241,7 @@ export function MultiAgentPage() {
         agentsApi.deleteWorkflow(currentWorkflowId).catch(console.error);
       }
     };
-  }, [selectedAgents, provider]);
+  }, [selectedAgents, provider, isCustomAgent]);
 
   // Fetch providers on mount (for single-agent mode)
   useEffect(() => {
@@ -250,7 +264,7 @@ export function MultiAgentPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading || !workflowId) return;
+    if (!input.trim() || isLoading || !isReady) return;
 
     const userMessage = input.trim();
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
@@ -259,15 +273,27 @@ export function MultiAgentPage() {
     setError(null);
 
     try {
-      const result = await agentsApi.invokeWorkflow(workflowId, {
-        message: userMessage,
-        session_id: sessionId, // Pass session ID for conversation continuity
-      });
+      let result;
+      if (isCustomAgent && customAgentId) {
+        // Use direct invoke API for custom agents
+        result = await agentsApi.invokeAgentDirect(customAgentId, {
+          message: userMessage,
+          session_id: sessionId,
+        });
+      } else if (workflowId) {
+        // Use workflow API for built-in agents
+        result = await agentsApi.invokeWorkflow(workflowId, {
+          message: userMessage,
+          session_id: sessionId,
+        });
+      } else {
+        throw new Error('No agent or workflow available');
+      }
       setResponse(result);
-      setSessionId(result.session_id); // Store session ID for subsequent requests
+      setSessionId(result.session_id);
       setMessages((prev) => [...prev, { role: 'assistant', content: result.response }]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Workflow execution failed');
+      setError(err instanceof Error ? err.message : 'Agent execution failed');
     } finally {
       setIsLoading(false);
     }
@@ -433,10 +459,10 @@ export function MultiAgentPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={`Ask ${agentDisplayName}...`}
-                disabled={isLoading || !workflowId}
+                disabled={isLoading || !isReady}
                 className="flex-1"
               />
-              <Button type="submit" disabled={isLoading || !workflowId || !input.trim()}>
+              <Button type="submit" disabled={isLoading || !isReady || !input.trim()}>
                 {isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -537,9 +563,9 @@ export function MultiAgentPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask a question..."
-            disabled={isLoading || !workflowId}
+            disabled={isLoading || !isReady}
           />
-          <Button type="submit" disabled={isLoading || !workflowId || !input.trim()}>
+          <Button type="submit" disabled={isLoading || !isReady || !input.trim()}>
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -548,7 +574,7 @@ export function MultiAgentPage() {
           </Button>
         </form>
 
-        {response?.agents && response.agents.length > 0 && (
+        {response && 'agents' in response && response.agents.length > 0 && (
           <div className="mt-4">
             <p className="text-sm text-muted-foreground">
               Agents used: {response.agents.join(', ')}

@@ -179,9 +179,14 @@ export function AgentsPage() {
     }
   };
 
-  const handleChatWithAgent = (agentName: string) => {
+  const handleChatWithAgent = (agentName: string, agentId?: string, isCustom?: boolean) => {
     // Navigate to multi-agent page with this agent selected
-    navigate(`/multi-agent?agent=${agentName}`);
+    // For custom agents, pass the ID; for built-in, pass the name
+    if (isCustom && agentId) {
+      navigate(`/multi-agent?agent=${encodeURIComponent(agentName)}&id=${encodeURIComponent(agentId)}&type=custom`);
+    } else {
+      navigate(`/multi-agent?agent=${encodeURIComponent(agentName)}`);
+    }
   };
 
   const filteredBuiltin = builtinAgents.filter(
@@ -197,7 +202,7 @@ export function AgentsPage() {
   );
 
   const allAgents = [
-    ...filteredBuiltin.map((a) => ({ ...a, type: 'builtin' as const })),
+    ...filteredBuiltin.map((a) => ({ ...a, type: 'builtin' as const, id: undefined as string | undefined })),
     ...filteredCustom.map((a) => ({
       name: a.name,
       description: a.description || 'Custom agent',
@@ -295,7 +300,7 @@ export function AgentsPage() {
                       description={agent.description}
                       tools={agent.tools}
                       type={agent.type}
-                      onChat={() => handleChatWithAgent(agent.name)}
+                      onChat={() => handleChatWithAgent(agent.name, agent.id, agent.type === 'custom')}
                       onEdit={
                         agent.type === 'custom'
                           ? () => navigate(`/builder/${agent.id}`)
@@ -321,7 +326,7 @@ export function AgentsPage() {
                     description={agent.description}
                     tools={agent.tools}
                     type="builtin"
-                    onChat={() => handleChatWithAgent(agent.name)}
+                    onChat={() => handleChatWithAgent(agent.name, undefined, false)}
                   />
                 ))}
               </div>
@@ -352,7 +357,7 @@ export function AgentsPage() {
                       tools={agent.tools || []}
                       type="custom"
                       agentId={agent.id}
-                      onChat={() => handleChatWithAgent(agent.name)}
+                      onChat={() => handleChatWithAgent(agent.name, agent.id, true)}
                       onEdit={() => navigate(`/builder/${agent.id}`)}
                       onDelete={() => handleDelete(agent.id)}
                     />
