@@ -1279,6 +1279,139 @@ chainlit_app/            # Chainlit UI (legacy)
 └── utils.py             # API client for FastAPI
 ```
 
+## Troubleshooting
+
+### Common Issues
+
+#### Port Already in Use
+
+```bash
+# Error: address already in use (port 8000)
+# Find and kill the process
+lsof -ti:8000 | xargs kill -9
+
+# Or use a different port
+uv run langchain-docker serve --port 8001
+```
+
+#### Redis Connection Failed
+
+```bash
+# Error: Connection refused to redis://localhost:6379
+# Check if Redis is running
+docker ps | grep redis
+
+# Start Redis if not running
+docker run -d --name langchain-redis -p 6379:6379 redis:7-alpine redis-server --appendonly yes
+
+# Verify connection
+docker exec langchain-redis redis-cli ping
+# Should return: PONG
+```
+
+#### API Key Errors
+
+```bash
+# Error: APIKeyMissingError for provider 'openai'
+# 1. Check .env file exists and has key
+cat .env | grep OPENAI_API_KEY
+
+# 2. Ensure .env is loaded (add to .env)
+OPENAI_API_KEY=sk-...
+
+# 3. Restart the server after changing .env
+```
+
+#### MCP Server Not Starting
+
+```bash
+# Error: MCP server 'filesystem' failed to start
+# 1. Check if npx is available
+which npx
+
+# 2. Install Node.js if missing (macOS)
+brew install node
+
+# 3. Test MCP server manually
+npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+#### Docker Build Failures
+
+```bash
+# Error: failed to solve: npm ci failed
+# Clear Docker cache and rebuild
+docker-compose down -v
+docker system prune -f
+docker-compose up --build
+
+# If npm issues persist, check node version in Dockerfile
+```
+
+#### Sessions Not Persisting
+
+```bash
+# Sessions lost after restart?
+# 1. Check if REDIS_URL is set
+echo $REDIS_URL
+
+# 2. Verify Redis has data
+docker exec langchain-redis redis-cli KEYS "session:*"
+
+# 3. Check Redis is using persistent storage
+docker exec langchain-redis redis-cli CONFIG GET appendonly
+# Should return: appendonly yes
+```
+
+#### SSE Streaming Not Working
+
+```bash
+# Streaming hangs or doesn't show tokens?
+# 1. Check if using curl with -N flag (disable buffering)
+curl -N -X POST http://localhost:8000/api/v1/chat/stream ...
+
+# 2. In browsers, check for proxy buffering
+# nginx.conf should have:
+#   proxy_buffering off;
+#   X-Accel-Buffering: no;
+```
+
+#### Bedrock Authentication Errors
+
+```bash
+# Error: Unable to locate credentials
+# 1. Configure AWS CLI
+aws configure
+# Or use SSO
+aws sso login --profile your-profile
+
+# 2. Set profile in .env
+AWS_PROFILE=your-profile
+
+# 3. Verify access
+aws bedrock list-foundation-models --region us-east-1
+```
+
+### Debug Mode
+
+```bash
+# Enable verbose logging
+API_LOG_LEVEL=debug uv run langchain-docker serve
+
+# Enable Phoenix console export for trace debugging
+PHOENIX_CONSOLE_EXPORT=true uv run langchain-docker serve
+
+# Check Redis operations
+docker exec langchain-redis redis-cli MONITOR
+```
+
+### Getting Help
+
+- **API Docs**: http://localhost:8000/docs (interactive Swagger UI)
+- **Health Check**: http://localhost:8000/health
+- **Phoenix Traces**: http://localhost:6006 (if tracing enabled)
+- **Redis GUI**: `docker run -p 8081:8081 -e REDIS_HOSTS=local:host.docker.internal:6379 rediscommander/redis-commander`
+
 ## Development
 
 ```bash
