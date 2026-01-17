@@ -8,7 +8,7 @@ from langchain.chat_models import BaseChatModel
 
 from langchain_docker.api.schemas.models import ModelInfo, ProviderDetails, ProviderInfo
 from langchain_docker.core.config import get_api_key
-from langchain_docker.core.models import get_supported_providers, init_model, create_bedrock_client
+from langchain_docker.core.models import get_supported_providers, init_model, get_bedrock_model
 from langchain_docker.utils.errors import InvalidProviderError
 
 
@@ -70,19 +70,9 @@ class ModelService:
                 self._cache.move_to_end(cache_key)
                 return self._cache[cache_key]
 
-            # For Bedrock, use ChatBedrockConverse directly (handles ARNs better)
+            # For Bedrock, use shared helper from core.models
             if provider == "bedrock":
-                from langchain_aws import ChatBedrockConverse
-
-                bedrock_kwargs = {
-                    "model": model,
-                    "provider": "anthropic",
-                    "temperature": temperature,
-                    "client": create_bedrock_client(),
-                }
-                bedrock_kwargs.update(kwargs)
-
-                model_instance = ChatBedrockConverse(**bedrock_kwargs)
+                model_instance = get_bedrock_model(model, temperature, **kwargs)
             else:
                 # Create new model instance for other providers
                 model_instance = init_model(provider, model, temperature, **kwargs)
