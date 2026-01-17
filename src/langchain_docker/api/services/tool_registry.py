@@ -2,11 +2,21 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from langchain_docker.core.demo_data import WEATHER_DATA, MOCK_STOCK_PRICES
 
 logger = logging.getLogger(__name__)
+
+# Type aliases for tool function signatures
+MathToolFunc = Callable[[float, float], float]
+WeatherToolFunc = Callable[[str], str]
+SearchToolFunc = Callable[[str], str]
+StockToolFunc = Callable[[str], str]
+SQLToolFunc = Callable[[], str] | Callable[[str], str]
+JiraToolFunc = Callable[[], str] | Callable[[str], str] | Callable[[str, int], str]
+ToolFunc = MathToolFunc | WeatherToolFunc | SearchToolFunc | StockToolFunc | SQLToolFunc | JiraToolFunc
+ToolFactory = Callable[..., ToolFunc]
 
 
 @dataclass
@@ -27,9 +37,9 @@ class ToolTemplate:
     id: str
     name: str
     description: str
-    category: str  # "math", "weather", "research", "finance"
+    category: str  # "math", "weather", "research", "finance", "database", "project_management"
     parameters: list[ToolParameter] = field(default_factory=list)
-    factory: Callable[..., Callable] = None
+    factory: ToolFactory | None = None
 
 
 class ToolRegistry:
@@ -268,7 +278,7 @@ class ToolRegistry:
         )
 
     # Tool factory methods
-    def _create_add_tool(self) -> Callable:
+    def _create_add_tool(self) -> MathToolFunc:
         """Create add tool."""
 
         def add(a: float, b: float) -> float:
@@ -277,7 +287,7 @@ class ToolRegistry:
 
         return add
 
-    def _create_subtract_tool(self) -> Callable:
+    def _create_subtract_tool(self) -> MathToolFunc:
         """Create subtract tool."""
 
         def subtract(a: float, b: float) -> float:
@@ -286,7 +296,7 @@ class ToolRegistry:
 
         return subtract
 
-    def _create_multiply_tool(self) -> Callable:
+    def _create_multiply_tool(self) -> MathToolFunc:
         """Create multiply tool."""
 
         def multiply(a: float, b: float) -> float:
@@ -295,7 +305,7 @@ class ToolRegistry:
 
         return multiply
 
-    def _create_divide_tool(self) -> Callable:
+    def _create_divide_tool(self) -> MathToolFunc:
         """Create divide tool."""
 
         def divide(a: float, b: float) -> float:
@@ -306,10 +316,10 @@ class ToolRegistry:
 
         return divide
 
-    def _create_weather_tool(self, default_city: str = "San Francisco") -> Callable:
+    def _create_weather_tool(self, default_city: str = "San Francisco") -> WeatherToolFunc:
         """Create weather tool with configurable default city."""
 
-        def get_current_weather(location: str = None) -> str:
+        def get_current_weather(location: str | None = None) -> str:
             """Get the current weather for a location."""
             loc = location or default_city
             location_lower = loc.lower()
@@ -320,7 +330,7 @@ class ToolRegistry:
 
         return get_current_weather
 
-    def _create_search_tool(self) -> Callable:
+    def _create_search_tool(self) -> SearchToolFunc:
         """Create web search tool."""
 
         def search_web(query: str) -> str:
@@ -332,7 +342,7 @@ class ToolRegistry:
 
         return search_web
 
-    def _create_stock_tool(self) -> Callable:
+    def _create_stock_tool(self) -> StockToolFunc:
         """Create stock price tool."""
 
         def get_stock_price(symbol: str) -> str:
@@ -345,14 +355,14 @@ class ToolRegistry:
         return get_stock_price
 
     # SQL tool factory methods
-    def _get_sql_skill(self):
+    def _get_sql_skill(self) -> Any:
         """Get SQL skill from SkillRegistry (lazy loading)."""
         if not hasattr(self, "_skill_registry"):
             from langchain_docker.api.services.skill_registry import SkillRegistry
             self._skill_registry = SkillRegistry()
         return self._skill_registry.get_skill("write_sql")
 
-    def _create_load_sql_skill_tool(self) -> Callable:
+    def _create_load_sql_skill_tool(self) -> Callable[[], str]:
         """Create load SQL skill tool for progressive disclosure."""
         sql_skill = self._get_sql_skill()
 
@@ -370,7 +380,7 @@ class ToolRegistry:
 
         return load_sql_skill
 
-    def _create_sql_query_tool(self) -> Callable:
+    def _create_sql_query_tool(self) -> Callable[[str], str]:
         """Create SQL query execution tool."""
         sql_skill = self._get_sql_skill()
 
@@ -390,7 +400,7 @@ class ToolRegistry:
 
         return sql_query
 
-    def _create_sql_list_tables_tool(self) -> Callable:
+    def _create_sql_list_tables_tool(self) -> Callable[[], str]:
         """Create SQL list tables tool."""
         sql_skill = self._get_sql_skill()
 
@@ -404,7 +414,7 @@ class ToolRegistry:
 
         return sql_list_tables
 
-    def _create_sql_get_samples_tool(self) -> Callable:
+    def _create_sql_get_samples_tool(self) -> Callable[[], str]:
         """Create SQL get samples tool."""
         sql_skill = self._get_sql_skill()
 
@@ -422,7 +432,7 @@ class ToolRegistry:
         return sql_get_samples
 
     # Jira tool factory methods
-    def _get_jira_skill(self):
+    def _get_jira_skill(self) -> Any:
         """Get Jira skill from SkillRegistry (lazy loading)."""
         logger.info("[Jira Tool] _get_jira_skill() called")
         if not hasattr(self, "_skill_registry"):
@@ -436,7 +446,7 @@ class ToolRegistry:
             logger.info(f"[Jira Tool] Jira bearer_token configured: {bool(jira_skill.bearer_token)}")
         return jira_skill
 
-    def _create_load_jira_skill_tool(self) -> Callable:
+    def _create_load_jira_skill_tool(self) -> Callable[[], str]:
         """Create load Jira skill tool for progressive disclosure."""
         jira_skill = self._get_jira_skill()
 
@@ -454,7 +464,7 @@ class ToolRegistry:
 
         return load_jira_skill
 
-    def _create_jira_search_tool(self, max_results: int = 50) -> Callable:
+    def _create_jira_search_tool(self, max_results: int = 50) -> Callable[[str], str]:
         """Create Jira search tool with configurable max results."""
         jira_skill = self._get_jira_skill()
         logger.info(f"[Jira Tool] Creating jira_search tool with max_results={max_results}")
@@ -486,7 +496,7 @@ class ToolRegistry:
 
         return jira_search
 
-    def _create_jira_get_issue_tool(self) -> Callable:
+    def _create_jira_get_issue_tool(self) -> Callable[[str], str]:
         """Create Jira get issue tool."""
         jira_skill = self._get_jira_skill()
         logger.info("[Jira Tool] Creating jira_get_issue tool")
@@ -514,7 +524,7 @@ class ToolRegistry:
 
         return jira_get_issue
 
-    def _create_jira_list_projects_tool(self) -> Callable:
+    def _create_jira_list_projects_tool(self) -> Callable[[], str]:
         """Create Jira list projects tool."""
         jira_skill = self._get_jira_skill()
         logger.info("[Jira Tool] Creating jira_list_projects tool")
@@ -539,7 +549,7 @@ class ToolRegistry:
 
         return jira_list_projects
 
-    def _create_jira_get_sprints_tool(self) -> Callable:
+    def _create_jira_get_sprints_tool(self) -> Callable[[int, str], str]:
         """Create Jira get sprints tool."""
         jira_skill = self._get_jira_skill()
 
@@ -557,7 +567,7 @@ class ToolRegistry:
 
         return jira_get_sprints
 
-    def _create_jira_get_changelog_tool(self) -> Callable:
+    def _create_jira_get_changelog_tool(self) -> Callable[[str], str]:
         """Create Jira get changelog tool."""
         jira_skill = self._get_jira_skill()
 
@@ -574,7 +584,7 @@ class ToolRegistry:
 
         return jira_get_changelog
 
-    def _create_jira_jql_reference_tool(self) -> Callable:
+    def _create_jira_jql_reference_tool(self) -> Callable[[], str]:
         """Create Jira JQL reference tool."""
         jira_skill = self._get_jira_skill()
 
@@ -611,7 +621,7 @@ class ToolRegistry:
         """
         return list(self._tools.values())
 
-    def get_tool(self, tool_id: str) -> Optional[ToolTemplate]:
+    def get_tool(self, tool_id: str) -> ToolTemplate | None:
         """Get a tool template by ID.
 
         Args:
@@ -642,8 +652,8 @@ class ToolRegistry:
         return list(sorted(set(t.category for t in self._tools.values())))
 
     def create_tool_instance(
-        self, tool_id: str, config: Optional[dict] = None
-    ) -> Callable:
+        self, tool_id: str, config: dict[str, Any] | None = None
+    ) -> ToolFunc:
         """Create a tool instance with the given configuration.
 
         Args:
@@ -654,11 +664,14 @@ class ToolRegistry:
             Callable tool function
 
         Raises:
-            ValueError: If tool not found
+            ValueError: If tool not found or factory not configured
         """
         template = self.get_tool(tool_id)
         if not template:
             raise ValueError(f"Unknown tool: {tool_id}")
+
+        if not template.factory:
+            raise ValueError(f"Tool {tool_id} has no factory configured")
 
         if template.parameters and config:
             # Filter config to only include valid parameters

@@ -215,47 +215,31 @@ class MCPToolService:
                 model_name=f"{tool_name.title().replace('_', '')}Input"
             )
 
-            # Create async wrapper function
-            async def tool_func(
-                _server_id: str = server_id,
-                _tool_name: str = name,
-                **kwargs
-            ) -> str:
-                result = await self.call_tool(_server_id, _tool_name, kwargs)
+            # Create tool execution wrapper that captures server context
+            tool_service = self
+
+            async def async_tool_executor(**kwargs) -> str:
+                """Async executor for MCP tool calls."""
+                result = await tool_service.call_tool(server_id, name, kwargs)
                 return str(result)
 
-            # Create sync wrapper that schedules the async function
-            def sync_tool_func(
-                _server_id: str = server_id,
-                _tool_name: str = name,
-                **kwargs
-            ) -> str:
+            def sync_tool_executor(**kwargs) -> str:
+                """Sync executor that runs async call in thread pool."""
                 import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # We're already in an async context, create a task
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            future = pool.submit(
-                                asyncio.run,
-                                self.call_tool(_server_id, _tool_name, kwargs)
-                            )
-                            return str(future.result())
-                    else:
-                        return str(loop.run_until_complete(
-                            self.call_tool(_server_id, _tool_name, kwargs)
-                        ))
-                except RuntimeError:
-                    return str(asyncio.run(
-                        self.call_tool(_server_id, _tool_name, kwargs)
-                    ))
+                import concurrent.futures
 
-            return StructuredTool(
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        tool_service.call_tool(server_id, name, kwargs)
+                    )
+                    return str(future.result())
+
+            return StructuredTool.from_function(
+                func=sync_tool_executor,
+                coroutine=async_tool_executor,
                 name=tool_name,
                 description=f"[{server_id}] {description}",
-                func=sync_tool_func,
-                coroutine=tool_func,
                 args_schema=args_schema,
             )
 
