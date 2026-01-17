@@ -17,7 +17,6 @@ from langchain_docker.core.tracing import trace_session
 # Import middleware-based skills components
 from langchain_docker.skills.middleware import (
     SkillRegistry as MiddlewareSkillRegistry,
-    SkillDefinition,
     SkillMiddleware,
     SkillAwareState,
     create_load_skill_tool,
@@ -154,54 +153,10 @@ class AgentService:
         """Setup middleware-based skills by converting legacy skills.
 
         This bridges the legacy SkillRegistry with the new middleware-based
-        SkillRegistry, creating SkillDefinition objects from existing skills.
+        SkillRegistry using the load_from_legacy() method.
         """
-        # Get SQL skill from legacy registry
-        sql_skill = self._skill_registry.get_skill("write_sql")
-        if sql_skill:
-            self._middleware_skill_registry.register(SkillDefinition(
-                id="write_sql",
-                name="SQL Query Expert",
-                description="Write SQL queries against databases with schema awareness",
-                category="database",
-                core_content=sql_skill.load_core,  # Callable for lazy loading
-                detail_resources={"samples": lambda: sql_skill.load_details("samples")},
-                required_by_tools=["sql_query", "sql_list_tables", "sql_get_samples"],
-            ))
-
-        # Get Jira skill from legacy registry
-        jira_skill = self._skill_registry.get_skill("jira")
-        if jira_skill:
-            self._middleware_skill_registry.register(SkillDefinition(
-                id="jira",
-                name="Jira Project Management",
-                description="Query and manage Jira issues, projects, and sprints",
-                category="project_management",
-                core_content=jira_skill.load_core,  # Callable for lazy loading
-                detail_resources={"jql_reference": lambda: jira_skill.load_details("jql_reference")},
-                required_by_tools=[
-                    "jira_search", "jira_get_issue", "jira_list_projects",
-                    "jira_get_sprints", "jira_get_changelog"
-                ],
-            ))
-
-        # Get XLSX skill from legacy registry
-        xlsx_skill = self._skill_registry.get_skill("xlsx")
-        if xlsx_skill:
-            self._middleware_skill_registry.register(SkillDefinition(
-                id="xlsx",
-                name="Excel/XLSX Expert",
-                description="Create, read, and manipulate Excel spreadsheets",
-                category="data_processing",
-                core_content=xlsx_skill.load_core,
-                detail_resources={
-                    "examples": lambda: xlsx_skill.load_details("examples"),
-                    "formatting": lambda: xlsx_skill.load_details("formatting"),
-                },
-                required_by_tools=[],
-            ))
-
-        logger.info(f"Initialized middleware skills: {[s.id for s in self._middleware_skill_registry.list_skills()]}")
+        count = self._middleware_skill_registry.load_from_legacy(self._skill_registry)
+        logger.info(f"Initialized {count} middleware skills: {[s.id for s in self._middleware_skill_registry.list_skills()]}")
 
     def _create_skill_based_agents(self) -> dict:
         """Create agents from registered skills.
@@ -632,8 +587,8 @@ Guidelines:
     def _sanitize_agent_name(self, name: str) -> str:
         """Sanitize agent name for OpenAI compatibility.
 
-        OpenAI requires names to match pattern: ^[^\s<|\\/>]+
-        (no spaces or special characters like <, |, \, /, >)
+        OpenAI requires names to match pattern: ^[^\\s<|\\\\/>]+
+        (no spaces or special characters like <, |, \\, /, >)
 
         Args:
             name: Original agent name

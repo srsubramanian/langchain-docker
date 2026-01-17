@@ -329,18 +329,39 @@ class SkillRegistry:
         Returns:
             Number of skills loaded
         """
-        count = 0
-        for skill in legacy_registry.list_skills():
-            # Map legacy skill to new SkillDefinition
-            # Determine required tools based on skill category
-            required_tools = []
-            if skill.id == "write_sql":
-                required_tools = ["sql_query", "sql_list_tables", "sql_get_samples"]
-            elif skill.id == "jira":
-                required_tools = [
+        # Mapping of skill IDs to their required tools and detail resources
+        SKILL_METADATA: dict[str, dict] = {
+            "write_sql": {
+                "required_by_tools": ["sql_query", "sql_list_tables", "sql_get_samples"],
+                "detail_resources": ["samples"],
+            },
+            "jira": {
+                "required_by_tools": [
                     "jira_search", "jira_get_issue", "jira_list_projects",
                     "jira_get_sprints", "jira_get_changelog"
-                ]
+                ],
+                "detail_resources": ["jql_reference"],
+            },
+            "xlsx": {
+                "required_by_tools": [],
+                "detail_resources": ["examples", "formatting"],
+            },
+        }
+
+        count = 0
+        for skill in legacy_registry.list_skills():
+            # Get metadata for this skill, or use defaults
+            metadata = SKILL_METADATA.get(skill.id, {})
+            required_tools = metadata.get("required_by_tools", [])
+            resource_names = metadata.get("detail_resources", [])
+
+            # Build detail_resources dict with lazy loading lambdas
+            detail_resources = {}
+            for resource_name in resource_names:
+                # Capture skill and resource_name in closure
+                detail_resources[resource_name] = (
+                    lambda s=skill, r=resource_name: s.load_details(r)
+                )
 
             definition = SkillDefinition(
                 id=skill.id,
@@ -348,7 +369,7 @@ class SkillRegistry:
                 description=skill.description,
                 category=skill.category,
                 core_content=skill.load_core,  # Pass the method as callable
-                detail_resources={},  # Legacy handles this differently
+                detail_resources=detail_resources,
                 required_by_tools=required_tools,
                 version=getattr(skill, "version", "1.0.0"),
             )
