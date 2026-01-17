@@ -411,7 +411,7 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         self.register(
             Capability(
-                id="sql_database",
+                id="write_sql",
                 name="SQL Database",
                 description="Query and analyze database with SQL (progressive disclosure)",
                 category="database",
@@ -695,7 +695,7 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         self.register(
             Capability(
-                id="jira_integration",
+                id="jira",
                 name="Jira Integration",
                 description="Query Jira issues, sprints, projects (read-only)",
                 category="project_management",
@@ -794,7 +794,7 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         self.register(
             Capability(
-                id="xlsx_spreadsheet",
+                id="xlsx",
                 name="Spreadsheet Expert",
                 description="Create and edit XLSX spreadsheets with formulas, formatting, and charts",
                 category="data",

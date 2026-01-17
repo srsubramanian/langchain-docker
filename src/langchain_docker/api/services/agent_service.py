@@ -483,7 +483,7 @@ Guidelines:
         skill_ids = skill_ids or []
         for skill_id in skill_ids:
             if not self._skill_registry.get_skill(skill_id):
-                available = [s.id for s in self._skill_registry.list_skills()]
+                available = [s['id'] for s in self._skill_registry.list_skills()]
                 raise ValueError(f"Unknown skill: {skill_id}. Available: {available}")
 
         # Create schedule config if provided
