@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["MCP Servers"])
 
 
+def _to_mcp_tool_info(tools: list[dict]) -> list[MCPToolInfo]:
+    """Convert raw MCP tool dicts to MCPToolInfo schema objects."""
+    return [
+        MCPToolInfo(
+            name=t.get("name", "unknown"),
+            description=t.get("description", ""),
+            input_schema=t.get("inputSchema", {}),
+        )
+        for t in tools
+    ]
+
+
 @router.get("/servers", response_model=MCPServersResponse)
 async def list_servers(
     server_manager: MCPServerManager = Depends(get_mcp_server_manager),
@@ -189,14 +201,7 @@ async def start_server(
 
         # Discover tools
         mcp_tools = await tool_service.discover_tools(server_id)
-        tools = [
-            MCPToolInfo(
-                name=t.get("name", "unknown"),
-                description=t.get("description", ""),
-                input_schema=t.get("inputSchema", {}),
-            )
-            for t in mcp_tools
-        ]
+        tools = _to_mcp_tool_info(mcp_tools)
 
         return MCPServerStartResponse(
             id=server_id,
@@ -275,14 +280,7 @@ async def list_server_tools(
 
     try:
         mcp_tools = await tool_service.discover_tools(server_id)
-        tools = [
-            MCPToolInfo(
-                name=t.get("name", "unknown"),
-                description=t.get("description", ""),
-                input_schema=t.get("inputSchema", {}),
-            )
-            for t in mcp_tools
-        ]
+        tools = _to_mcp_tool_info(mcp_tools)
 
         return MCPToolsResponse(
             server_id=server_id,

@@ -25,6 +25,59 @@ from langchain_docker.api.services.skill_registry import SkillRegistry
 router = APIRouter(prefix="/skills", tags=["skills"])
 
 
+def _resources_to_dicts(resources: list | None) -> list[dict] | None:
+    """Convert SkillResource list to dicts for registry."""
+    if not resources:
+        return None
+    return [
+        {"name": r.name, "description": r.description, "content": r.content or ""}
+        for r in resources
+    ]
+
+
+def _scripts_to_dicts(scripts: list | None) -> list[dict] | None:
+    """Convert SkillScript list to dicts for registry."""
+    if not scripts:
+        return None
+    return [
+        {"name": s.name, "description": s.description, "language": s.language, "content": s.content or ""}
+        for s in scripts
+    ]
+
+
+def _skill_data_to_info(skill_data: dict) -> SkillInfo:
+    """Convert skill data dict to SkillInfo response."""
+    return SkillInfo(
+        id=skill_data["id"],
+        name=skill_data["name"],
+        description=skill_data["description"],
+        category=skill_data["category"],
+        version=skill_data.get("version", "1.0.0"),
+        author=skill_data.get("author"),
+        is_builtin=skill_data.get("is_builtin", False),
+        core_content=skill_data.get("core_content"),
+        resources=[
+            SkillResource(
+                name=r["name"],
+                description=r.get("description", ""),
+                content=r.get("content"),
+            )
+            for r in skill_data.get("resources", [])
+        ],
+        scripts=[
+            SkillScript(
+                name=s["name"],
+                description=s.get("description", ""),
+                language=s.get("language", "python"),
+                content=s.get("content"),
+            )
+            for s in skill_data.get("scripts", [])
+        ],
+        created_at=skill_data.get("created_at"),
+        updated_at=skill_data.get("updated_at"),
+    )
+
+
 @router.get("", response_model=SkillListResponse)
 async def list_skills(
     skill_registry: SkillRegistry = Depends(get_skill_registry),
@@ -62,35 +115,7 @@ async def get_skill(
     if not skill_data:
         raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
 
-    return SkillInfo(
-        id=skill_data["id"],
-        name=skill_data["name"],
-        description=skill_data["description"],
-        category=skill_data["category"],
-        version=skill_data.get("version", "1.0.0"),
-        author=skill_data.get("author"),
-        is_builtin=skill_data.get("is_builtin", False),
-        core_content=skill_data.get("core_content"),
-        resources=[
-            SkillResource(
-                name=r["name"],
-                description=r.get("description", ""),
-                content=r.get("content"),
-            )
-            for r in skill_data.get("resources", [])
-        ],
-        scripts=[
-            SkillScript(
-                name=s["name"],
-                description=s.get("description", ""),
-                language=s.get("language", "python"),
-                content=s.get("content"),
-            )
-            for s in skill_data.get("scripts", [])
-        ],
-        created_at=skill_data.get("created_at"),
-        updated_at=skill_data.get("updated_at"),
-    )
+    return _skill_data_to_info(skill_data)
 
 
 @router.post("", response_model=SkillCreateResponse)
@@ -106,30 +131,6 @@ async def create_skill(
     - Optional resources and scripts
     """
     try:
-        # Convert Pydantic models to dicts
-        resources = None
-        if request.resources:
-            resources = [
-                {
-                    "name": r.name,
-                    "description": r.description,
-                    "content": r.content or "",
-                }
-                for r in request.resources
-            ]
-
-        scripts = None
-        if request.scripts:
-            scripts = [
-                {
-                    "name": s.name,
-                    "description": s.description,
-                    "language": s.language,
-                    "content": s.content or "",
-                }
-                for s in request.scripts
-            ]
-
         skill = skill_registry.create_custom_skill(
             name=request.name,
             description=request.description,
@@ -138,8 +139,8 @@ async def create_skill(
             category=request.category,
             version=request.version,
             author=request.author,
-            resources=resources,
-            scripts=scripts,
+            resources=_resources_to_dicts(request.resources),
+            scripts=_scripts_to_dicts(request.scripts),
         )
 
         return SkillCreateResponse(
@@ -162,30 +163,6 @@ async def update_skill(
     Only custom skills can be updated. Built-in skills are read-only.
     """
     try:
-        # Convert Pydantic models to dicts if provided
-        resources = None
-        if request.resources is not None:
-            resources = [
-                {
-                    "name": r.name,
-                    "description": r.description,
-                    "content": r.content or "",
-                }
-                for r in request.resources
-            ]
-
-        scripts = None
-        if request.scripts is not None:
-            scripts = [
-                {
-                    "name": s.name,
-                    "description": s.description,
-                    "language": s.language,
-                    "content": s.content or "",
-                }
-                for s in request.scripts
-            ]
-
         skill = skill_registry.update_custom_skill(
             skill_id=skill_id,
             name=request.name,
@@ -194,40 +171,11 @@ async def update_skill(
             category=request.category,
             version=request.version,
             author=request.author,
-            resources=resources,
-            scripts=scripts,
+            resources=_resources_to_dicts(request.resources),
+            scripts=_scripts_to_dicts(request.scripts),
         )
 
-        skill_data = skill.to_dict()
-        return SkillInfo(
-            id=skill_data["id"],
-            name=skill_data["name"],
-            description=skill_data["description"],
-            category=skill_data["category"],
-            version=skill_data.get("version", "1.0.0"),
-            author=skill_data.get("author"),
-            is_builtin=False,
-            core_content=skill_data.get("core_content"),
-            resources=[
-                SkillResource(
-                    name=r["name"],
-                    description=r.get("description", ""),
-                    content=r.get("content"),
-                )
-                for r in skill_data.get("resources", [])
-            ],
-            scripts=[
-                SkillScript(
-                    name=s["name"],
-                    description=s.get("description", ""),
-                    language=s.get("language", "python"),
-                    content=s.get("content"),
-                )
-                for s in skill_data.get("scripts", [])
-            ],
-            created_at=skill_data.get("created_at"),
-            updated_at=skill_data.get("updated_at"),
-        )
+        return _skill_data_to_info(skill.to_dict())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

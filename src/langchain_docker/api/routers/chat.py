@@ -6,10 +6,6 @@ from sse_starlette.sse import EventSourceResponse
 from langchain_docker.api.dependencies import get_chat_service, get_current_user_id
 from langchain_docker.api.schemas.chat import ChatRequest, ChatResponse
 from langchain_docker.api.services.chat_service import ChatService
-from langchain_docker.core.config import load_environment
-
-# Load environment variables once at module import
-load_environment()
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
