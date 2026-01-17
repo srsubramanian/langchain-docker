@@ -1,8 +1,8 @@
-"""LangChain Docker - Foundational Models Examples
+"""LangChain Docker - Multi-provider LLM API Server
 
-A comprehensive demonstration of LangChain foundational models
-with examples for basic invocation, model customization, multiple
-providers, agents, and streaming.
+A comprehensive LangChain demonstration with multi-provider LLM support.
+Features include basic model invocation, agents, streaming, MCP server
+integration, and skills with progressive disclosure.
 """
 
 __version__ = "0.1.0"
@@ -11,19 +11,12 @@ __version__ = "0.1.0"
 from langchain_docker.core.config import Config, load_environment, validate_api_key
 from langchain_docker.core.models import (
     get_anthropic_model,
+    get_bedrock_model,
     get_google_model,
     get_openai_model,
     get_supported_providers,
     init_model,
-)
-
-# Import example modules for library usage
-from langchain_docker.examples import (
-    agent_basics,
-    basic_invocation,
-    model_customization,
-    multi_provider,
-    streaming,
+    create_bedrock_client,
 )
 
 # Import CLI entry point
@@ -38,11 +31,8 @@ __all__ = [
     "get_openai_model",
     "get_anthropic_model",
     "get_google_model",
+    "get_bedrock_model",
     "get_supported_providers",
-    "basic_invocation",
-    "model_customization",
-    "multi_provider",
-    "agent_basics",
-    "streaming",
+    "create_bedrock_client",
     "main",
 ]
