@@ -43,6 +43,7 @@ src/langchain_docker/
 │   │   ├── chat.py           # Chat streaming endpoints
 │   │   ├── sessions.py       # Session CRUD
 │   │   ├── agents.py         # Custom agent CRUD, workflow invocation
+│   │   ├── approvals.py      # HITL approval endpoints
 │   │   ├── mcp.py            # MCP server management
 │   │   ├── skills.py         # Skills API
 │   │   └── models.py         # Provider/model endpoints
@@ -50,17 +51,19 @@ src/langchain_docker/
 │   ├── services/
 │   │   ├── agent_service.py      # Multi-agent orchestration (LangGraph)
 │   │   ├── agent_serializer.py   # Agent serialization for Redis
+│   │   ├── approval_service.py   # HITL approval request management
+│   │   ├── hitl_tool_wrapper.py  # Tool wrapper for HITL approval
 │   │   ├── redis_agent_store.py  # Redis-backed agent storage
 │   │   ├── session_service.py    # Session storage (Redis or in-memory)
 │   │   ├── redis_session_store.py # Redis session backend
 │   │   ├── session_serializer.py  # Message serialization
-│   │   ├── chat_service.py       # Chat orchestration with MCP tools
+│   │   ├── chat_service.py       # Chat orchestration with MCP tools + HITL
 │   │   ├── mcp_server_manager.py # MCP subprocess lifecycle
 │   │   ├── mcp_tool_service.py   # MCP tool discovery/execution
 │   │   ├── skill_registry.py     # Skills: built-in + custom, editable via API
 │   │   ├── redis_skill_store.py  # Redis-backed skill versioning
 │   │   ├── versioned_skill.py    # Skill version dataclasses
-│   │   ├── tool_registry.py      # Tool templates for agents
+│   │   ├── tool_registry.py      # Tool templates for agents (with HITL support)
 │   │   ├── memory_service.py     # Conversation summarization
 │   │   ├── model_service.py      # Model LRU cache
 │   │   └── scheduler_service.py  # APScheduler for agent scheduling
@@ -110,7 +113,7 @@ web_ui/                         # React Web UI
 
 ## Key Features
 
-### 1. Redis Persistence (4 layers)
+### 1. Redis Persistence (5 layers)
 
 | Layer | Store | Purpose |
 |-------|-------|---------|
@@ -118,6 +121,7 @@ web_ui/                         # React Web UI
 | Custom Agents | `RedisAgentStore` | Agent configs with schedules |
 | Checkpoints | `RedisSaver` | LangGraph state persistence |
 | Skills | `RedisSkillStore` | Skill versions, custom content, usage metrics |
+| Approvals | `ApprovalService` | HITL approval requests (pending, resolved) |
 
 All fall back to in-memory when `REDIS_URL` not set. Skills versioning requires Redis.
 
@@ -232,11 +236,70 @@ schedule = ScheduleConfig(
 
 Custom servers stored in: `~/.langchain-docker/custom_mcp_servers.json`
 
+### 8. Human-in-the-Loop (HITL) Tool Approval
+
+Tools can be configured to require human approval before execution. This is useful for dangerous operations like database writes, file deletions, or external API calls.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      HITL APPROVAL FLOW                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Agent calls HITL-enabled tool (e.g., sql_execute)           │
+│     ↓                                                            │
+│  2. Backend creates ApprovalRequest, emits SSE event            │
+│     ↓                                                            │
+│  3. React UI shows ApprovalCard inline in chat                  │
+│     ↓                                                            │
+│  4. User clicks Approve or Reject                               │
+│     ↓                                                            │
+│  5. Backend updates approval status                             │
+│     ↓                                                            │
+│  6. Agent receives result (approved → execute, rejected → skip) │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Configuring HITL on a tool:**
+```python
+from langchain_docker.api.services.hitl_tool_wrapper import HITLConfig
+
+ToolTemplate(
+    id="sql_execute",
+    name="SQL Execute (Write)",
+    description="Execute INSERT, UPDATE, DELETE statements",
+    category="database",
+    factory=lambda: self._create_sql_execute_tool(),
+    requires_approval=HITLConfig(
+        enabled=True,
+        message="This will modify the database. Review before approving.",
+        show_args=True,          # Show tool arguments in approval UI
+        timeout_seconds=300,     # Auto-reject after 5 minutes
+        require_reason_on_reject=False,
+    ),
+)
+```
+
+**Key components:**
+- `ApprovalService` - Manages approval requests (Redis or in-memory)
+- `HITLConfig` - Configuration for approval behavior
+- `ApprovalCard` - React component for inline approval UI
+- SSE event `approval_request` - Sent when approval is needed
+
+**API endpoints:**
+- `GET /api/v1/approvals/pending?session_id=...` - List pending approvals
+- `GET /api/v1/approvals/{id}` - Get approval details
+- `POST /api/v1/approvals/{id}/approve` - Approve action
+- `POST /api/v1/approvals/{id}/reject` - Reject action (with optional reason)
+- `POST /api/v1/approvals/{id}/cancel` - Cancel pending approval
+
+**Built-in HITL tool:** `sql_execute` - Allows INSERT/UPDATE/DELETE with approval.
+
 ## API Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/v1/chat/stream` | SSE streaming with tool events |
+| `POST /api/v1/chat/stream` | SSE streaming with tool/approval events |
 | `GET/POST/DELETE /api/v1/sessions` | Session CRUD |
 | `GET/POST/DELETE /api/v1/agents` | Custom agent CRUD |
 | `POST /api/v1/agents/{id}/invoke` | Invoke agent |
@@ -247,6 +310,9 @@ Custom servers stored in: `~/.langchain-docker/custom_mcp_servers.json`
 | `PUT /api/v1/skills/{id}` | Update skill (built-in or custom) |
 | `POST /api/v1/skills/{id}/reset` | Reset built-in skill to file defaults |
 | `GET /api/v1/skills/{id}/versions` | List skill version history |
+| `GET /api/v1/approvals/pending` | List pending HITL approvals for session |
+| `POST /api/v1/approvals/{id}/approve` | Approve pending action |
+| `POST /api/v1/approvals/{id}/reject` | Reject pending action |
 | `GET /api/v1/models/providers` | List LLM providers |
 
 ## Environment Variables
@@ -388,10 +454,12 @@ KEYS checkpoint:*   # LangGraph state
 |------|------|---------|
 | `skill_registry.py` | 75KB | Skills system: built-in + custom, versioning, Redis persistence |
 | `agent_service.py` | 46KB | LangGraph orchestration, scheduling |
-| `tool_registry.py` | 24KB | Tool templates, factories |
+| `tool_registry.py` | 26KB | Tool templates, factories, HITL config support |
 | `mcp_server_manager.py` | 22KB | MCP subprocess management |
 | `redis_skill_store.py` | 15KB | Redis-backed skill versioning and metrics |
 | `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
+| `approval_service.py` | 12KB | HITL approval request management |
+| `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL events |
 
 ## What Was Removed
 

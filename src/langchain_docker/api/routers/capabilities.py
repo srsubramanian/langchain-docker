@@ -13,6 +13,7 @@ from langchain_docker.api.schemas.capabilities import (
     CapabilityListResponse,
     CapabilityLoadResponse,
     CapabilityParameter,
+    HITLToolConfig,
 )
 from langchain_docker.api.services.capability_registry import CapabilityRegistry
 
@@ -21,6 +22,20 @@ router = APIRouter(prefix="/capabilities", tags=["capabilities"])
 
 def _capability_to_info(cap) -> CapabilityInfo:
     """Convert Capability object to CapabilityInfo response."""
+    # Convert HITL configs if present
+    hitl_configs = None
+    if cap.hitl_configs:
+        hitl_configs = {
+            tool_name: HITLToolConfig(
+                enabled=config.enabled,
+                message=config.message,
+                show_args=config.show_args,
+                timeout_seconds=config.timeout_seconds,
+                require_reason_on_reject=config.require_reason_on_reject,
+            )
+            for tool_name, config in cap.hitl_configs.items()
+        }
+
     return CapabilityInfo(
         id=cap.id,
         name=cap.name,
@@ -38,6 +53,7 @@ def _capability_to_info(cap) -> CapabilityInfo:
             )
             for p in cap.parameters
         ],
+        hitl_configs=hitl_configs,
     )
 
 

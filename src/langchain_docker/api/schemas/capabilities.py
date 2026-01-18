@@ -18,6 +18,16 @@ class CapabilityParameter(BaseModel):
     required: bool = Field(False, description="Whether parameter is required")
 
 
+class HITLToolConfig(BaseModel):
+    """HITL configuration for a tool that requires human approval."""
+
+    enabled: bool = Field(True, description="Whether HITL is enabled for this tool")
+    message: str = Field(..., description="Message shown when requesting approval")
+    show_args: bool = Field(True, description="Whether to show tool arguments in approval UI")
+    timeout_seconds: int = Field(300, description="Auto-reject after this many seconds")
+    require_reason_on_reject: bool = Field(False, description="Whether rejection requires a reason")
+
+
 class CapabilityInfo(BaseModel):
     """Full capability information."""
 
@@ -35,6 +45,10 @@ class CapabilityInfo(BaseModel):
     parameters: list[CapabilityParameter] = Field(
         default_factory=list,
         description="Configurable parameters",
+    )
+    hitl_configs: Optional[dict[str, HITLToolConfig]] = Field(
+        None,
+        description="HITL configurations for tools that require human approval (tool_name -> config)",
     )
 
 

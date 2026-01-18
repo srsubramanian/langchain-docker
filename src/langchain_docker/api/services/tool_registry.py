@@ -2,8 +2,9 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
+from langchain_docker.api.services.hitl_tool_wrapper import HITLConfig
 from langchain_docker.core.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,17 @@ class ToolParameter:
 
 @dataclass
 class ToolTemplate:
-    """Tool template with metadata and configuration options."""
+    """Tool template with metadata and configuration options.
+
+    Attributes:
+        id: Unique identifier for the tool
+        name: Human-readable name
+        description: Tool description shown to agents
+        category: Tool category for grouping
+        parameters: Configurable parameters
+        factory: Function that creates the actual tool
+        requires_approval: Optional HITL configuration for tools requiring human approval
+    """
 
     id: str
     name: str
@@ -36,6 +47,7 @@ class ToolTemplate:
     category: str  # "math", "weather", "research", "finance", "database", "project_management"
     parameters: list[ToolParameter] = field(default_factory=list)
     factory: ToolFactory | None = None
+    requires_approval: Optional[HITLConfig] = None
 
 
 class ToolRegistry:
@@ -95,6 +107,24 @@ class ToolRegistry:
                 category="database",
                 parameters=[],
                 factory=lambda: self._create_sql_get_samples_tool(),
+            )
+        )
+
+        # SQL write tool - requires HITL approval
+        self.register(
+            ToolTemplate(
+                id="sql_execute",
+                name="SQL Execute (Write)",
+                description="Execute INSERT, UPDATE, or DELETE SQL statements. Requires human approval before execution.",
+                category="database",
+                parameters=[],
+                factory=lambda: self._create_sql_execute_tool(),
+                requires_approval=HITLConfig(
+                    enabled=True,
+                    message="This will modify the database. Please review the SQL statement before approving.",
+                    show_args=True,
+                    timeout_seconds=300,
+                ),
             )
         )
 
@@ -270,6 +300,42 @@ class ToolRegistry:
             return sql_skill.load_details("samples")
 
         return sql_get_samples
+
+    def _create_sql_execute_tool(self) -> Callable[[str], str]:
+        """Create SQL execute tool for write operations.
+
+        This tool allows INSERT, UPDATE, and DELETE operations
+        but is configured to require HITL approval.
+        """
+        sql_skill = self._get_sql_skill()
+
+        def sql_execute(query: str) -> str:
+            """Execute a SQL write statement (INSERT, UPDATE, DELETE).
+
+            WARNING: This tool modifies data. Requires human approval.
+
+            Args:
+                query: The SQL statement to execute (INSERT, UPDATE, DELETE)
+
+            Returns:
+                Execution result or error message
+            """
+            # Validate that it's a write operation
+            query_upper = query.strip().upper()
+            if query_upper.startswith("SELECT"):
+                return "Error: Use sql_query for SELECT statements. This tool is for write operations only."
+
+            if not any(
+                query_upper.startswith(op)
+                for op in ["INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"]
+            ):
+                return "Error: Only INSERT, UPDATE, DELETE, CREATE, DROP, ALTER statements are allowed."
+
+            # Execute the write query
+            # Note: The HITL wrapper will intercept this before execution
+            return sql_skill.execute_query(query, read_only=False)
+
+        return sql_execute
 
     # Jira tool factory methods
     def _get_jira_skill(self) -> Any:

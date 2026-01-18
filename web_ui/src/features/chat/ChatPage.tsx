@@ -10,7 +10,8 @@ import type { Message, SessionSummary } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
 import { MCPServerToggle } from './MCPServerToggle';
-import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import { ApprovalCard, ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import type { ApprovalRequestEvent } from '@/components/chat';
 import { useImageUpload } from '@/hooks/useImageUpload';
 
 export function ChatPage() {
@@ -21,6 +22,7 @@ export function ChatPage() {
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Use the shared image upload hook
@@ -183,6 +185,22 @@ export function ChatPage() {
           setToolActivity({ name: event.tool_name || 'Unknown', status: 'done' });
           // Clear after a short delay
           setTimeout(() => setToolActivity(null), 1500);
+        } else if (event.event === 'approval_request') {
+          // HITL approval required
+          const approvalRequest: ApprovalRequestEvent = {
+            approval_id: event.approval_id,
+            tool_name: event.tool_name,
+            tool_id: event.tool_id,
+            message: event.message,
+            tool_args: event.tool_args,
+            expires_at: event.expires_at,
+            config: event.config || {
+              show_args: true,
+              timeout_seconds: 300,
+              require_reason_on_reject: false,
+            },
+          };
+          setPendingApprovals((prev) => [...prev, approvalRequest]);
         } else if (event.event === 'done') {
           if (event.message) {
             addMessage(event.message);
@@ -325,6 +343,22 @@ export function ChatPage() {
                   </div>
                 </div>
               )}
+
+              {/* Pending Approval Requests */}
+              {pendingApprovals.map((approval) => (
+                <div key={approval.approval_id} className="flex justify-center">
+                  <ApprovalCard
+                    request={approval}
+                    onResolved={(status) => {
+                      // Remove from pending list when resolved
+                      setPendingApprovals((prev) =>
+                        prev.filter((a) => a.approval_id !== approval.approval_id)
+                      );
+                    }}
+                    className="max-w-[80%]"
+                  />
+                </div>
+              ))}
             </div>
           </ScrollArea>
 

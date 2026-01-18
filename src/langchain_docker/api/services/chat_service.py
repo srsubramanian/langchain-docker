@@ -2,11 +2,12 @@
 
 import json
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from langchain_docker.api.schemas.chat import ChatRequest, ChatResponse, MessageSchema
+from langchain_docker.api.services.approval_service import ApprovalService, ApprovalConfig
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.model_service import ModelService
@@ -20,6 +21,7 @@ class ChatService:
     """Service for orchestrating chat interactions.
 
     Coordinates between session management, memory management, and model invocation.
+    Supports Human-in-the-Loop (HITL) approval for tools that require it.
     """
 
     def __init__(
@@ -28,6 +30,7 @@ class ChatService:
         model_service: ModelService,
         memory_service: MemoryService,
         mcp_tool_service: MCPToolService | None = None,
+        approval_service: ApprovalService | None = None,
     ):
         """Initialize chat service.
 
@@ -36,11 +39,44 @@ class ChatService:
             model_service: Model caching service
             memory_service: Memory management service
             mcp_tool_service: Optional MCP tool service for tool integration
+            approval_service: Optional approval service for HITL tools
         """
         self.session_service = session_service
         self.model_service = model_service
         self.memory_service = memory_service
         self.mcp_tool_service = mcp_tool_service
+        self.approval_service = approval_service
+        # Map of tool names to their HITL configs
+        self._hitl_tools: dict[str, ApprovalConfig] = {}
+
+    def register_hitl_tool(self, tool_name: str, config: ApprovalConfig) -> None:
+        """Register a tool that requires HITL approval.
+
+        Args:
+            tool_name: Name of the tool
+            config: Approval configuration for the tool
+        """
+        self._hitl_tools[tool_name] = config
+        logger.info(f"Registered HITL tool: {tool_name}")
+
+    def unregister_hitl_tool(self, tool_name: str) -> None:
+        """Unregister a HITL tool.
+
+        Args:
+            tool_name: Name of the tool to unregister
+        """
+        self._hitl_tools.pop(tool_name, None)
+
+    def is_hitl_tool(self, tool_name: str) -> bool:
+        """Check if a tool requires HITL approval.
+
+        Args:
+            tool_name: Name of the tool
+
+        Returns:
+            True if the tool requires approval
+        """
+        return tool_name in self._hitl_tools
 
     def _parse_data_uri(self, uri: str) -> tuple[str, str]:
         """Parse data URI into mime type and base64 data.
@@ -324,31 +360,74 @@ class ChatService:
                         if not tc.get("name"):
                             continue
 
+                        tool_name = tc["name"]
+                        tool_id = tc["id"]
+                        args = parse_args(tc["args"])
+
                         # Emit tool_call event
                         yield {
                             "event": "tool_call",
                             "data": json.dumps({
-                                "tool_name": tc["name"],
-                                "tool_id": tc["id"],
+                                "tool_name": tool_name,
+                                "tool_id": tool_id,
                                 "arguments": tc["args"],
                             }),
                         }
 
-                        # Execute the tool
-                        tool_result = ""
-                        try:
-                            tool = tools_by_name.get(tc["name"])
-                            if tool:
-                                args = parse_args(tc["args"])
-                                if tool.coroutine:
-                                    tool_result = await tool.coroutine(**args)
+                        # Check if this tool requires HITL approval
+                        hitl_config = self._hitl_tools.get(tool_name)
+                        if hitl_config and self.approval_service:
+                            # Create approval request
+                            approval = self.approval_service.create(
+                                tool_call_id=tool_id,
+                                session_id=session.session_id,
+                                thread_id=session.session_id,  # Use session as thread for simple case
+                                tool_name=tool_name,
+                                tool_args=args if hitl_config.show_args else {},
+                                config=hitl_config,
+                            )
+
+                            # Emit approval_request event
+                            yield {
+                                "event": "approval_request",
+                                "data": json.dumps({
+                                    "approval_id": approval.id,
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "message": hitl_config.message,
+                                    "tool_args": args if hitl_config.show_args else None,
+                                    "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+                                    "config": {
+                                        "show_args": hitl_config.show_args,
+                                        "timeout_seconds": hitl_config.timeout_seconds,
+                                        "require_reason_on_reject": hitl_config.require_reason_on_reject,
+                                    },
+                                }),
+                            }
+
+                            # For now, return a pending message
+                            # Full implementation would use LangGraph interrupt/resume
+                            tool_result = (
+                                f"[APPROVAL REQUIRED] Action '{tool_name}' requires human approval. "
+                                f"Approval ID: {approval.id}. "
+                                "Waiting for user to approve or reject this action."
+                            )
+                            logger.info(f"HITL approval requested: {approval.id} for {tool_name}")
+                        else:
+                            # Execute the tool normally
+                            tool_result = ""
+                            try:
+                                tool = tools_by_name.get(tool_name)
+                                if tool:
+                                    if tool.coroutine:
+                                        tool_result = await tool.coroutine(**args)
+                                    else:
+                                        tool_result = tool.func(**args)
                                 else:
-                                    tool_result = tool.func(**args)
-                            else:
-                                tool_result = f"Error: Tool '{tc['name']}' not found"
-                        except Exception as e:
-                            tool_result = f"Error executing tool: {e}"
-                            logger.error(f"Tool execution error: {e}")
+                                    tool_result = f"Error: Tool '{tool_name}' not found"
+                            except Exception as e:
+                                tool_result = f"Error executing tool: {e}"
+                                logger.error(f"Tool execution error: {e}")
 
                         # Emit tool_result event
                         yield {

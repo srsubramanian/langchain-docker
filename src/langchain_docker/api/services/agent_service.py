@@ -1,6 +1,7 @@
 """Multi-agent orchestration service using LangGraph Supervisor."""
 
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Optional
@@ -9,10 +10,14 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph_supervisor import create_supervisor
 
+# Context variable for current session ID (used by HITL tools)
+_current_session_id: ContextVar[str] = ContextVar("current_session_id", default="")
+
 from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
+from langchain_docker.api.services.hitl_tool_wrapper import HITLConfig
 from langchain_docker.core.tracing import trace_operation, get_tracer
 
 # Import middleware-based skills components
@@ -94,6 +99,7 @@ class AgentService:
         scheduler_service=None,
         checkpointer=None,  # Type: BaseCheckpointSaver (optional for agent persistence)
         redis_url: Optional[str] = None,  # Redis URL for persistent agent storage
+        approval_service=None,  # Type: ApprovalService (optional for HITL support)
     ):
         """Initialize agent service.
 
@@ -105,11 +111,13 @@ class AgentService:
             scheduler_service: Scheduler service for cron-based execution
             checkpointer: LangGraph checkpointer for agent state persistence
             redis_url: Redis URL for persistent custom agent storage (optional)
+            approval_service: Approval service for HITL tool approval (optional)
         """
         self.model_service = model_service
         self.session_service = session_service
         self.memory_service = memory_service
         self._checkpointer = checkpointer
+        self._approval_service = approval_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
@@ -401,6 +409,149 @@ Guidelines:
             List of category names
         """
         return self._capability_registry.get_categories()
+
+    def get_hitl_config_for_tool(self, tool_id: str):
+        """Get HITL configuration for a tool.
+
+        Checks both ToolRegistry and CapabilityRegistry for HITL configs.
+
+        Args:
+            tool_id: Tool identifier
+
+        Returns:
+            HITLConfig if tool requires approval, None otherwise
+        """
+        # Check ToolRegistry first
+        tool_template = self._tool_registry.get_tool(tool_id)
+        if tool_template and tool_template.requires_approval:
+            return tool_template.requires_approval
+
+        # Check CapabilityRegistry
+        hitl_config = self._capability_registry.get_hitl_config(tool_id)
+        if hitl_config:
+            return hitl_config
+
+        return None
+
+    def _is_hitl_pending(self, output: str) -> bool:
+        """Check if tool output indicates HITL pending status.
+
+        Args:
+            output: Tool output string
+
+        Returns:
+            True if output contains HITL pending marker
+        """
+        return isinstance(output, str) and output.startswith("__HITL_PENDING__:")
+
+    def _extract_approval_id(self, output: str) -> Optional[str]:
+        """Extract approval ID from HITL pending output.
+
+        Args:
+            output: Tool output string
+
+        Returns:
+            Approval ID if present, None otherwise
+        """
+        if not self._is_hitl_pending(output):
+            return None
+        return output.split(":", 1)[1] if ":" in output else None
+
+    def _create_hitl_aware_tool(
+        self,
+        tool_func: Callable,
+        tool_name: str,
+        hitl_config: HITLConfig,
+    ) -> Callable:
+        """Create an HITL-aware wrapper for a tool.
+
+        The wrapper creates an approval request before executing the tool.
+        If not approved, returns a pending marker that triggers approval UI.
+        Uses the context variable _current_session_id set at invocation time.
+
+        Args:
+            tool_func: Original tool function
+            tool_name: Name of the tool
+            hitl_config: HITL configuration
+
+        Returns:
+            Wrapped tool function that handles HITL flow
+        """
+        approval_service = self._approval_service
+
+        def hitl_wrapper(*args, **kwargs) -> str:
+            if not approval_service:
+                # No approval service, execute directly
+                return tool_func(*args, **kwargs)
+
+            # Get session_id from context variable
+            session_id = _current_session_id.get()
+            if not session_id:
+                logger.warning(f"No session_id in context for HITL tool {tool_name}, executing directly")
+                return tool_func(*args, **kwargs)
+
+            # Build tool args for display
+            tool_args = {}
+            if args:
+                tool_args["args"] = list(args)
+            if kwargs:
+                tool_args.update(kwargs)
+
+            # Create approval request
+            from langchain_docker.api.services.approval_service import ApprovalConfig
+            import uuid
+
+            tool_call_id = str(uuid.uuid4())
+            approval = approval_service.create(
+                tool_call_id=tool_call_id,
+                session_id=session_id,
+                thread_id=session_id,  # Use session_id as thread_id
+                tool_name=tool_name,
+                tool_args=tool_args if hitl_config.show_args else {},
+                config=ApprovalConfig(
+                    message=hitl_config.message,
+                    show_args=hitl_config.show_args,
+                    timeout_seconds=hitl_config.timeout_seconds,
+                    require_reason_on_reject=hitl_config.require_reason_on_reject,
+                ),
+            )
+
+            logger.info(f"HITL approval requested: {approval.id} for {tool_name} in session {session_id}")
+            return f"__HITL_PENDING__:{approval.id}"
+
+        # Copy function metadata
+        hitl_wrapper.__name__ = tool_func.__name__
+        hitl_wrapper.__doc__ = (tool_func.__doc__ or "") + " [Requires approval]"
+
+        return hitl_wrapper
+
+    def _create_tool_with_hitl_check(
+        self,
+        tool_id: str,
+        tool_config: Optional[dict] = None,
+    ) -> Callable:
+        """Create a tool instance, wrapping with HITL if needed.
+
+        Checks if the tool has HITL config and wraps it accordingly.
+        The HITL wrapper uses the context variable for session_id.
+
+        Args:
+            tool_id: Tool identifier
+            tool_config: Optional tool configuration
+
+        Returns:
+            Tool function (wrapped with HITL if needed)
+        """
+        # Create the base tool
+        tool_func = self._tool_registry.create_tool_instance(tool_id, tool_config)
+
+        # Check for HITL config
+        hitl_config = self.get_hitl_config_for_tool(tool_id)
+        if hitl_config and hitl_config.enabled:
+            # Wrap with HITL
+            return self._create_hitl_aware_tool(tool_func, tool_id, hitl_config)
+
+        return tool_func
 
     def get_tools_for_capabilities(
         self,
@@ -756,10 +907,10 @@ Guidelines:
         if not custom:
             raise ValueError(f"Custom agent not found: {agent_id}")
 
-        # Create tool instances from configurations
+        # Create tool instances from configurations, with HITL wrapping if needed
         tools = []
         for tc in custom.tool_configs:
-            tool = self._tool_registry.create_tool_instance(
+            tool = self._create_tool_with_hitl_check(
                 tc["tool_id"],
                 tc.get("config", {}),
             )
@@ -1304,9 +1455,10 @@ Always use the tools to interact with the database.""")
             use_middleware = agent_config.get("use_middleware", False)
 
             # Get tools - from tool_ids (new style) or tools (dynamic agents)
+            # HITL-aware tool creation
             if "tool_ids" in agent_config:
                 tools = [
-                    self._tool_registry.create_tool_instance(tid)
+                    self._create_tool_with_hitl_check(tid)
                     for tid in agent_config["tool_ids"]
                 ]
             else:
@@ -1618,10 +1770,10 @@ Always use the tools to interact with the database.""")
             if agent_type == "custom":
                 agent = self._build_agent_from_custom(agent_id, llm)
             else:
-                # Build from builtin config
+                # Build from builtin config, with HITL wrapping if needed
                 use_middleware = config.get("use_middleware", False)
                 if "tool_ids" in config:
-                    tools = [self._tool_registry.create_tool_instance(tid) for tid in config["tool_ids"]]
+                    tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
                 else:
                     tools = config.get("tools", [])
 
@@ -1782,10 +1934,10 @@ Always use the tools to interact with the database.""")
             if agent_type == "custom":
                 agent = self._build_agent_from_custom(agent_id, llm)
             else:
-                # Build from builtin config
+                # Build from builtin config, with HITL wrapping if needed
                 use_middleware = config.get("use_middleware", False)
                 if "tool_ids" in config:
-                    tools = [self._tool_registry.create_tool_instance(tid) for tid in config["tool_ids"]]
+                    tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
                 else:
                     tools = config.get("tools", [])
 
@@ -1850,6 +2002,9 @@ Always use the tools to interact with the database.""")
 
         # Stream agent response with tracing
         try:
+            # Set session context for HITL tools
+            token = _current_session_id.set(sess_key)
+
             with trace_operation(
                 session_id=sess_key,
                 user_id=user_id,
@@ -1892,12 +2047,41 @@ Always use the tools to interact with the database.""")
                     elif kind == "on_tool_end":
                         tool_name = event.get("name", "unknown")
                         output = data.get("output", "")
-                        output_str = str(output)[:500] if output else ""
-                        yield {"event": "tool_result", "data": json.dumps({
-                            "tool_name": tool_name,
-                            "tool_id": event.get("run_id", ""),
-                            "result": output_str,
-                        })}
+                        # Extract content from tool output (may be object with content attr)
+                        if hasattr(output, 'content'):
+                            output_str = str(output.content)[:500] if output.content else ""
+                        else:
+                            output_str = str(output)[:500] if output else ""
+
+                        # Check for HITL pending response
+                        if self._is_hitl_pending(output_str):
+                            approval_id = self._extract_approval_id(output_str)
+                            hitl_config = self.get_hitl_config_for_tool(tool_name)
+
+                            # Get approval details if available
+                            approval_data = None
+                            if self._approval_service and approval_id:
+                                approval_data = self._approval_service.get(approval_id)
+
+                            yield {"event": "approval_request", "data": json.dumps({
+                                "approval_id": approval_id,
+                                "tool_name": tool_name,
+                                "tool_id": event.get("run_id", ""),
+                                "message": hitl_config.message if hitl_config else "Approve this action?",
+                                "tool_args": approval_data.tool_args if approval_data else {},
+                                "expires_at": approval_data.expires_at.isoformat() if approval_data and approval_data.expires_at else None,
+                                "config": {
+                                    "show_args": hitl_config.show_args if hitl_config else True,
+                                    "timeout_seconds": hitl_config.timeout_seconds if hitl_config else 300,
+                                    "require_reason_on_reject": hitl_config.require_reason_on_reject if hitl_config else False,
+                                },
+                            })}
+                        else:
+                            yield {"event": "tool_result", "data": json.dumps({
+                                "tool_name": tool_name,
+                                "tool_id": event.get("run_id", ""),
+                                "result": output_str,
+                            })}
 
                     # Streaming tokens from LLM
                     elif kind == "on_chat_model_stream":
@@ -1942,6 +2126,9 @@ Always use the tools to interact with the database.""")
         except Exception as e:
             logger.error(f"[Stream Agent] Error for {agent_id}: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
+        finally:
+            # Reset session context
+            _current_session_id.reset(token)
 
     def create_workflow(
         self,
@@ -1988,9 +2175,10 @@ Always use the tools to interact with the database.""")
                 use_middleware = config.get("use_middleware", False)
 
                 # Get tools - from tool_ids (new style) or tools (dynamic agents)
+                # HITL-aware tool creation
                 if "tool_ids" in config:
                     tools = [
-                        self._tool_registry.create_tool_instance(tid)
+                        self._create_tool_with_hitl_check(tid)
                         for tid in config["tool_ids"]
                     ]
                 else:
@@ -2347,7 +2535,11 @@ Always use the tools to interact with the database.""")
                     elif kind == "on_tool_end":
                         tool_name = event.get("name", "unknown")
                         output = data.get("output", "")
-                        output_str = str(output)[:500] if output else ""
+                        # Extract content from tool output (may be object with content attr)
+                        if hasattr(output, 'content'):
+                            output_str = str(output.content)[:500] if output.content else ""
+                        else:
+                            output_str = str(output)[:500] if output else ""
                         yield {"event": "tool_result", "data": json.dumps({
                             "tool_name": tool_name,
                             "tool_id": event.get("run_id", ""),

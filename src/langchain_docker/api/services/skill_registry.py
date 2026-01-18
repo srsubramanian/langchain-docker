@@ -546,19 +546,24 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
             available = "'samples', " + ", ".join(f"'{r}'" for r in resource_map.keys())
             return f"Unknown resource: {resource}. Available: {available}"
 
-    def execute_query(self, query: str) -> str:
-        """Execute a SQL query with read-only enforcement.
+    def execute_query(self, query: str, read_only: bool | None = None) -> str:
+        """Execute a SQL query with optional read-only enforcement.
 
         Args:
             query: SQL query string
+            read_only: Override for read-only mode. If None, uses instance setting.
+                       Set to False to allow write operations (for HITL-approved tools).
 
         Returns:
             Query results or error message
         """
         db = self._get_db()
 
+        # Use explicit read_only if provided, otherwise use instance setting
+        enforce_read_only = read_only if read_only is not None else self.read_only
+
         # Enforce read-only mode
-        if self.read_only:
+        if enforce_read_only:
             query_upper = query.strip().upper()
             write_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE"]
             for keyword in write_keywords:

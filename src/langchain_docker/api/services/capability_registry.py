@@ -17,6 +17,8 @@ from typing import Any, Callable, Literal, Optional
 
 from langchain_community.utilities import SQLDatabase
 
+from langchain_docker.api.services.hitl_tool_wrapper import HITLConfig
+
 from langchain_docker.api.services.demo_database import ensure_demo_database
 from langchain_docker.core.tracing import get_tracer
 from langchain_docker.core.config import (
@@ -80,6 +82,10 @@ class Capability:
 
     # Additional methods for skill_bundles (e.g., execute_query for SQL)
     methods: dict[str, Callable] = field(default_factory=dict)
+
+    # HITL configurations for tools that require human approval
+    # Maps tool_name -> HITLConfig
+    hitl_configs: dict[str, "HITLConfig"] = field(default_factory=dict)
 
 
 class CapabilityRegistry:
@@ -449,6 +455,44 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                 return load_details("samples")
             return sql_get_samples
 
+        def execute_write_query(query: str) -> str:
+            """Execute a write SQL query (INSERT, UPDATE, DELETE).
+
+            This bypasses read-only mode and executes write operations.
+            Requires human approval before execution for safety.
+            """
+            tracer = get_tracer()
+            db = self._get_sql_db()
+
+            if tracer:
+                with tracer.start_as_current_span("capability.sql.execute_write") as span:
+                    span.set_attribute("query_length", len(query))
+                    try:
+                        result = db.run(query)
+                        span.set_attribute("result_length", len(str(result)))
+                        return result
+                    except Exception as e:
+                        span.set_attribute("error", str(e))
+                        return f"Query error: {str(e)}"
+            else:
+                try:
+                    return db.run(query)
+                except Exception as e:
+                    return f"Query error: {str(e)}"
+
+        def create_sql_execute():
+            def sql_execute(query: str) -> str:
+                """Execute INSERT, UPDATE, or DELETE SQL statements.
+
+                This tool can modify the database. Use with caution.
+                Requires human approval before execution.
+
+                Args:
+                    query: The SQL query to execute (INSERT, UPDATE, or DELETE)
+                """
+                return execute_write_query(query)
+            return sql_execute
+
         self.register(
             Capability(
                 id="write_sql",
@@ -456,7 +500,7 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                 description="Query and analyze database with SQL (progressive disclosure)",
                 category="database",
                 type="skill_bundle",
-                tools_provided=["load_sql_skill", "sql_query", "sql_list_tables", "sql_get_samples"],
+                tools_provided=["load_sql_skill", "sql_query", "sql_list_tables", "sql_get_samples", "sql_execute"],
                 content_path=skill_dir,
                 load_core=load_core,
                 load_details=load_details,
@@ -465,8 +509,18 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                     "sql_query": create_sql_query,
                     "sql_list_tables": create_sql_list_tables,
                     "sql_get_samples": create_sql_get_samples,
+                    "sql_execute": create_sql_execute,
                     "execute_query": lambda: execute_query,
                     "list_tables": lambda: list_tables,
+                },
+                hitl_configs={
+                    "sql_execute": HITLConfig(
+                        enabled=True,
+                        message="This will modify the database. Please review the SQL statement carefully before approving.",
+                        show_args=True,
+                        timeout_seconds=300,
+                        require_reason_on_reject=False,
+                    ),
                 },
             )
         )
@@ -1044,6 +1098,30 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                     }
                     for p in c.parameters
                 ],
+                "hitl_configs": {
+                    tool_name: {
+                        "enabled": config.enabled,
+                        "message": config.message,
+                        "show_args": config.show_args,
+                        "timeout_seconds": config.timeout_seconds,
+                        "require_reason_on_reject": config.require_reason_on_reject,
+                    }
+                    for tool_name, config in c.hitl_configs.items()
+                },
             }
             for c in self._capabilities.values()
         ]
+
+    def get_hitl_config(self, tool_id: str) -> Optional[HITLConfig]:
+        """Get HITL configuration for a tool.
+
+        Args:
+            tool_id: Tool identifier
+
+        Returns:
+            HITLConfig if tool requires approval, None otherwise
+        """
+        for capability in self._capabilities.values():
+            if tool_id in capability.hitl_configs:
+                return capability.hitl_configs[tool_id]
+        return None

@@ -8,6 +8,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_docker.api.services.agent_service import AgentService
+from langchain_docker.api.services.approval_service import ApprovalService
 from langchain_docker.api.services.chat_service import ChatService
 from langchain_docker.api.services.mcp_server_manager import MCPServerManager
 from langchain_docker.api.services.mcp_tool_service import MCPToolService
@@ -146,11 +147,35 @@ def get_mcp_tool_service(
     return _mcp_tool_service
 
 
+# Singleton for approval service (must be before get_chat_service)
+_approval_service: ApprovalService | None = None
+
+
+def get_approval_service() -> ApprovalService:
+    """Get singleton approval service instance.
+
+    The ApprovalService manages Human-in-the-Loop (HITL) approval requests
+    for tools that require human confirmation before execution.
+
+    Uses Redis for persistent storage if REDIS_URL is configured,
+    otherwise falls back to in-memory storage.
+
+    Returns:
+        ApprovalService instance
+    """
+    global _approval_service
+    if _approval_service is None:
+        redis_url = get_redis_url()
+        _approval_service = ApprovalService(redis_url=redis_url)
+    return _approval_service
+
+
 def get_chat_service(
     session_service: SessionService = Depends(get_session_service),
     model_service: ModelService = Depends(get_model_service),
     memory_service: MemoryService = Depends(get_memory_service),
     mcp_tool_service: MCPToolService = Depends(get_mcp_tool_service),
+    approval_service: ApprovalService = Depends(get_approval_service),
 ) -> ChatService:
     """Get chat service instance.
 
@@ -159,11 +184,18 @@ def get_chat_service(
         model_service: Model service (injected)
         memory_service: Memory service (injected)
         mcp_tool_service: MCP tool service (injected)
+        approval_service: Approval service for HITL tools (injected)
 
     Returns:
         ChatService instance
     """
-    return ChatService(session_service, model_service, memory_service, mcp_tool_service)
+    return ChatService(
+        session_service,
+        model_service,
+        memory_service,
+        mcp_tool_service,
+        approval_service,
+    )
 
 
 # Singleton for skill registry
@@ -223,6 +255,7 @@ def get_agent_service(
     session_service: SessionService = Depends(get_session_service),
     memory_service: MemoryService = Depends(get_memory_service),
     skill_registry: SkillRegistry = Depends(get_skill_registry),
+    approval_service: ApprovalService = Depends(get_approval_service),
 ) -> AgentService:
     """Get agent service instance.
 
@@ -231,6 +264,7 @@ def get_agent_service(
         session_service: Session service for unified memory (injected)
         memory_service: Memory service for summarization (injected)
         skill_registry: Skill registry (injected)
+        approval_service: Approval service for HITL tool approval (injected)
 
     Returns:
         AgentService instance
@@ -246,6 +280,7 @@ def get_agent_service(
             skill_registry=skill_registry,
             checkpointer=checkpointer,
             redis_url=redis_url,
+            approval_service=approval_service,
         )
     return _agent_service
 

@@ -26,7 +26,8 @@ This document provides a comprehensive guide to the Skills system implementation
 9. [API Integration](#api-integration)
 10. [Redis Versioning](#redis-versioning)
 11. [Editable Built-in Skills](#editable-built-in-skills)
-12. [Built-in Skills Reference](#built-in-skills-reference)
+12. [Human-in-the-Loop (HITL) Tool Approval](#human-in-the-loop-hitl-tool-approval)
+13. [Built-in Skills Reference](#built-in-skills-reference)
 
 ---
 
@@ -1132,6 +1133,274 @@ curl -X POST http://localhost:8000/api/v1/skills/write_sql/reset
 4. **Persistence**: Custom content survives server restarts (loaded from Redis on startup).
 
 5. **Rollback**: Use `/versions/{num}/activate` to rollback to any previous version.
+
+---
+
+## Human-in-the-Loop (HITL) Tool Approval
+
+Some tool operations are potentially dangerous (database writes, file deletions, external API calls with side effects). The HITL system allows marking specific tools to require human approval before execution.
+
+### Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        HITL APPROVAL FLOW                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. Agent calls tool marked with requires_approval (e.g., sql_execute)      │
+│  2. ChatService detects HITL tool, creates ApprovalRequest                  │
+│  3. SSE event "approval_request" sent to frontend                           │
+│  4. Frontend shows ApprovalCard with Approve/Reject buttons                 │
+│  5. User clicks Approve/Reject                                              │
+│  6. Frontend calls POST /api/v1/approvals/{id}/approve or /reject           │
+│  7. Agent execution resumes or is cancelled                                 │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Architecture Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `ApprovalService` | `api/services/approval_service.py` | Manages approval lifecycle (create, approve, reject, expire) |
+| `HITLConfig` | `api/services/hitl_tool_wrapper.py` | Per-tool approval configuration |
+| `HITLToolWrapper` | `api/services/hitl_tool_wrapper.py` | Wraps tools to intercept execution |
+| Approvals Router | `api/routers/approvals.py` | REST API for approval management |
+| `ApprovalCard` | `web_ui/src/components/chat/ApprovalCard.tsx` | React UI for inline approval |
+
+### Configuring HITL Tools
+
+Tools can be marked to require approval using `HITLConfig`:
+
+```python
+from langchain_docker.api.services.hitl_tool_wrapper import HITLConfig
+
+# In tool_registry.py - example HITL-enabled tool
+self.register(ToolTemplate(
+    id="sql_execute",
+    name="SQL Execute (Write)",
+    description="Execute INSERT, UPDATE, DELETE statements. Requires approval.",
+    category="database",
+    factory=lambda: self._create_sql_execute_tool(),
+    requires_approval=HITLConfig(
+        enabled=True,
+        message="This will modify the database. Review before approving.",
+        show_args=True,           # Show tool arguments in approval UI
+        timeout_seconds=300,      # Auto-reject after 5 minutes
+        require_reason_on_reject=False,  # Optional rejection reason
+    ),
+))
+```
+
+### HITLConfig Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | False | Enable HITL for this tool |
+| `message` | str | "Approve this action?" | Message shown in approval UI |
+| `show_args` | bool | True | Show tool arguments to user |
+| `timeout_seconds` | int | 300 | Auto-reject timeout (seconds) |
+| `require_reason_on_reject` | bool | False | Require reason when rejecting |
+| `impact_calculator` | Callable | None | Custom function to calculate impact level |
+
+### Approval Lifecycle
+
+```
+┌──────────┐     ┌───────────┐     ┌──────────┐
+│ PENDING  │────▶│ APPROVED  │────▶│ EXECUTED │
+│          │     └───────────┘     └──────────┘
+│          │
+│          │     ┌───────────┐
+│          │────▶│ REJECTED  │
+│          │     └───────────┘
+│          │
+│          │     ┌───────────┐
+│          │────▶│  EXPIRED  │  (after timeout_seconds)
+│          │     └───────────┘
+│          │
+│          │     ┌───────────┐
+└──────────┴────▶│ CANCELLED │  (by user or system)
+                 └───────────┘
+```
+
+### API Endpoints
+
+```bash
+# List pending approvals for a session
+GET /api/v1/approvals/pending?session_id={session_id}
+
+# Get approval details
+GET /api/v1/approvals/{approval_id}
+
+# Approve a request
+POST /api/v1/approvals/{approval_id}/approve
+Content-Type: application/json
+{
+  "reason": "Looks good"  # Optional
+}
+
+# Reject a request
+POST /api/v1/approvals/{approval_id}/reject
+Content-Type: application/json
+{
+  "reason": "Too risky"  # Required if require_reason_on_reject=True
+}
+
+# Cancel a request
+POST /api/v1/approvals/{approval_id}/cancel
+```
+
+### Chat Service Integration
+
+The `ChatService` handles HITL tool detection and SSE event emission:
+
+```python
+# In chat_service.py
+class ChatService:
+    def __init__(self, ..., approval_service: ApprovalService | None = None):
+        self.approval_service = approval_service
+        self._hitl_tools: dict[str, ApprovalConfig] = {}
+
+    def register_hitl_tool(self, tool_name: str, config: ApprovalConfig) -> None:
+        """Register a tool as requiring HITL approval."""
+        self._hitl_tools[tool_name] = config
+
+    async def stream_message(self, ...):
+        # ... during tool execution ...
+        if tool_name in self._hitl_tools and self.approval_service:
+            config = self._hitl_tools[tool_name]
+            approval = self.approval_service.create(
+                session_id=session_id,
+                thread_id=thread_id,
+                tool_name=tool_name,
+                tool_id=tool_call_id,
+                tool_args=tool_args,
+                config=config,
+            )
+
+            # Emit SSE event for frontend
+            yield {
+                "event": "approval_request",
+                "data": json.dumps({
+                    "approval_id": approval.id,
+                    "tool_name": tool_name,
+                    "message": config.message,
+                    "tool_args": tool_args,
+                    "expires_at": approval.expires_at.isoformat(),
+                    "config": {
+                        "show_args": config.show_args,
+                        "timeout_seconds": config.timeout_seconds,
+                        "require_reason_on_reject": config.require_reason_on_reject,
+                    },
+                }),
+            }
+```
+
+### Frontend Integration
+
+The `ChatPage` component handles approval request events:
+
+```typescript
+// In ChatPage.tsx
+const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
+
+// Handle approval_request SSE event
+} else if (event.event === 'approval_request') {
+  const approvalRequest: ApprovalRequestEvent = {
+    approval_id: event.approval_id,
+    tool_name: event.tool_name,
+    message: event.message,
+    tool_args: event.tool_args,
+    expires_at: event.expires_at,
+    config: event.config,
+  };
+  setPendingApprovals((prev) => [...prev, approvalRequest]);
+}
+
+// Render approval cards inline in chat
+{pendingApprovals.map((approval) => (
+  <ApprovalCard
+    key={approval.approval_id}
+    request={approval}
+    onResolved={(status) => {
+      setPendingApprovals((prev) =>
+        prev.filter((a) => a.approval_id !== approval.approval_id)
+      );
+    }}
+  />
+))}
+```
+
+### Redis Persistence
+
+When `REDIS_URL` is configured, approvals are persisted:
+
+```python
+# Redis key structure
+approval:{approval_id}  # Approval data (TTL = timeout_seconds + buffer)
+approvals:session:{session_id}  # Set of approval IDs for session
+approvals:pending  # Set of all pending approval IDs
+```
+
+Without Redis, approvals are stored in-memory and lost on restart.
+
+### Adding HITL to Skills
+
+To add HITL to a skill's tool:
+
+1. **Define the tool with HITL config** in `tool_registry.py`:
+
+```python
+ToolTemplate(
+    id="my_dangerous_tool",
+    name="Dangerous Operation",
+    description="Does something that needs approval",
+    category="custom",
+    factory=lambda: create_my_tool(),
+    requires_approval=HITLConfig(
+        enabled=True,
+        message="This operation cannot be undone. Please review.",
+        show_args=True,
+    ),
+)
+```
+
+2. **Register the tool with ChatService** when handling chat requests.
+
+3. **Handle the approval flow** - the chat stream will pause until user approves/rejects.
+
+### Example: SQL Execute with HITL
+
+```python
+# Tool registration
+ToolTemplate(
+    id="sql_execute",
+    name="SQL Execute (Write)",
+    description="Execute INSERT, UPDATE, DELETE statements",
+    category="database",
+    factory=lambda: self._create_sql_execute_tool(),
+    requires_approval=HITLConfig(
+        enabled=True,
+        message="This will modify the database. Review the query before approving.",
+        show_args=True,
+        timeout_seconds=300,
+    ),
+)
+
+# When agent calls sql_execute:
+# 1. ApprovalCard shows in chat with query details
+# 2. User sees: "This will modify the database. Review the query before approving."
+# 3. User sees the SQL query in the arguments section
+# 4. User clicks Approve or Reject
+# 5. If approved, query executes; if rejected, agent receives rejection message
+```
+
+### Security Considerations
+
+1. **Approvals are session-scoped**: An approval for session A cannot be used in session B.
+2. **Timeouts prevent stale approvals**: Approvals auto-expire after `timeout_seconds`.
+3. **Redis TTL cleanup**: Expired approvals are automatically removed from Redis.
+4. **No approval forwarding**: Approvals cannot be transferred between users.
 
 ---
 
