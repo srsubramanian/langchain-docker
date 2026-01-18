@@ -290,6 +290,33 @@ export interface SkillScript {
   content?: string | null;
 }
 
+// Tool configuration from SKILL.md frontmatter
+export interface SkillToolConfigArg {
+  name: string;
+  type: string;
+  description?: string;
+  required: boolean;
+  default?: unknown;
+}
+
+export interface SkillToolConfig {
+  name: string;
+  description: string;
+  method: string;
+  args: SkillToolConfigArg[];
+  requires_skill_loaded?: boolean;
+}
+
+// Resource configuration from SKILL.md frontmatter
+export interface SkillResourceConfig {
+  name: string;
+  description: string;
+  file?: string | null;
+  content?: string | null;
+  dynamic?: boolean;
+  method?: string | null;
+}
+
 export interface SkillInfo {
   id: string;
   name: string;
@@ -301,6 +328,9 @@ export interface SkillInfo {
   core_content?: string | null;
   resources: SkillResource[];
   scripts: SkillScript[];
+  tool_configs?: SkillToolConfig[];
+  resource_configs?: SkillResourceConfig[];
+  has_custom_content?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
 }

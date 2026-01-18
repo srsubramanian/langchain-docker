@@ -35,9 +35,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { skillsApi } from '@/api';
-import type { SkillResource, SkillScript } from '@/types/api';
+import type { SkillResource, SkillScript, SkillToolConfig, SkillResourceConfig } from '@/types/api';
 import { VersionHistory } from './VersionHistory';
 import { SkillMetricsPanel } from './SkillMetricsPanel';
+import { Wrench, Database } from 'lucide-react';
 
 const CATEGORIES = [
   { value: 'general', label: 'General' },
@@ -70,6 +71,8 @@ export function SkillEditor() {
   const [coreContent, setCoreContent] = useState('');
   const [resources, setResources] = useState<SkillResource[]>([]);
   const [scripts, setScripts] = useState<SkillScript[]>([]);
+  const [toolConfigs, setToolConfigs] = useState<SkillToolConfig[]>([]);
+  const [resourceConfigs, setResourceConfigs] = useState<SkillResourceConfig[]>([]);
 
   // UI state
   const [isLoading, setIsLoading] = useState(false);
@@ -102,6 +105,8 @@ export function SkillEditor() {
       setCoreContent(skill.core_content || '');
       setResources(skill.resources || []);
       setScripts(skill.scripts || []);
+      setToolConfigs(skill.tool_configs || []);
+      setResourceConfigs(skill.resource_configs || []);
       setIsBuiltin(skill.is_builtin);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skill');
@@ -282,9 +287,15 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
             <FileText className="h-4 w-4" />
             Editor
           </TabsTrigger>
+          {isBuiltin && toolConfigs.length > 0 && (
+            <TabsTrigger value="tools" className="gap-2">
+              <Wrench className="h-4 w-4" />
+              Tools ({toolConfigs.length})
+            </TabsTrigger>
+          )}
           <TabsTrigger value="resources" className="gap-2">
-            <FileText className="h-4 w-4" />
-            Resources ({resources.length})
+            <Database className="h-4 w-4" />
+            Resources ({isBuiltin ? resourceConfigs.length : resources.length})
           </TabsTrigger>
           <TabsTrigger value="scripts" className="gap-2">
             <Code className="h-4 w-4" />
@@ -410,6 +421,77 @@ When this skill is activated, follow these steps:
           </div>
         </TabsContent>
 
+        {/* Tools Tab (Built-in skills only) */}
+        {isBuiltin && toolConfigs.length > 0 && (
+          <TabsContent value="tools">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Available Tools</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Tools provided by this skill. Some tools require the skill to be loaded first.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {toolConfigs.map((tool, index) => (
+                    <Card key={index}>
+                      <CardContent className="pt-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <code className="text-sm font-semibold bg-muted px-2 py-0.5 rounded">
+                                {tool.name}
+                              </code>
+                              {tool.requires_skill_loaded && (
+                                <Badge variant="outline" className="text-xs">
+                                  Requires Skill Loaded
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {tool.description}
+                            </p>
+                          </div>
+                          <Badge variant="secondary" className="text-xs">
+                            {tool.method}
+                          </Badge>
+                        </div>
+                        {tool.args && tool.args.length > 0 && (
+                          <div className="mt-3 border-t pt-3">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Arguments</p>
+                            <div className="space-y-2">
+                              {tool.args.map((arg, argIndex) => (
+                                <div key={argIndex} className="flex items-start gap-2 text-sm">
+                                  <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+                                    {arg.name}
+                                  </code>
+                                  <span className="text-muted-foreground text-xs">
+                                    ({arg.type})
+                                  </span>
+                                  {arg.required && (
+                                    <Badge variant="destructive" className="text-xs h-4">
+                                      required
+                                    </Badge>
+                                  )}
+                                  {arg.description && (
+                                    <span className="text-xs text-muted-foreground">
+                                      - {arg.description}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
         {/* Resources Tab */}
         <TabsContent value="resources">
           <Card>
@@ -428,39 +510,82 @@ When this skill is activated, follow these steps:
               )}
             </CardHeader>
             <CardContent>
-              {resources.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No resources added yet. Resources are loaded only when needed.
-                </div>
+              {/* Built-in skills: show resourceConfigs */}
+              {isBuiltin ? (
+                resourceConfigs.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No resources available for this skill.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {resourceConfigs.map((resource, index) => (
+                      <Card key={index}>
+                        <CardContent className="pt-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <code className="text-sm font-semibold bg-muted px-2 py-0.5 rounded">
+                                  {resource.name}
+                                </code>
+                                {resource.dynamic && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Dynamic
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {resource.description}
+                              </p>
+                            </div>
+                            {resource.file && (
+                              <Badge variant="secondary" className="text-xs">
+                                {resource.file}
+                              </Badge>
+                            )}
+                          </div>
+                          {resource.method && (
+                            <p className="text-xs text-muted-foreground mt-2">
+                              <span className="font-medium">Method:</span>{' '}
+                              <code className="bg-muted px-1 rounded">{resource.method}</code>
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )
               ) : (
-                <div className="space-y-4">
-                  {resources.map((resource, index) => (
-                    <Card key={index}>
-                      <CardContent className="pt-4">
-                        <div className="flex gap-4 mb-4">
-                          <div className="flex-1 space-y-2">
-                            <label className="text-sm font-medium">Filename</label>
-                            <Input
-                              value={resource.name}
-                              onChange={(e) =>
-                                updateResource(index, { name: e.target.value })
-                              }
-                              placeholder="examples.md"
-                              disabled={isBuiltin}
-                            />
-                          </div>
-                          <div className="flex-1 space-y-2">
-                            <label className="text-sm font-medium">Description</label>
-                            <Input
-                              value={resource.description}
-                              onChange={(e) =>
-                                updateResource(index, { description: e.target.value })
-                              }
-                              placeholder="Example usage patterns"
-                              disabled={isBuiltin}
-                            />
-                          </div>
-                          {!isBuiltin && (
+                /* Custom skills: show editable resources */
+                resources.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No resources added yet. Resources are loaded only when needed.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {resources.map((resource, index) => (
+                      <Card key={index}>
+                        <CardContent className="pt-4">
+                          <div className="flex gap-4 mb-4">
+                            <div className="flex-1 space-y-2">
+                              <label className="text-sm font-medium">Filename</label>
+                              <Input
+                                value={resource.name}
+                                onChange={(e) =>
+                                  updateResource(index, { name: e.target.value })
+                                }
+                                placeholder="examples.md"
+                              />
+                            </div>
+                            <div className="flex-1 space-y-2">
+                              <label className="text-sm font-medium">Description</label>
+                              <Input
+                                value={resource.description}
+                                onChange={(e) =>
+                                  updateResource(index, { description: e.target.value })
+                                }
+                                placeholder="Example usage patterns"
+                              />
+                            </div>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -469,24 +594,23 @@ When this skill is activated, follow these steps:
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Content</label>
-                          <Textarea
-                            value={resource.content || ''}
-                            onChange={(e) =>
-                              updateResource(index, { content: e.target.value })
-                            }
-                            placeholder="Resource content in markdown..."
-                            className="min-h-[150px] font-mono text-sm"
-                            disabled={isBuiltin}
-                          />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Content</label>
+                            <Textarea
+                              value={resource.content || ''}
+                              onChange={(e) =>
+                                updateResource(index, { content: e.target.value })
+                              }
+                              placeholder="Resource content in markdown..."
+                              className="min-h-[150px] font-mono text-sm"
+                            />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )
               )}
             </CardContent>
           </Card>
