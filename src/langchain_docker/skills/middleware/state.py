@@ -48,6 +48,9 @@ class SkillAwareState(AgentState):
     # Track load counts to prevent duplicate loading
     skill_load_count: NotRequired[dict[str, int]]
 
+    # Track which version of each skill was loaded (for versioned skills)
+    skills_version_loaded: NotRequired[dict[str, int]]
+
     # Optional skill-specific context
     skill_context: NotRequired[dict[str, Any]]
 

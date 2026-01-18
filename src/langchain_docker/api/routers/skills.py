@@ -4,13 +4,15 @@ Based on Anthropic's Agent Skills architecture.
 Reference: https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from langchain_docker.api.dependencies import get_skill_registry
 from langchain_docker.api.schemas.skills import (
     SkillCreateRequest,
     SkillCreateResponse,
     SkillDeleteResponse,
+    SkillDiffField,
+    SkillDiffResponse,
     SkillInfo,
     SkillListResponse,
     SkillLoadResponse,
@@ -19,6 +21,11 @@ from langchain_docker.api.schemas.skills import (
     SkillResourceLoadResponse,
     SkillScript,
     SkillUpdateRequest,
+    SkillUsageMetricsResponse,
+    SkillVersionDetail,
+    SkillVersionInfo,
+    SkillVersionListResponse,
+    VersionedSkillInfo,
 )
 from langchain_docker.api.services.skill_registry import SkillRegistry
 
@@ -161,6 +168,7 @@ async def update_skill(
     """Update an existing custom skill.
 
     Only custom skills can be updated. Built-in skills are read-only.
+    When Redis is configured, this creates a new immutable version.
     """
     try:
         skill = skill_registry.update_custom_skill(
@@ -173,6 +181,7 @@ async def update_skill(
             author=request.author,
             resources=_resources_to_dicts(request.resources),
             scripts=_scripts_to_dicts(request.scripts),
+            change_summary=request.change_summary,
         )
 
         return _skill_data_to_info(skill.to_dict())
@@ -279,3 +288,331 @@ async def import_skill(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# Versioning Endpoints
+# ============================================================================
+
+
+@router.get("/{skill_id}/versions", response_model=SkillVersionListResponse)
+async def list_skill_versions(
+    skill_id: str,
+    limit: int = Query(20, ge=1, le=100, description="Maximum versions to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> SkillVersionListResponse:
+    """List all versions of a skill with pagination.
+
+    Returns versions newest first. Requires Redis for versioning support.
+    """
+    versions, total, active_version = skill_registry.list_versions(
+        skill_id, limit=limit, offset=offset
+    )
+
+    if versions is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Skill not found or versioning not available: {skill_id}",
+        )
+
+    version_infos = [
+        SkillVersionInfo(
+            version_number=v.version_number,
+            semantic_version=v.semantic_version,
+            change_summary=v.change_summary,
+            created_at=v.created_at.isoformat(),
+            author=v.author,
+            is_active=(v.version_number == active_version),
+        )
+        for v in versions
+    ]
+
+    return SkillVersionListResponse(
+        skill_id=skill_id,
+        versions=version_infos,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{skill_id}/versions/{version_number}", response_model=SkillVersionDetail)
+async def get_skill_version(
+    skill_id: str,
+    version_number: int,
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> SkillVersionDetail:
+    """Get full content of a specific version.
+
+    Returns the complete version data including core content.
+    """
+    version, active_version = skill_registry.get_version(skill_id, version_number)
+
+    if version is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {version_number} not found for skill: {skill_id}",
+        )
+
+    return SkillVersionDetail(
+        version_number=version.version_number,
+        semantic_version=version.semantic_version,
+        change_summary=version.change_summary,
+        created_at=version.created_at.isoformat(),
+        author=version.author,
+        is_active=(version.version_number == active_version),
+        name=version.name,
+        description=version.description,
+        category=version.category,
+        core_content=version.core_content,
+        resources=[
+            SkillResource(
+                name=r.name,
+                description=r.description,
+                content=r.content,
+            )
+            for r in version.resources
+        ],
+        scripts=[
+            SkillScript(
+                name=s.name,
+                description=s.description,
+                language=s.language,
+                content=s.content,
+            )
+            for s in version.scripts
+        ],
+    )
+
+
+@router.post("/{skill_id}/versions/{version_number}/activate")
+async def activate_version(
+    skill_id: str,
+    version_number: int,
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> dict:
+    """Set a version as active (rollback to previous version).
+
+    This allows rolling back to a previous version of the skill.
+    """
+    success = skill_registry.set_active_version(skill_id, version_number)
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {version_number} not found for skill: {skill_id}",
+        )
+
+    return {
+        "skill_id": skill_id,
+        "active_version": version_number,
+        "message": f"Version {version_number} is now active",
+    }
+
+
+@router.get("/{skill_id}/versions/diff", response_model=SkillDiffResponse)
+async def diff_versions(
+    skill_id: str,
+    from_version: int = Query(..., description="Source version number"),
+    to_version: int = Query(..., description="Target version number"),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> SkillDiffResponse:
+    """Compare two versions of a skill.
+
+    Returns a list of field-level changes between the versions.
+    """
+    from_v, _ = skill_registry.get_version(skill_id, from_version)
+    to_v, _ = skill_registry.get_version(skill_id, to_version)
+
+    if from_v is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {from_version} not found for skill: {skill_id}",
+        )
+
+    if to_v is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {to_version} not found for skill: {skill_id}",
+        )
+
+    # Calculate differences
+    changes = []
+
+    if from_v.name != to_v.name:
+        changes.append(SkillDiffField(field="name", from_value=from_v.name, to_value=to_v.name))
+
+    if from_v.description != to_v.description:
+        changes.append(SkillDiffField(
+            field="description",
+            from_value=from_v.description,
+            to_value=to_v.description,
+        ))
+
+    if from_v.category != to_v.category:
+        changes.append(SkillDiffField(
+            field="category",
+            from_value=from_v.category,
+            to_value=to_v.category,
+        ))
+
+    if from_v.semantic_version != to_v.semantic_version:
+        changes.append(SkillDiffField(
+            field="version",
+            from_value=from_v.semantic_version,
+            to_value=to_v.semantic_version,
+        ))
+
+    if from_v.author != to_v.author:
+        changes.append(SkillDiffField(
+            field="author",
+            from_value=from_v.author,
+            to_value=to_v.author,
+        ))
+
+    if from_v.core_content != to_v.core_content:
+        # Truncate long content for the diff view
+        from_preview = from_v.core_content[:500] + "..." if len(from_v.core_content) > 500 else from_v.core_content
+        to_preview = to_v.core_content[:500] + "..." if len(to_v.core_content) > 500 else to_v.core_content
+        changes.append(SkillDiffField(
+            field="core_content",
+            from_value=from_preview,
+            to_value=to_preview,
+        ))
+
+    # Check resources
+    from_resources = {r.name for r in from_v.resources}
+    to_resources = {r.name for r in to_v.resources}
+
+    if from_resources != to_resources:
+        changes.append(SkillDiffField(
+            field="resources",
+            from_value=", ".join(sorted(from_resources)) or "(none)",
+            to_value=", ".join(sorted(to_resources)) or "(none)",
+        ))
+
+    # Check scripts
+    from_scripts = {s.name for s in from_v.scripts}
+    to_scripts = {s.name for s in to_v.scripts}
+
+    if from_scripts != to_scripts:
+        changes.append(SkillDiffField(
+            field="scripts",
+            from_value=", ".join(sorted(from_scripts)) or "(none)",
+            to_value=", ".join(sorted(to_scripts)) or "(none)",
+        ))
+
+    return SkillDiffResponse(
+        skill_id=skill_id,
+        from_version=from_version,
+        to_version=to_version,
+        changes=changes,
+    )
+
+
+@router.get("/{skill_id}/metrics", response_model=SkillUsageMetricsResponse)
+async def get_skill_metrics(
+    skill_id: str,
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> SkillUsageMetricsResponse:
+    """Get usage metrics for a skill.
+
+    Returns load counts, unique sessions, and per-version statistics.
+    Requires Redis for metrics tracking.
+    """
+    metrics = skill_registry.get_metrics(skill_id)
+
+    if metrics is None:
+        # Return empty metrics if Redis is not configured or no data
+        return SkillUsageMetricsResponse(
+            total_loads=0,
+            unique_sessions=0,
+            last_loaded_at=None,
+            loads_by_version={},
+        )
+
+    return SkillUsageMetricsResponse(
+        total_loads=metrics.total_loads,
+        unique_sessions=metrics.unique_sessions,
+        last_loaded_at=metrics.last_loaded_at.isoformat() if metrics.last_loaded_at else None,
+        loads_by_version=metrics.loads_by_version,
+    )
+
+
+@router.get("/{skill_id}/versioned", response_model=VersionedSkillInfo)
+async def get_versioned_skill(
+    skill_id: str,
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> VersionedSkillInfo:
+    """Get full skill information with version history.
+
+    Returns skill data along with version summary and metrics.
+    """
+    skill_data = skill_registry.get_skill_full(skill_id)
+    if not skill_data:
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
+
+    # Get version info
+    versions, total, active_version = skill_registry.list_versions(
+        skill_id, limit=10, offset=0
+    )
+
+    version_infos = []
+    if versions:
+        version_infos = [
+            SkillVersionInfo(
+                version_number=v.version_number,
+                semantic_version=v.semantic_version,
+                change_summary=v.change_summary,
+                created_at=v.created_at.isoformat(),
+                author=v.author,
+                is_active=(v.version_number == active_version),
+            )
+            for v in versions
+        ]
+
+    # Get metrics
+    metrics = skill_registry.get_metrics(skill_id)
+    metrics_response = None
+    if metrics:
+        metrics_response = SkillUsageMetricsResponse(
+            total_loads=metrics.total_loads,
+            unique_sessions=metrics.unique_sessions,
+            last_loaded_at=metrics.last_loaded_at.isoformat() if metrics.last_loaded_at else None,
+            loads_by_version=metrics.loads_by_version,
+        )
+
+    return VersionedSkillInfo(
+        id=skill_data["id"],
+        name=skill_data["name"],
+        description=skill_data["description"],
+        category=skill_data["category"],
+        version=skill_data.get("version", "1.0.0"),
+        author=skill_data.get("author"),
+        is_builtin=skill_data.get("is_builtin", False),
+        core_content=skill_data.get("core_content"),
+        resources=[
+            SkillResource(
+                name=r["name"],
+                description=r.get("description", ""),
+                content=r.get("content"),
+            )
+            for r in skill_data.get("resources", [])
+        ],
+        scripts=[
+            SkillScript(
+                name=s["name"],
+                description=s.get("description", ""),
+                language=s.get("language", "python"),
+                content=s.get("content"),
+            )
+            for s in skill_data.get("scripts", [])
+        ],
+        created_at=skill_data.get("created_at"),
+        updated_at=skill_data.get("updated_at"),
+        active_version=active_version or 1,
+        version_count=total or 1,
+        versions=version_infos,
+        metrics=metrics_response,
+    )

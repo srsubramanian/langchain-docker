@@ -94,6 +94,11 @@ class SkillUpdateRequest(BaseModel):
     core_content: Optional[str] = Field(None)
     resources: Optional[list[SkillResource]] = Field(None)
     scripts: Optional[list[SkillScript]] = Field(None)
+    change_summary: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Summary of what changed in this version",
+    )
 
 
 class SkillInfo(BaseModel):
@@ -174,3 +179,90 @@ class SkillScriptExecuteResponse(BaseModel):
     script_name: str = Field(..., description="Executed script name")
     output: str = Field(..., description="Script output")
     success: bool = Field(..., description="Whether execution succeeded")
+
+
+# ============================================================================
+# Versioning Models
+# ============================================================================
+
+
+class SkillVersionInfo(BaseModel):
+    """Summary information about a skill version."""
+
+    version_number: int = Field(..., description="Internal version number (auto-increment)")
+    semantic_version: str = Field(..., description="User-facing version string (e.g., '1.0.0')")
+    change_summary: Optional[str] = Field(None, description="What changed in this version")
+    created_at: str = Field(..., description="When this version was created")
+    author: Optional[str] = Field(None, description="Author of this version")
+    is_active: bool = Field(..., description="Whether this is the active version")
+
+
+class SkillVersionDetail(SkillVersionInfo):
+    """Full detail of a skill version including content."""
+
+    name: str = Field(..., description="Skill name")
+    description: str = Field(..., description="Skill description")
+    category: str = Field(..., description="Skill category")
+    core_content: str = Field(..., description="Core content (Level 2)")
+    resources: list[SkillResource] = Field(
+        default_factory=list,
+        description="Additional resources",
+    )
+    scripts: list[SkillScript] = Field(
+        default_factory=list,
+        description="Bundled scripts",
+    )
+
+
+class SkillUsageMetricsResponse(BaseModel):
+    """Usage metrics for a skill."""
+
+    total_loads: int = Field(..., description="Total number of times the skill was loaded")
+    unique_sessions: int = Field(..., description="Number of unique sessions that loaded the skill")
+    last_loaded_at: Optional[str] = Field(None, description="When the skill was last loaded")
+    loads_by_version: dict[int, int] = Field(
+        default_factory=dict,
+        description="Load counts per version number",
+    )
+
+
+class VersionedSkillInfo(SkillInfo):
+    """Skill information with version history summary."""
+
+    active_version: int = Field(1, description="Currently active version number")
+    version_count: int = Field(1, description="Total number of versions")
+    versions: list[SkillVersionInfo] = Field(
+        default_factory=list,
+        description="Summary of all versions (newest first)",
+    )
+    metrics: Optional[SkillUsageMetricsResponse] = Field(
+        None,
+        description="Usage metrics (None if Redis not configured)",
+    )
+
+
+class SkillVersionListResponse(BaseModel):
+    """Response listing skill versions with pagination."""
+
+    skill_id: str = Field(..., description="Skill ID")
+    versions: list[SkillVersionInfo] = Field(..., description="List of versions")
+    total: int = Field(..., description="Total number of versions")
+    limit: int = Field(..., description="Maximum versions returned")
+    offset: int = Field(..., description="Offset for pagination")
+
+
+class SkillDiffField(BaseModel):
+    """A single field difference between two versions."""
+
+    field: str = Field(..., description="Field name that changed")
+    from_value: Optional[str] = Field(None, description="Previous value")
+    to_value: Optional[str] = Field(None, description="New value")
+
+
+class SkillDiffResponse(BaseModel):
+    """Response comparing two skill versions."""
+
+    skill_id: str = Field(..., description="Skill ID")
+    from_version: int = Field(..., description="Source version number")
+    to_version: int = Field(..., description="Target version number")
+    changes: list[SkillDiffField] = Field(..., description="List of field changes")

@@ -10,6 +10,8 @@ import {
   Eye,
   Loader2,
   Download,
+  History,
+  BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,8 +26,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { skillsApi } from '@/api';
 import type { SkillResource, SkillScript } from '@/types/api';
+import { VersionHistory } from './VersionHistory';
+import { SkillMetricsPanel } from './SkillMetricsPanel';
 
 const CATEGORIES = [
   { value: 'general', label: 'General' },
@@ -66,6 +78,10 @@ export function SkillEditor() {
   const [activeTab, setActiveTab] = useState('editor');
   const [isBuiltin, setIsBuiltin] = useState(false);
 
+  // Version save dialog state
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [changeSummary, setChangeSummary] = useState('');
+
   // Load skill data when editing
   useEffect(() => {
     if (isEditing) {
@@ -94,9 +110,20 @@ export function SkillEditor() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSaveClick = () => {
+    if (isEditing) {
+      // Show dialog to enter change summary for version history
+      setShowSaveDialog(true);
+    } else {
+      // For new skills, save directly
+      performSave();
+    }
+  };
+
+  const performSave = async () => {
     setIsSaving(true);
     setError(null);
+    setShowSaveDialog(false);
     try {
       if (isEditing) {
         await skillsApi.update(skillId!, {
@@ -108,6 +135,7 @@ export function SkillEditor() {
           core_content: coreContent,
           resources,
           scripts,
+          change_summary: changeSummary || null,
         });
       } else {
         await skillsApi.create({
@@ -121,6 +149,7 @@ export function SkillEditor() {
           scripts,
         });
       }
+      setChangeSummary('');
       navigate('/skills');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save skill');
@@ -229,7 +258,7 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
             </Button>
           )}
           {!isBuiltin && !isViewing && (
-            <Button onClick={handleSave} disabled={isSaving || !canSave} className="gap-2">
+            <Button onClick={handleSaveClick} disabled={isSaving || !canSave} className="gap-2">
               {isSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -248,7 +277,7 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="mb-6">
+        <TabsList className="mb-6 flex-wrap">
           <TabsTrigger value="editor" className="gap-2">
             <FileText className="h-4 w-4" />
             Editor
@@ -265,6 +294,18 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
             <Eye className="h-4 w-4" />
             Preview
           </TabsTrigger>
+          {isEditing && (
+            <>
+              <TabsTrigger value="history" className="gap-2">
+                <History className="h-4 w-4" />
+                Version History
+              </TabsTrigger>
+              <TabsTrigger value="metrics" className="gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Usage Metrics
+              </TabsTrigger>
+            </>
+          )}
         </TabsList>
 
         {/* Editor Tab */}
@@ -570,7 +611,58 @@ When this skill is activated, follow these steps:
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Version History Tab */}
+        {isEditing && (
+          <TabsContent value="history">
+            <VersionHistory skillId={skillId!} isBuiltin={isBuiltin} />
+          </TabsContent>
+        )}
+
+        {/* Usage Metrics Tab */}
+        {isEditing && (
+          <TabsContent value="metrics">
+            <SkillMetricsPanel skillId={skillId!} isBuiltin={isBuiltin} />
+          </TabsContent>
+        )}
       </Tabs>
+
+      {/* Save Version Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save New Version</DialogTitle>
+            <DialogDescription>
+              Describe what changed in this version. This helps track the skill's evolution.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              placeholder="What changed? (e.g., 'Improved SQL formatting rules')"
+              value={changeSummary}
+              onChange={(e) => setChangeSummary(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={performSave} disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Version
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

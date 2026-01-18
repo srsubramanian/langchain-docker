@@ -1071,13 +1071,38 @@ class SkillRegistry:
 
     Supports both built-in skills (SQLSkill, etc.) and custom
     user-created skills following the SKILL.md format.
+
+    When redis_url is provided, custom skills are persisted with
+    immutable version history and usage metrics tracking.
     """
 
-    def __init__(self):
-        """Initialize skill registry with built-in skills."""
+    def __init__(self, redis_url: Optional[str] = None):
+        """Initialize skill registry with built-in skills.
+
+        Args:
+            redis_url: Optional Redis URL for persistent storage and versioning.
+                       If not provided, skills are stored in-memory only.
+        """
         self._skills: dict[str, Skill] = {}
         self._custom_skills: dict[str, CustomSkill] = {}
+        self._redis_url = redis_url
+        self._redis_store: Optional["RedisSkillStore"] = None
+
+        # Initialize Redis store if URL provided
+        if redis_url:
+            try:
+                from langchain_docker.api.services.redis_skill_store import RedisSkillStore
+                self._redis_store = RedisSkillStore(redis_url)
+                logger.info("SkillRegistry initialized with Redis versioning support")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Redis skill store: {e}")
+                self._redis_store = None
+
         self._register_builtin_skills()
+
+        # Load custom skills from Redis if available
+        if self._redis_store:
+            self._load_custom_from_redis()
 
     def _register_builtin_skills(self) -> None:
         """Register all built-in skills."""
@@ -1093,6 +1118,45 @@ class SkillRegistry:
         # Jira skill (read-only Jira integration)
         jira_skill = JiraSkill()
         self.register(jira_skill)
+
+    def _load_custom_from_redis(self) -> None:
+        """Load custom skills from Redis on startup."""
+        if not self._redis_store:
+            return
+
+        try:
+            skill_ids = self._redis_store.list_custom_skill_ids()
+            for skill_id in skill_ids:
+                versioned_skill = self._redis_store.get_skill(skill_id)
+                if versioned_skill and versioned_skill.active_version_data:
+                    active = versioned_skill.active_version_data
+                    # Create in-memory CustomSkill from active version
+                    skill = CustomSkill(
+                        skill_id=skill_id,
+                        name=active.name,
+                        description=active.description,
+                        category=active.category,
+                        version=active.semantic_version,
+                        author=active.author,
+                        core_content=active.core_content,
+                        resources=[
+                            SkillResource(r.name, r.description, r.content)
+                            for r in active.resources
+                        ],
+                        scripts=[
+                            SkillScript(s.name, s.description, s.language, s.content)
+                            for s in active.scripts
+                        ],
+                    )
+                    skill.created_at = versioned_skill.created_at.isoformat()
+                    skill.updated_at = versioned_skill.updated_at.isoformat()
+                    self._skills[skill_id] = skill
+                    self._custom_skills[skill_id] = skill
+                    logger.debug(f"Loaded custom skill from Redis: {skill_id}")
+
+            logger.info(f"Loaded {len(skill_ids)} custom skills from Redis")
+        except Exception as e:
+            logger.error(f"Failed to load custom skills from Redis: {e}")
 
     def register(self, skill: Skill) -> None:
         """Register a skill.
@@ -1152,11 +1216,12 @@ class SkillRegistry:
             lines.append(f"- {skill.id}: {skill.description}")
         return "\n".join(lines)
 
-    def load_skill(self, skill_id: str) -> str:
+    def load_skill(self, skill_id: str, session_id: Optional[str] = None) -> str:
         """Load a skill's core content (Level 2).
 
         Args:
             skill_id: Skill identifier
+            session_id: Optional session ID for metrics tracking
 
         Returns:
             Skill core content or error message
@@ -1165,6 +1230,23 @@ class SkillRegistry:
         if not skill:
             available = ", ".join(self._skills.keys())
             return f"Unknown skill: {skill_id}. Available skills: {available}"
+
+        # Track metrics in Redis if available
+        if self._redis_store:
+            try:
+                # Get active version number for custom skills
+                version_number = None
+                if skill_id in self._custom_skills:
+                    meta = self._redis_store.get_skill_meta(skill_id)
+                    if meta:
+                        version_number = meta.get("active_version")
+                self._redis_store.record_skill_load(
+                    skill_id,
+                    session_id=session_id,
+                    version_number=version_number,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record skill load metrics: {e}")
 
         # Add custom span for skill loading visibility in Phoenix
         tracer = get_tracer()
@@ -1288,6 +1370,44 @@ class SkillRegistry:
         # Register it
         self._skills[skill_id] = skill
         self._custom_skills[skill_id] = skill
+
+        # Save to Redis with versioning if available
+        if self._redis_store:
+            try:
+                from langchain_docker.api.services.versioned_skill import (
+                    SkillVersion,
+                    SkillVersionResource,
+                    SkillVersionScript,
+                )
+
+                skill_version = SkillVersion(
+                    version_number=1,
+                    semantic_version=version,
+                    name=name,
+                    description=description,
+                    category=category,
+                    author=author,
+                    core_content=core_content,
+                    resources=[
+                        SkillVersionResource(r.name, r.description, r.content)
+                        for r in skill_resources
+                    ],
+                    scripts=[
+                        SkillVersionScript(s.name, s.description, s.language, s.content)
+                        for s in skill_scripts
+                    ],
+                    change_summary="Initial version",
+                )
+                self._redis_store.save_new_version(
+                    skill_id=skill_id,
+                    version=skill_version,
+                    set_active=True,
+                    is_builtin=False,
+                )
+                logger.debug(f"Saved skill to Redis: {skill_id} (version 1)")
+            except Exception as e:
+                logger.warning(f"Failed to save skill to Redis: {e}")
+
         logger.info(f"Created custom skill: {skill_id} ({name})")
 
         return skill
@@ -1303,8 +1423,12 @@ class SkillRegistry:
         author: Optional[str] = None,
         resources: Optional[list[dict]] = None,
         scripts: Optional[list[dict]] = None,
+        change_summary: Optional[str] = None,
     ) -> CustomSkill:
         """Update an existing custom skill.
+
+        When Redis is configured, this creates a new immutable version
+        rather than mutating the existing skill in place.
 
         Args:
             skill_id: Skill ID to update
@@ -1316,6 +1440,7 @@ class SkillRegistry:
             author: New author (optional)
             resources: New resources (optional)
             scripts: New scripts (optional)
+            change_summary: Description of what changed (for version history)
 
         Returns:
             Updated CustomSkill instance
@@ -1355,7 +1480,7 @@ class SkillRegistry:
                     )
                 )
 
-        # Update the skill
+        # Update the in-memory skill
         skill.update(
             name=name,
             description=description,
@@ -1366,6 +1491,51 @@ class SkillRegistry:
             resources=skill_resources,
             scripts=skill_scripts,
         )
+
+        # Save new version to Redis if available
+        if self._redis_store:
+            try:
+                from langchain_docker.api.services.versioned_skill import (
+                    SkillVersion,
+                    SkillVersionResource,
+                    SkillVersionScript,
+                )
+
+                # Get the next version number
+                current_count = self._redis_store.get_version_count(skill_id)
+                next_version_number = current_count + 1
+
+                # Get the updated values
+                final_resources = skill_resources if skill_resources is not None else skill._resources
+                final_scripts = skill_scripts if skill_scripts is not None else skill._scripts
+
+                skill_version = SkillVersion(
+                    version_number=next_version_number,
+                    semantic_version=skill.version,
+                    name=skill.name,
+                    description=skill.description,
+                    category=skill.category,
+                    author=skill.author,
+                    core_content=skill._core_content,
+                    resources=[
+                        SkillVersionResource(r.name, r.description, r.content)
+                        for r in final_resources
+                    ],
+                    scripts=[
+                        SkillVersionScript(s.name, s.description, s.language, s.content)
+                        for s in final_scripts
+                    ],
+                    change_summary=change_summary,
+                )
+                self._redis_store.save_new_version(
+                    skill_id=skill_id,
+                    version=skill_version,
+                    set_active=True,
+                    is_builtin=False,
+                )
+                logger.debug(f"Saved new version to Redis: {skill_id} (version {next_version_number})")
+            except Exception as e:
+                logger.warning(f"Failed to save skill version to Redis: {e}")
 
         logger.info(f"Updated custom skill: {skill_id}")
         return skill
@@ -1389,6 +1559,15 @@ class SkillRegistry:
 
         del self._skills[skill_id]
         del self._custom_skills[skill_id]
+
+        # Delete from Redis if available
+        if self._redis_store:
+            try:
+                self._redis_store.delete_skill(skill_id)
+                logger.debug(f"Deleted skill from Redis: {skill_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete skill from Redis: {e}")
+
         logger.info(f"Deleted custom skill: {skill_id}")
         return True
 
@@ -1487,3 +1666,194 @@ class SkillRegistry:
             raise ValueError(f"Skill not found: {skill_id}")
 
         return skill.to_skill_md()
+
+    # ========================================================================
+    # Versioning Methods (require Redis)
+    # ========================================================================
+
+    def list_versions(
+        self,
+        skill_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[Optional[list], Optional[int], Optional[int]]:
+        """List versions of a skill.
+
+        Args:
+            skill_id: Skill identifier
+            limit: Maximum versions to return
+            offset: Offset for pagination
+
+        Returns:
+            Tuple of (versions list, total count, active version number)
+            Returns (None, None, None) if skill not found or Redis not configured
+        """
+        if not self._redis_store:
+            # Return minimal info for non-Redis mode
+            skill = self._custom_skills.get(skill_id)
+            if not skill:
+                return None, None, None
+
+            # Create a single "version" representing current state
+            from langchain_docker.api.services.versioned_skill import (
+                SkillVersion,
+                SkillVersionResource,
+                SkillVersionScript,
+            )
+
+            version = SkillVersion(
+                version_number=1,
+                semantic_version=skill.version,
+                name=skill.name,
+                description=skill.description,
+                category=skill.category,
+                author=skill.author,
+                core_content=skill._core_content,
+                resources=[
+                    SkillVersionResource(r.name, r.description, r.content)
+                    for r in skill._resources
+                ],
+                scripts=[
+                    SkillVersionScript(s.name, s.description, s.language, s.content)
+                    for s in skill._scripts
+                ],
+            )
+            return [version], 1, 1
+
+        try:
+            versions = self._redis_store.list_versions(
+                skill_id, limit=limit, offset=offset, reverse=True
+            )
+            total = self._redis_store.get_version_count(skill_id)
+            meta = self._redis_store.get_skill_meta(skill_id)
+            active_version = meta.get("active_version", 1) if meta else 1
+            return versions, total, active_version
+        except Exception as e:
+            logger.warning(f"Failed to list versions: {e}")
+            return None, None, None
+
+    def get_version(
+        self,
+        skill_id: str,
+        version_number: int,
+    ) -> tuple[Optional[Any], Optional[int]]:
+        """Get a specific version of a skill.
+
+        Args:
+            skill_id: Skill identifier
+            version_number: Version number to retrieve
+
+        Returns:
+            Tuple of (SkillVersion, active version number)
+            Returns (None, None) if not found
+        """
+        if not self._redis_store:
+            # In non-Redis mode, only version 1 exists
+            if version_number != 1:
+                return None, None
+
+            skill = self._custom_skills.get(skill_id)
+            if not skill:
+                return None, None
+
+            from langchain_docker.api.services.versioned_skill import (
+                SkillVersion,
+                SkillVersionResource,
+                SkillVersionScript,
+            )
+
+            version = SkillVersion(
+                version_number=1,
+                semantic_version=skill.version,
+                name=skill.name,
+                description=skill.description,
+                category=skill.category,
+                author=skill.author,
+                core_content=skill._core_content,
+                resources=[
+                    SkillVersionResource(r.name, r.description, r.content)
+                    for r in skill._resources
+                ],
+                scripts=[
+                    SkillVersionScript(s.name, s.description, s.language, s.content)
+                    for s in skill._scripts
+                ],
+            )
+            return version, 1
+
+        try:
+            version = self._redis_store.get_version(skill_id, version_number)
+            meta = self._redis_store.get_skill_meta(skill_id)
+            active_version = meta.get("active_version", 1) if meta else 1
+            return version, active_version
+        except Exception as e:
+            logger.warning(f"Failed to get version: {e}")
+            return None, None
+
+    def set_active_version(self, skill_id: str, version_number: int) -> bool:
+        """Set the active version for a skill.
+
+        This allows rolling back to a previous version.
+
+        Args:
+            skill_id: Skill identifier
+            version_number: Version number to activate
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._redis_store:
+            logger.warning("Versioning requires Redis configuration")
+            return False
+
+        try:
+            success = self._redis_store.set_active_version(skill_id, version_number)
+            if success:
+                # Update in-memory skill to match activated version
+                version = self._redis_store.get_version(skill_id, version_number)
+                if version and skill_id in self._custom_skills:
+                    skill = self._custom_skills[skill_id]
+                    skill.update(
+                        name=version.name,
+                        description=version.description,
+                        category=version.category,
+                        version=version.semantic_version,
+                        author=version.author,
+                        core_content=version.core_content,
+                        resources=[
+                            SkillResource(r.name, r.description, r.content)
+                            for r in version.resources
+                        ],
+                        scripts=[
+                            SkillScript(s.name, s.description, s.language, s.content)
+                            for s in version.scripts
+                        ],
+                    )
+                logger.info(f"Activated version {version_number} for skill: {skill_id}")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to set active version: {e}")
+            return False
+
+    def get_metrics(self, skill_id: str) -> Optional[Any]:
+        """Get usage metrics for a skill.
+
+        Args:
+            skill_id: Skill identifier
+
+        Returns:
+            SkillUsageMetrics or None if not available
+        """
+        if not self._redis_store:
+            return None
+
+        try:
+            return self._redis_store.get_metrics(skill_id)
+        except Exception as e:
+            logger.warning(f"Failed to get metrics: {e}")
+            return None
+
+    @property
+    def has_redis(self) -> bool:
+        """Check if Redis versioning is available."""
+        return self._redis_store is not None

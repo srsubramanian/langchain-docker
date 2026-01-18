@@ -12,6 +12,7 @@ import {
   Edit,
   Eye,
   Lock,
+  GitBranch,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,13 +39,18 @@ const categoryColors: Record<string, string> = {
   general: 'bg-orange-500',
 };
 
+interface SkillWithVersion extends SkillMetadata {
+  is_builtin?: boolean;
+  version_count?: number;
+}
+
 function SkillCard({
   skill,
   onView,
   onEdit,
   onDelete,
 }: {
-  skill: SkillMetadata & { is_builtin?: boolean };
+  skill: SkillWithVersion;
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -100,6 +106,12 @@ function SkillCard({
               <Badge variant="outline" className="text-xs">
                 v{skill.version}
               </Badge>
+              {skill.version_count && skill.version_count > 1 && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <GitBranch className="h-3 w-3" />
+                  {skill.version_count} versions
+                </Badge>
+              )}
               {skill.author && (
                 <Badge variant="outline" className="text-xs">
                   by {skill.author}
@@ -150,7 +162,7 @@ function SkillCard({
 
 export function SkillsPage() {
   const navigate = useNavigate();
-  const [skills, setSkills] = useState<(SkillMetadata & { is_builtin?: boolean })[]>([]);
+  const [skills, setSkills] = useState<SkillWithVersion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('all');
@@ -164,14 +176,25 @@ export function SkillsPage() {
     setIsLoading(true);
     try {
       const response = await skillsApi.list();
-      // Fetch full details to get is_builtin flag
+      // Fetch full details to get is_builtin flag and version info
       const fullSkills = await Promise.all(
         response.skills.map(async (s) => {
           try {
-            const full = await skillsApi.get(s.id);
-            return { ...s, is_builtin: full.is_builtin };
+            // Try to get versioned info first (includes version_count)
+            const versioned = await skillsApi.getVersioned(s.id);
+            return {
+              ...s,
+              is_builtin: versioned.is_builtin,
+              version_count: versioned.version_count,
+            };
           } catch {
-            return { ...s, is_builtin: false };
+            // Fall back to basic get
+            try {
+              const full = await skillsApi.get(s.id);
+              return { ...s, is_builtin: full.is_builtin };
+            } catch {
+              return { ...s, is_builtin: false };
+            }
           }
         })
       );
@@ -329,7 +352,7 @@ function SkillGrid({
   onEdit,
   onDelete,
 }: {
-  skills: (SkillMetadata & { is_builtin?: boolean })[];
+  skills: SkillWithVersion[];
   isLoading: boolean;
   onView: (id: string) => void;
   onEdit: (id: string) => void;

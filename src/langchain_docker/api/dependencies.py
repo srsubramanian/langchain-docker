@@ -176,6 +176,9 @@ def get_skill_registry() -> SkillRegistry:
     The SkillRegistry manages all available skills (SQL, etc.)
     using progressive disclosure pattern.
 
+    When REDIS_URL is configured, skills are persisted with
+    immutable version history and usage metrics tracking.
+
     Returns:
         SkillRegistry instance
 
@@ -185,7 +188,8 @@ def get_skill_registry() -> SkillRegistry:
     """
     global _skill_registry
     if _skill_registry is None:
-        _skill_registry = SkillRegistry()
+        redis_url = get_redis_url()
+        _skill_registry = SkillRegistry(redis_url=redis_url)
     return _skill_registry
 
 

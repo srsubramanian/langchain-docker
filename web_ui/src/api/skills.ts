@@ -1,16 +1,22 @@
 /**
  * Skills API client implementing progressive disclosure pattern.
  * Based on Anthropic's Agent Skills architecture.
+ * Supports versioned skill management with Redis persistence.
  */
 
 import type {
   SkillCreateRequest,
   SkillCreateResponse,
   SkillDeleteResponse,
+  SkillDiffResponse,
   SkillInfo,
   SkillListResponse,
   SkillLoadResponse,
   SkillUpdateRequest,
+  SkillUsageMetrics,
+  SkillVersionDetail,
+  SkillVersionListResponse,
+  VersionedSkillInfo,
 } from '@/types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -119,6 +125,105 @@ class SkillsApi {
     const response = await fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/export`);
     if (!response.ok) {
       throw new Error(`Failed to export skill: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  // ==========================================================================
+  // Versioning Methods
+  // ==========================================================================
+
+  /**
+   * Get skill with full version history.
+   * Returns skill info along with version summary and metrics.
+   */
+  async getVersioned(skillId: string): Promise<VersionedSkillInfo> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/versioned`);
+    if (!response.ok) {
+      throw new Error(`Failed to get versioned skill: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * List all versions of a skill with pagination.
+   */
+  async listVersions(
+    skillId: string,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<SkillVersionListResponse> {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      offset: offset.toString(),
+    });
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/skills/${skillId}/versions?${params}`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to list versions: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Get full content of a specific version.
+   */
+  async getVersion(skillId: string, versionNumber: number): Promise<SkillVersionDetail> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/skills/${skillId}/versions/${versionNumber}`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to get version: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Activate a specific version (rollback).
+   */
+  async activateVersion(
+    skillId: string,
+    versionNumber: number
+  ): Promise<{ skill_id: string; active_version: number; message: string }> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/skills/${skillId}/versions/${versionNumber}/activate`,
+      { method: 'POST' }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to activate version: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Compare two versions of a skill.
+   */
+  async diffVersions(
+    skillId: string,
+    fromVersion: number,
+    toVersion: number
+  ): Promise<SkillDiffResponse> {
+    const params = new URLSearchParams({
+      from_version: fromVersion.toString(),
+      to_version: toVersion.toString(),
+    });
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/skills/${skillId}/versions/diff?${params}`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to diff versions: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Get usage metrics for a skill.
+   */
+  async getMetrics(skillId: string): Promise<SkillUsageMetrics> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/metrics`);
+    if (!response.ok) {
+      throw new Error(`Failed to get metrics: ${response.statusText}`);
     }
     return response.json();
   }

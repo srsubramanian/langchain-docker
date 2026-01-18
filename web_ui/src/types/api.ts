@@ -331,6 +331,7 @@ export interface SkillUpdateRequest {
   core_content?: string | null;
   resources?: SkillResource[] | null;
   scripts?: SkillScript[] | null;
+  change_summary?: string | null;
 }
 
 export interface SkillCreateResponse {
@@ -348,6 +349,60 @@ export interface SkillLoadResponse {
   skill_id: string;
   name: string;
   content: string;
+}
+
+// Skill Versioning types
+export interface SkillVersionInfo {
+  version_number: number;
+  semantic_version: string;
+  change_summary: string | null;
+  created_at: string;
+  author: string | null;
+  is_active: boolean;
+}
+
+export interface SkillVersionDetail extends SkillVersionInfo {
+  name: string;
+  description: string;
+  category: string;
+  core_content: string;
+  resources: SkillResource[];
+  scripts: SkillScript[];
+}
+
+export interface SkillUsageMetrics {
+  total_loads: number;
+  unique_sessions: number;
+  last_loaded_at: string | null;
+  loads_by_version: Record<number, number>;
+}
+
+export interface VersionedSkillInfo extends SkillInfo {
+  active_version: number;
+  version_count: number;
+  versions: SkillVersionInfo[];
+  metrics: SkillUsageMetrics | null;
+}
+
+export interface SkillVersionListResponse {
+  skill_id: string;
+  versions: SkillVersionInfo[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SkillDiffField {
+  field: string;
+  from_value: string | null;
+  to_value: string | null;
+}
+
+export interface SkillDiffResponse {
+  skill_id: string;
+  from_version: number;
+  to_version: number;
+  changes: SkillDiffField[];
 }
 
 // MCP Server types
