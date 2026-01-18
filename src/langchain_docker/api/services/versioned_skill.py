@@ -12,6 +12,116 @@ from typing import Any
 
 
 @dataclass
+class SkillToolArgConfig:
+    """Configuration for a tool argument."""
+
+    name: str
+    type: str = "string"  # string, int, bool, float
+    description: str = ""
+    required: bool = True
+    default: Any = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "name": self.name,
+            "type": self.type,
+            "description": self.description,
+            "required": self.required,
+            "default": self.default,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SkillToolArgConfig":
+        """Create from dictionary representation."""
+        return cls(
+            name=data["name"],
+            type=data.get("type", "string"),
+            description=data.get("description", ""),
+            required=data.get("required", True),
+            default=data.get("default"),
+        )
+
+
+@dataclass
+class SkillToolConfig:
+    """Configuration for a gated tool that requires this skill.
+
+    Defines how a tool should be created and connected to the skill.
+    This allows tool definitions to be stored in SKILL.md frontmatter
+    and edited via the API.
+    """
+
+    name: str  # Tool name (e.g., "sql_query")
+    description: str  # Tool description for LLM
+    method: str  # Skill method to call (e.g., "execute_query")
+    args: list[SkillToolArgConfig] = field(default_factory=list)
+    requires_skill_loaded: bool = True  # Gate behind skill loading
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "method": self.method,
+            "args": [a.to_dict() for a in self.args],
+            "requires_skill_loaded": self.requires_skill_loaded,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SkillToolConfig":
+        """Create from dictionary representation."""
+        args = [SkillToolArgConfig.from_dict(a) for a in data.get("args", [])]
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            method=data.get("method", ""),
+            args=args,
+            requires_skill_loaded=data.get("requires_skill_loaded", True),
+        )
+
+
+@dataclass
+class SkillResourceConfig:
+    """Configuration for a skill resource (Level 3 content).
+
+    Resources can be either static files or dynamically generated.
+    This allows resource definitions to be stored in SKILL.md frontmatter
+    and edited via the API.
+    """
+
+    name: str  # Resource name (e.g., "examples")
+    description: str  # Resource description
+    file: str | None = None  # Static file path (e.g., "examples.md")
+    content: str | None = None  # Inline content (for custom skills)
+    dynamic: bool = False  # If true, call method instead of reading file
+    method: str | None = None  # Skill method for dynamic content
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "file": self.file,
+            "content": self.content,
+            "dynamic": self.dynamic,
+            "method": self.method,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SkillResourceConfig":
+        """Create from dictionary representation."""
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            file=data.get("file"),
+            content=data.get("content"),
+            dynamic=data.get("dynamic", False),
+            method=data.get("method"),
+        )
+
+
+@dataclass
 class SkillVersionResource:
     """Resource file bundled with a skill version."""
 
@@ -47,6 +157,8 @@ class SkillVersion:
     core_content: str
     resources: list[SkillVersionResource] = field(default_factory=list)
     scripts: list[SkillVersionScript] = field(default_factory=list)
+    tool_configs: list[SkillToolConfig] = field(default_factory=list)
+    resource_configs: list[SkillResourceConfig] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     change_summary: str | None = None  # What changed in this version
 
@@ -73,6 +185,8 @@ class SkillVersion:
                 }
                 for s in self.scripts
             ],
+            "tool_configs": [t.to_dict() for t in self.tool_configs],
+            "resource_configs": [r.to_dict() for r in self.resource_configs],
             "created_at": self.created_at.isoformat(),
             "change_summary": self.change_summary,
         }
@@ -97,6 +211,12 @@ class SkillVersion:
             )
             for s in data.get("scripts", [])
         ]
+        tool_configs = [
+            SkillToolConfig.from_dict(t) for t in data.get("tool_configs", [])
+        ]
+        resource_configs = [
+            SkillResourceConfig.from_dict(r) for r in data.get("resource_configs", [])
+        ]
 
         created_at = data.get("created_at")
         if isinstance(created_at, str):
@@ -114,6 +234,8 @@ class SkillVersion:
             core_content=data.get("core_content", ""),
             resources=resources,
             scripts=scripts,
+            tool_configs=tool_configs,
+            resource_configs=resource_configs,
             created_at=created_at,
             change_summary=data.get("change_summary"),
         )

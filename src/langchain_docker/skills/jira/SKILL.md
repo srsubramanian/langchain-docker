@@ -2,6 +2,71 @@
 name: jira
 description: "Read-only Jira integration for querying issues, sprints, projects, and users"
 category: project_management
+version: "1.0.0"
+
+# Tool configurations - gated tools that require this skill
+tool_configs:
+  - name: jira_search
+    description: "Search for Jira issues using JQL (Jira Query Language)."
+    method: search_issues
+    args:
+      - name: jql
+        type: string
+        description: "JQL query string (e.g., 'project = PROJ AND status = Open')"
+        required: true
+
+  - name: jira_get_issue
+    description: "Get detailed information about a specific Jira issue."
+    method: get_issue
+    args:
+      - name: issue_key
+        type: string
+        description: "Issue key (e.g., 'PROJ-123')"
+        required: true
+
+  - name: jira_list_projects
+    description: "List all accessible Jira projects."
+    method: list_projects
+    args: []
+
+  - name: jira_get_sprints
+    description: "Get sprints for a Jira board."
+    method: get_sprints
+    args:
+      - name: board_id
+        type: int
+        description: "The ID of the agile board"
+        required: true
+      - name: state_filter
+        type: string
+        description: "Sprint state filter - 'active', 'closed', or 'future'"
+        required: false
+        default: "active"
+
+  - name: jira_get_changelog
+    description: "Get the change history for a Jira issue."
+    method: get_changelog
+    args:
+      - name: issue_key
+        type: string
+        description: "Issue key (e.g., 'PROJ-123')"
+        required: true
+
+  - name: jira_jql_reference
+    description: "Load JQL (Jira Query Language) reference documentation."
+    method: load_details
+    args:
+      - name: resource
+        type: string
+        description: "Resource to load"
+        required: false
+        default: "jql_reference"
+
+# Resource configurations - Level 3 content
+resource_configs:
+  - name: jql_reference
+    description: "JQL syntax reference guide with operators, functions, and examples"
+    file: jql_reference.md
 ---
 
 # Jira Skill

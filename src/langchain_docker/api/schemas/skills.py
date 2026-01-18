@@ -37,6 +37,48 @@ class SkillScript(BaseModel):
     content: Optional[str] = Field(None, description="Script content (if loaded)")
 
 
+class SkillToolArgConfig(BaseModel):
+    """Configuration for a tool argument."""
+
+    name: str = Field(..., description="Argument name")
+    type: str = Field("string", description="Argument type (string, int, bool, float)")
+    description: str = Field("", description="Argument description")
+    required: bool = Field(True, description="Whether the argument is required")
+    default: Optional[Any] = Field(None, description="Default value if not required")
+
+
+class SkillToolConfig(BaseModel):
+    """Configuration for a gated tool that requires this skill.
+
+    Defines how a tool should be created and connected to the skill.
+    """
+
+    name: str = Field(..., description="Tool name (e.g., 'sql_query')")
+    description: str = Field(..., description="Tool description for LLM")
+    method: str = Field(..., description="Skill method to call (e.g., 'execute_query')")
+    args: list[SkillToolArgConfig] = Field(
+        default_factory=list,
+        description="Tool arguments configuration",
+    )
+    requires_skill_loaded: bool = Field(
+        True, description="Whether the skill must be loaded before using this tool"
+    )
+
+
+class SkillResourceConfig(BaseModel):
+    """Configuration for a skill resource (Level 3 content).
+
+    Resources can be static files, inline content, or dynamically generated.
+    """
+
+    name: str = Field(..., description="Resource name (e.g., 'examples')")
+    description: str = Field(..., description="Resource description")
+    file: Optional[str] = Field(None, description="Static file path (e.g., 'examples.md')")
+    content: Optional[str] = Field(None, description="Inline content (for custom skills)")
+    dynamic: bool = Field(False, description="If true, call method instead of reading file")
+    method: Optional[str] = Field(None, description="Skill method for dynamic content")
+
+
 class SkillCreateRequest(BaseModel):
     """Request to create a new skill (SKILL.md format)."""
 
@@ -82,6 +124,16 @@ class SkillCreateRequest(BaseModel):
         description="Executable scripts",
     )
 
+    # Tool and resource configurations
+    tool_configs: list[SkillToolConfig] = Field(
+        default_factory=list,
+        description="Gated tools that require this skill",
+    )
+    resource_configs: list[SkillResourceConfig] = Field(
+        default_factory=list,
+        description="Resource configurations for Level 3 content",
+    )
+
 
 class SkillUpdateRequest(BaseModel):
     """Request to update an existing skill."""
@@ -94,6 +146,12 @@ class SkillUpdateRequest(BaseModel):
     core_content: Optional[str] = Field(None)
     resources: Optional[list[SkillResource]] = Field(None)
     scripts: Optional[list[SkillScript]] = Field(None)
+    tool_configs: Optional[list[SkillToolConfig]] = Field(
+        None, description="Gated tools that require this skill"
+    )
+    resource_configs: Optional[list[SkillResourceConfig]] = Field(
+        None, description="Resource configurations for Level 3 content"
+    )
     change_summary: Optional[str] = Field(
         None,
         max_length=500,
@@ -119,6 +177,14 @@ class SkillInfo(BaseModel):
     scripts: list[SkillScript] = Field(
         default_factory=list,
         description="Bundled scripts",
+    )
+    tool_configs: list[SkillToolConfig] = Field(
+        default_factory=list,
+        description="Gated tools that require this skill",
+    )
+    resource_configs: list[SkillResourceConfig] = Field(
+        default_factory=list,
+        description="Resource configurations for Level 3 content",
     )
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     updated_at: Optional[str] = Field(None, description="Last update timestamp")
@@ -215,6 +281,14 @@ class SkillVersionDetail(SkillVersionInfo):
     scripts: list[SkillScript] = Field(
         default_factory=list,
         description="Bundled scripts",
+    )
+    tool_configs: list[SkillToolConfig] = Field(
+        default_factory=list,
+        description="Gated tools that require this skill",
+    )
+    resource_configs: list[SkillResourceConfig] = Field(
+        default_factory=list,
+        description="Resource configurations for Level 3 content",
     )
 
 

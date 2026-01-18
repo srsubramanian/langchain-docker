@@ -429,19 +429,195 @@ def create_gated_jira_jql_reference_tool(jira_skill):
 
 
 # =============================================================================
-# Factory function to create all gated tools for a registry
+# Dynamic Tool Factory - Creates tools from skill tool_configs
 # =============================================================================
 
-def create_gated_tools_for_skill(skill_id: str, skill_instance) -> list:
-    """Create all gated tools for a given skill.
+def create_dynamic_tool_from_config(
+    skill_id: str,
+    skill_instance,
+    tool_config: dict,
+) -> Optional[callable]:
+    """Create a gated tool dynamically from a tool config.
+
+    This factory creates tools based on the tool_configs defined in SKILL.md
+    frontmatter, allowing tools to be defined declaratively and edited via API.
 
     Args:
-        skill_id: The skill identifier ("write_sql", "jira", etc.)
-        skill_instance: The skill instance with the necessary methods
+        skill_id: The skill identifier (e.g., "write_sql", "jira")
+        skill_instance: The skill instance with the methods to call
+        tool_config: Tool configuration dict with name, description, method, args
+
+    Returns:
+        A tool function or None if the method doesn't exist
+    """
+    from langchain_core.tools import StructuredTool
+    from pydantic import Field, create_model
+    from typing import Any
+
+    tool_name = tool_config.get("name", "")
+    tool_description = tool_config.get("description", "")
+    method_name = tool_config.get("method", "")
+    args_config = tool_config.get("args", [])
+    requires_skill = tool_config.get("requires_skill_loaded", True)
+
+    # Check if the method exists on the skill
+    if not hasattr(skill_instance, method_name):
+        logger.warning(f"Skill {skill_id} has no method '{method_name}' for tool '{tool_name}'")
+        return None
+
+    method = getattr(skill_instance, method_name)
+
+    # Build dynamic Pydantic model for input args
+    field_definitions = {}
+    for arg in args_config:
+        arg_name = arg.get("name", "")
+        arg_type_str = arg.get("type", "string")
+        arg_desc = arg.get("description", "")
+        arg_required = arg.get("required", True)
+        arg_default = arg.get("default")
+
+        # Map type strings to Python types
+        type_map = {
+            "string": str,
+            "str": str,
+            "int": int,
+            "integer": int,
+            "bool": bool,
+            "boolean": bool,
+            "float": float,
+            "number": float,
+        }
+        arg_type = type_map.get(arg_type_str, str)
+
+        if arg_required:
+            field_definitions[arg_name] = (arg_type, Field(description=arg_desc))
+        else:
+            field_definitions[arg_name] = (
+                Optional[arg_type],
+                Field(default=arg_default, description=arg_desc),
+            )
+
+    # Create dynamic input model (empty model if no args)
+    if field_definitions:
+        DynamicInput = create_model(f"{tool_name}Input", **field_definitions)
+    else:
+        DynamicInput = create_model(f"{tool_name}Input")
+
+    # Create the tool function with skill gating
+    def create_tool_func():
+        def tool_func(runtime: ToolRuntime, **kwargs) -> str:
+            """Dynamically generated tool function."""
+            state: SkillAwareState = runtime.state
+
+            # Check if skill is loaded (if required)
+            if requires_skill and not is_skill_loaded(state, skill_id):
+                return skill_required_error(skill_id, runtime.tool_call_id, tool_name)
+
+            # Call the skill method with the provided args
+            try:
+                result = method(**kwargs)
+                return result
+            except Exception as e:
+                logger.error(f"{tool_name} error: {e}")
+                return f"Error in {tool_name}: {str(e)}"
+
+        return tool_func
+
+    tool_func = create_tool_func()
+
+    # Create StructuredTool with the dynamic input model
+    # For tools with no args, we need to handle differently
+    if field_definitions:
+        structured_tool = StructuredTool.from_function(
+            func=tool_func,
+            name=tool_name,
+            description=f"{tool_description}\n\nRequires the '{skill_id}' skill to be loaded first.",
+            args_schema=DynamicInput,
+        )
+    else:
+        # For tools with no args, use StructuredTool with an empty schema
+        def no_args_func(runtime: ToolRuntime) -> str:
+            state: SkillAwareState = runtime.state
+            if requires_skill and not is_skill_loaded(state, skill_id):
+                return skill_required_error(skill_id, runtime.tool_call_id, tool_name)
+            try:
+                result = method()
+                return result
+            except Exception as e:
+                logger.error(f"{tool_name} error: {e}")
+                return f"Error in {tool_name}: {str(e)}"
+
+        structured_tool = StructuredTool.from_function(
+            func=no_args_func,
+            name=tool_name,
+            description=f"{tool_description}\n\nRequires the '{skill_id}' skill to be loaded first.",
+            args_schema=DynamicInput,
+        )
+
+    return structured_tool
+
+
+def create_gated_tools_from_configs(skill_id: str, skill_instance) -> list:
+    """Create gated tools dynamically from a skill's tool_configs.
+
+    Reads the tool configurations from the skill instance (loaded from SKILL.md
+    frontmatter) and creates corresponding gated tools.
+
+    Args:
+        skill_id: The skill identifier
+        skill_instance: The skill instance with get_tool_configs() method
 
     Returns:
         List of gated tool functions
     """
+    tools = []
+
+    # Get tool configs from the skill
+    if not hasattr(skill_instance, "get_tool_configs"):
+        logger.debug(f"Skill {skill_id} has no get_tool_configs method, using static tools")
+        return []
+
+    tool_configs = skill_instance.get_tool_configs()
+    if not tool_configs:
+        logger.debug(f"Skill {skill_id} has no tool_configs defined")
+        return []
+
+    for config in tool_configs:
+        tool = create_dynamic_tool_from_config(skill_id, skill_instance, config)
+        if tool:
+            tools.append(tool)
+            logger.debug(f"Created dynamic tool '{config.get('name')}' for skill '{skill_id}'")
+
+    return tools
+
+
+# =============================================================================
+# Factory function to create all gated tools for a registry
+# =============================================================================
+
+def create_gated_tools_for_skill(skill_id: str, skill_instance, use_dynamic: bool = True) -> list:
+    """Create all gated tools for a given skill.
+
+    By default, this function first tries to create tools dynamically from
+    the skill's tool_configs (loaded from SKILL.md frontmatter). If no configs
+    are found, it falls back to using hardcoded static tool factories.
+
+    Args:
+        skill_id: The skill identifier ("write_sql", "jira", etc.)
+        skill_instance: The skill instance with the necessary methods
+        use_dynamic: If True, try dynamic tool creation first (default: True)
+
+    Returns:
+        List of gated tool functions
+    """
+    # Try dynamic tool creation first if enabled
+    if use_dynamic:
+        dynamic_tools = create_gated_tools_from_configs(skill_id, skill_instance)
+        if dynamic_tools:
+            logger.info(f"Created {len(dynamic_tools)} dynamic tools for skill '{skill_id}'")
+            return dynamic_tools
+
+    # Fallback to static tool factories
     tools = []
 
     if skill_id == "write_sql":
@@ -459,5 +635,8 @@ def create_gated_tools_for_skill(skill_id: str, skill_instance) -> list:
             create_gated_jira_get_changelog_tool(skill_instance),
             create_gated_jira_jql_reference_tool(skill_instance),
         ]
+
+    if tools:
+        logger.info(f"Created {len(tools)} static tools for skill '{skill_id}'")
 
     return tools

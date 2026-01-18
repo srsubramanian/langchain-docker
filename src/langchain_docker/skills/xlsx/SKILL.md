@@ -2,7 +2,25 @@
 name: xlsx
 description: "Comprehensive spreadsheet creation, editing, and analysis with support for formulas, formatting, data analysis, and visualization"
 category: data
+version: "1.0.0"
 license: Based on Anthropic's xlsx skill (https://github.com/anthropics/skills)
+
+# Tool configurations - this skill has no gated tools (uses general code execution)
+tool_configs: []
+
+# Resource configurations - Level 3 content
+resource_configs:
+  - name: examples
+    description: "Detailed code examples for common spreadsheet operations"
+    file: examples.md
+
+  - name: formatting
+    description: "Advanced formatting guide including styles, conditional formatting, and charts"
+    file: formatting.md
+
+  - name: recalc
+    description: "Recalculation script for verifying formula results"
+    file: recalc.md
 ---
 
 # XLSX Skill

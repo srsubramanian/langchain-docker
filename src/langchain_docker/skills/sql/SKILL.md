@@ -2,6 +2,48 @@
 name: write_sql
 description: "Write and execute SQL queries against the database"
 category: database
+version: "1.0.0"
+
+# Tool configurations - gated tools that require this skill
+tool_configs:
+  - name: sql_query
+    description: "Execute a SQL query against the database. In read-only mode, only SELECT queries are allowed."
+    method: execute_query
+    args:
+      - name: query
+        type: string
+        description: "The SQL query to execute"
+        required: true
+
+  - name: sql_list_tables
+    description: "List all available tables in the database."
+    method: list_tables
+    args: []
+
+  - name: sql_get_samples
+    description: "Get sample rows from database tables to understand data structure."
+    method: load_details
+    args:
+      - name: resource
+        type: string
+        description: "Resource to load"
+        required: false
+        default: "samples"
+
+# Resource configurations - Level 3 content
+resource_configs:
+  - name: samples
+    description: "Sample rows from each database table (generated dynamically)"
+    dynamic: true
+    method: get_sample_rows
+
+  - name: examples
+    description: "SQL query examples for common patterns"
+    file: examples.md
+
+  - name: patterns
+    description: "Common SQL patterns and anti-patterns"
+    file: patterns.md
 ---
 
 # SQL Skill

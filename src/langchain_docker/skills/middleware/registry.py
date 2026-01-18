@@ -323,45 +323,51 @@ class SkillRegistry:
         This method bridges the gap between the old skill_registry.py
         implementation and the new middleware-based approach.
 
+        Now uses skill.get_tool_configs() and skill.get_resource_configs()
+        to read tool and resource mappings from SKILL.md frontmatter,
+        making the configuration fully data-driven.
+
         Args:
             legacy_registry: Instance of the legacy SkillRegistry
 
         Returns:
             Number of skills loaded
         """
-        # Mapping of skill IDs to their required tools and detail resources
-        SKILL_METADATA: dict[str, dict] = {
-            "write_sql": {
-                "required_by_tools": ["sql_query", "sql_list_tables", "sql_get_samples"],
-                "detail_resources": ["samples"],
-            },
-            "jira": {
-                "required_by_tools": [
-                    "jira_search", "jira_get_issue", "jira_list_projects",
-                    "jira_get_sprints", "jira_get_changelog"
-                ],
-                "detail_resources": ["jql_reference"],
-            },
-            "xlsx": {
-                "required_by_tools": [],
-                "detail_resources": ["examples", "formatting"],
-            },
-        }
-
         count = 0
         for skill in legacy_registry.get_all_skills():
-            # Get metadata for this skill, or use defaults
-            metadata = SKILL_METADATA.get(skill.id, {})
-            required_tools = metadata.get("required_by_tools", [])
-            resource_names = metadata.get("detail_resources", [])
+            # Get tool configs from skill (loaded from SKILL.md frontmatter)
+            required_tools = []
+            if hasattr(skill, "get_tool_configs"):
+                tool_configs = skill.get_tool_configs()
+                required_tools = [t.get("name", "") for t in tool_configs if t.get("name")]
 
-            # Build detail_resources dict with lazy loading lambdas
+            # Get resource configs from skill (loaded from SKILL.md frontmatter)
             detail_resources = {}
-            for resource_name in resource_names:
-                # Capture skill and resource_name in closure
-                detail_resources[resource_name] = (
-                    lambda s=skill, r=resource_name: s.load_details(r)
-                )
+            if hasattr(skill, "get_resource_configs"):
+                resource_configs = skill.get_resource_configs()
+                for rc in resource_configs:
+                    resource_name = rc.get("name", "")
+                    if not resource_name:
+                        continue
+
+                    # Determine how to load this resource
+                    if rc.get("dynamic") and rc.get("method"):
+                        # Dynamic resource: call the skill method
+                        method_name = rc["method"]
+                        if hasattr(skill, method_name):
+                            detail_resources[resource_name] = (
+                                lambda s=skill, m=method_name: getattr(s, m)()
+                            )
+                        else:
+                            # Fallback to load_details
+                            detail_resources[resource_name] = (
+                                lambda s=skill, r=resource_name: s.load_details(r)
+                            )
+                    else:
+                        # Static resource: use load_details
+                        detail_resources[resource_name] = (
+                            lambda s=skill, r=resource_name: s.load_details(r)
+                        )
 
             definition = SkillDefinition(
                 id=skill.id,
@@ -375,5 +381,10 @@ class SkillRegistry:
             )
             self.register(definition)
             count += 1
+
+            logger.debug(
+                f"Loaded skill '{skill.id}' with {len(required_tools)} tools "
+                f"and {len(detail_resources)} resources from configs"
+            )
 
         return count

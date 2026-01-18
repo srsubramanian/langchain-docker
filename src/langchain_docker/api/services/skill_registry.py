@@ -78,6 +78,10 @@ class Skill(ABC):
     _custom_content: Optional[str] = None
     _custom_resources: Optional[list] = None
 
+    # Tool and resource configurations (loaded from SKILL.md frontmatter or Redis)
+    _tool_configs: list = []
+    _resource_configs: list = []
+
     def has_custom_content(self) -> bool:
         """Check if skill has Redis-customized content.
 
@@ -87,21 +91,33 @@ class Skill(ABC):
         return self._custom_content is not None
 
     def set_custom_content(
-        self, content: str, resources: Optional[list] = None
+        self,
+        content: str,
+        resources: Optional[list] = None,
+        tool_configs: Optional[list] = None,
+        resource_configs: Optional[list] = None,
     ) -> None:
         """Set custom content from Redis.
 
         Args:
             content: Custom core content to use instead of file-based
             resources: Optional custom resources
+            tool_configs: Optional tool configurations
+            resource_configs: Optional resource configurations
         """
         self._custom_content = content
         self._custom_resources = resources or []
+        if tool_configs is not None:
+            self._tool_configs = tool_configs
+        if resource_configs is not None:
+            self._resource_configs = resource_configs
 
     def clear_custom_content(self) -> None:
         """Clear custom content, reverting to file-based defaults."""
         self._custom_content = None
         self._custom_resources = None
+        # Note: We don't clear _tool_configs and _resource_configs as they
+        # should reload from file when content is cleared
 
     def get_file_content(self) -> str:
         """Get the original file-based content for this skill.
@@ -113,6 +129,22 @@ class Skill(ABC):
             Original file-based content
         """
         return ""
+
+    def get_tool_configs(self) -> list:
+        """Get tool configurations for this skill.
+
+        Returns:
+            List of SkillToolConfig-like dicts or objects
+        """
+        return self._tool_configs
+
+    def get_resource_configs(self) -> list:
+        """Get resource configurations for this skill.
+
+        Returns:
+            List of SkillResourceConfig-like dicts or objects
+        """
+        return self._resource_configs
 
     @abstractmethod
     def load_core(self) -> str:
@@ -157,6 +189,11 @@ class XLSXSkill(Skill):
         self.category = "data"
         self.is_builtin = True
         self._skill_dir = SKILLS_DIR / "xlsx"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._load_configs_from_frontmatter()
 
     def _read_md_file(self, filename: str) -> str:
         """Read content from a markdown file in the skill directory.
@@ -177,6 +214,60 @@ class XLSXSkill(Skill):
         except Exception as e:
             logger.error(f"Error reading skill file {filename}: {e}")
             return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            content = self._read_md_file("SKILL.md")
+            if not content.startswith("---"):
+                return
+
+            # Parse YAML frontmatter
+            lines = content.split("\n")
+            end_idx = None
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    end_idx = i
+                    break
+
+            if end_idx:
+                import yaml
+                frontmatter = "\n".join(lines[1:end_idx])
+                metadata = yaml.safe_load(frontmatter) or {}
+
+                # Load tool configs
+                tool_configs = metadata.get("tool_configs", [])
+                self._tool_configs = [
+                    {
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "method": t.get("method", ""),
+                        "args": t.get("args", []),
+                        "requires_skill_loaded": t.get("requires_skill_loaded", True),
+                    }
+                    for t in tool_configs
+                ] if tool_configs else []
+
+                # Load resource configs
+                resource_configs = metadata.get("resource_configs", [])
+                self._resource_configs = [
+                    {
+                        "name": r.get("name", ""),
+                        "description": r.get("description", ""),
+                        "file": r.get("file"),
+                        "content": r.get("content"),
+                        "dynamic": r.get("dynamic", False),
+                        "method": r.get("method"),
+                    }
+                    for r in resource_configs
+                ] if resource_configs else []
+
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
 
     def get_file_content(self) -> str:
         """Get the original file-based content for this skill.
@@ -262,6 +353,11 @@ class SQLSkill(Skill):
         self.read_only = read_only if read_only is not None else is_sql_read_only()
         self._db: Optional[SQLDatabase] = None
         self._skill_dir = SKILLS_DIR / "sql"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._load_configs_from_frontmatter()
 
     def _get_db(self) -> SQLDatabase:
         """Get or create SQLDatabase instance.
@@ -303,6 +399,64 @@ class SQLSkill(Skill):
         except Exception as e:
             logger.error(f"Error reading skill file {filename}: {e}")
             return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Parse YAML frontmatter
+            lines = content.split("\n")
+            end_idx = None
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    end_idx = i
+                    break
+
+            if end_idx:
+                import yaml
+                frontmatter = "\n".join(lines[1:end_idx])
+                metadata = yaml.safe_load(frontmatter) or {}
+
+                # Load tool configs
+                tool_configs = metadata.get("tool_configs", [])
+                self._tool_configs = [
+                    {
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "method": t.get("method", ""),
+                        "args": t.get("args", []),
+                        "requires_skill_loaded": t.get("requires_skill_loaded", True),
+                    }
+                    for t in tool_configs
+                ] if tool_configs else []
+
+                # Load resource configs
+                resource_configs = metadata.get("resource_configs", [])
+                self._resource_configs = [
+                    {
+                        "name": r.get("name", ""),
+                        "description": r.get("description", ""),
+                        "file": r.get("file"),
+                        "content": r.get("content"),
+                        "dynamic": r.get("dynamic", False),
+                        "method": r.get("method"),
+                    }
+                    for r in resource_configs
+                ] if resource_configs else []
+
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
 
     def get_file_content(self) -> str:
         """Get the original file-based content for this skill.
@@ -484,6 +638,11 @@ class JiraSkill(Skill):
 
         self._skill_dir = SKILLS_DIR / "jira"
         self._session = None
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._load_configs_from_frontmatter()
 
     def _get_session(self):
         """Get or create requests session with Bearer token authentication.
@@ -544,6 +703,64 @@ class JiraSkill(Skill):
         except Exception as e:
             logger.error(f"Error reading skill file {filename}: {e}")
             return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Parse YAML frontmatter
+            lines = content.split("\n")
+            end_idx = None
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    end_idx = i
+                    break
+
+            if end_idx:
+                import yaml
+                frontmatter = "\n".join(lines[1:end_idx])
+                metadata = yaml.safe_load(frontmatter) or {}
+
+                # Load tool configs
+                tool_configs = metadata.get("tool_configs", [])
+                self._tool_configs = [
+                    {
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "method": t.get("method", ""),
+                        "args": t.get("args", []),
+                        "requires_skill_loaded": t.get("requires_skill_loaded", True),
+                    }
+                    for t in tool_configs
+                ] if tool_configs else []
+
+                # Load resource configs
+                resource_configs = metadata.get("resource_configs", [])
+                self._resource_configs = [
+                    {
+                        "name": r.get("name", ""),
+                        "description": r.get("description", ""),
+                        "file": r.get("file"),
+                        "content": r.get("content"),
+                        "dynamic": r.get("dynamic", False),
+                        "method": r.get("method"),
+                    }
+                    for r in resource_configs
+                ] if resource_configs else []
+
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
 
     def _api_get(self, endpoint: str, params: Optional[dict] = None) -> dict:
         """Make a GET request to the Jira API.
@@ -1083,6 +1300,8 @@ class CustomSkill(Skill):
                 }
                 for s in self._scripts
             ],
+            "tool_configs": getattr(self, "_tool_configs", []),
+            "resource_configs": getattr(self, "_resource_configs", []),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -1843,6 +2062,8 @@ class SkillRegistry:
             "core_content": editable_content,  # Editable static content
             "resources": [],
             "scripts": [],
+            "tool_configs": skill.get_tool_configs(),
+            "resource_configs": skill.get_resource_configs(),
             "has_custom_content": skill.has_custom_content(),
         }
 

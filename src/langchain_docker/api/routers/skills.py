@@ -18,8 +18,11 @@ from langchain_docker.api.schemas.skills import (
     SkillLoadResponse,
     SkillMetadata,
     SkillResource,
+    SkillResourceConfig,
     SkillResourceLoadResponse,
     SkillScript,
+    SkillToolArgConfig,
+    SkillToolConfig,
     SkillUpdateRequest,
     SkillUsageMetricsResponse,
     SkillVersionDetail,
@@ -54,6 +57,40 @@ def _scripts_to_dicts(scripts: list | None) -> list[dict] | None:
 
 def _skill_data_to_info(skill_data: dict) -> SkillInfo:
     """Convert skill data dict to SkillInfo response."""
+    # Convert tool configs
+    tool_configs = []
+    for t in skill_data.get("tool_configs", []):
+        args = [
+            SkillToolArgConfig(
+                name=a.get("name", ""),
+                type=a.get("type", "string"),
+                description=a.get("description", ""),
+                required=a.get("required", True),
+                default=a.get("default"),
+            )
+            for a in t.get("args", [])
+        ]
+        tool_configs.append(SkillToolConfig(
+            name=t.get("name", ""),
+            description=t.get("description", ""),
+            method=t.get("method", ""),
+            args=args,
+            requires_skill_loaded=t.get("requires_skill_loaded", True),
+        ))
+
+    # Convert resource configs
+    resource_configs = [
+        SkillResourceConfig(
+            name=r.get("name", ""),
+            description=r.get("description", ""),
+            file=r.get("file"),
+            content=r.get("content"),
+            dynamic=r.get("dynamic", False),
+            method=r.get("method"),
+        )
+        for r in skill_data.get("resource_configs", [])
+    ]
+
     return SkillInfo(
         id=skill_data["id"],
         name=skill_data["name"],
@@ -80,6 +117,8 @@ def _skill_data_to_info(skill_data: dict) -> SkillInfo:
             )
             for s in skill_data.get("scripts", [])
         ],
+        tool_configs=tool_configs,
+        resource_configs=resource_configs,
         created_at=skill_data.get("created_at"),
         updated_at=skill_data.get("updated_at"),
         has_custom_content=skill_data.get("has_custom_content"),
@@ -622,6 +661,40 @@ async def get_versioned_skill(
             loads_by_version=metrics.loads_by_version,
         )
 
+    # Build tool configs for versioned response
+    versioned_tool_configs = []
+    for t in skill_data.get("tool_configs", []):
+        args = [
+            SkillToolArgConfig(
+                name=a.get("name", ""),
+                type=a.get("type", "string"),
+                description=a.get("description", ""),
+                required=a.get("required", True),
+                default=a.get("default"),
+            )
+            for a in t.get("args", [])
+        ]
+        versioned_tool_configs.append(SkillToolConfig(
+            name=t.get("name", ""),
+            description=t.get("description", ""),
+            method=t.get("method", ""),
+            args=args,
+            requires_skill_loaded=t.get("requires_skill_loaded", True),
+        ))
+
+    # Build resource configs for versioned response
+    versioned_resource_configs = [
+        SkillResourceConfig(
+            name=r.get("name", ""),
+            description=r.get("description", ""),
+            file=r.get("file"),
+            content=r.get("content"),
+            dynamic=r.get("dynamic", False),
+            method=r.get("method"),
+        )
+        for r in skill_data.get("resource_configs", [])
+    ]
+
     return VersionedSkillInfo(
         id=skill_data["id"],
         name=skill_data["name"],
@@ -648,6 +721,8 @@ async def get_versioned_skill(
             )
             for s in skill_data.get("scripts", [])
         ],
+        tool_configs=versioned_tool_configs,
+        resource_configs=versioned_resource_configs,
         created_at=skill_data.get("created_at"),
         updated_at=skill_data.get("updated_at"),
         active_version=active_version or 1,
