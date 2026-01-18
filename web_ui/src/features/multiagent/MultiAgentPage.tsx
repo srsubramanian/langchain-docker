@@ -23,12 +23,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { agentsApi, modelsApi } from '@/api';
+import { agentsApi } from '@/api';
 import { useSettingsStore } from '@/stores';
-import type { ProviderInfo, ModelInfo } from '@/types/api';
+import { useMCPStore } from '@/stores/mcpStore';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import { MCPServerToggle } from '@/features/chat/MCPServerToggle';
+import { useImageUpload } from '@/hooks/useImageUpload';
 
 // Tool call tracking for skill/tool badges
 interface ToolCallInfo {
@@ -40,12 +43,13 @@ interface ToolCallInfo {
   agent_name?: string; // Which agent made this call
 }
 
-// Message with optional tool calls and agent info
+// Message with optional tool calls, agent info, and images
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   toolCalls?: ToolCallInfo[];
   agentsUsed?: string[]; // Agents that contributed to this response
+  images?: string[]; // Attached images
 }
 
 // Helper component to render a tool call badge
@@ -208,6 +212,8 @@ export function MultiAgentPage() {
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isReady, setIsReady] = useState(false); // Track if agent/workflow is ready
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMCPPanel, setShowMCPPanel] = useState(false);
 
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
@@ -216,9 +222,19 @@ export function MultiAgentPage() {
   const [agentsUsedInStream, setAgentsUsedInStream] = useState<string[]>([]); // Agents that have contributed
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { provider, model, agentPreset, setAgentPreset, setProvider, setModel } = useSettingsStore();
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  // Use the shared image upload hook
+  const {
+    selectedImages,
+    fileInputRef,
+    handleImageSelect,
+    handleRemoveImage,
+    handlePaste,
+    clearImages,
+  } = useImageUpload();
+
+  const { provider, agentPreset, setAgentPreset } = useSettingsStore();
+  // MCP store - getEnabledServers available for future MCP integration with agents
+  useMCPStore();
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
@@ -302,25 +318,6 @@ export function MultiAgentPage() {
     };
   }, [selectedAgents, provider, isCustomAgent]);
 
-  // Fetch providers on mount (for single-agent mode)
-  useEffect(() => {
-    if (isSingleAgentMode) {
-      modelsApi.listProviders().then(setProviders).catch(console.error);
-    }
-  }, [isSingleAgentMode]);
-
-  // Fetch available models when provider changes (for single-agent mode)
-  useEffect(() => {
-    if (isSingleAgentMode && provider) {
-      modelsApi
-        .getProviderDetails(provider)
-        .then((details) => {
-          setAvailableModels(details.available_models);
-        })
-        .catch(console.error);
-    }
-  }, [isSingleAgentMode, provider]);
-
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -331,8 +328,11 @@ export function MultiAgentPage() {
     if (!input.trim() || isLoading || !isReady) return;
 
     const userMessage = input.trim();
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    const userImages = selectedImages.length > 0 ? [...selectedImages] : undefined;
+
+    setMessages((prev) => [...prev, { role: 'user', content: userMessage, images: userImages }]);
     setInput('');
+    clearImages(); // Clear images after adding to message
     setIsLoading(true);
     setError(null);
     setStreamingContent('');
@@ -349,6 +349,7 @@ export function MultiAgentPage() {
 
         for await (const event of agentsApi.invokeAgentStream(agentId, {
           message: userMessage,
+          images: userImages,
           session_id: sessionId,
         })) {
           if (event.event === 'start' && event.session_id) {
@@ -398,6 +399,7 @@ export function MultiAgentPage() {
 
         for await (const event of agentsApi.invokeWorkflowStream(workflowId, {
           message: userMessage,
+          images: userImages,
           session_id: sessionId,
         })) {
           if (event.event === 'start' && event.session_id) {
@@ -501,41 +503,27 @@ export function MultiAgentPage() {
                 <p className="text-sm text-muted-foreground">Chat with this agent</p>
               </div>
             </div>
-            {/* Model/Provider selectors */}
-            <div className="flex items-center gap-2">
-              <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger className="h-8 w-[120px] text-xs">
-                  <SelectValue placeholder="Provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers
-                    .filter((p) => p.configured)
-                    .map((p) => (
-                      <SelectItem key={p.name} value={p.name}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={model || 'default'}
-                onValueChange={(v) => setModel(v === 'default' ? null : v)}
-              >
-                <SelectTrigger className="h-8 w-[180px] text-xs">
-                  <SelectValue placeholder="Model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">Default</SelectItem>
-                  {availableModels.map((m) => (
-                    <SelectItem key={m.name} value={m.name}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Settings bar (compact mode) */}
+            <ChatSettingsBar
+              showSettings={showSettings}
+              onToggleSettings={() => setShowSettings(!showSettings)}
+              compact={true}
+            />
           </div>
         </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="border-b bg-card px-6 py-4">
+            <ChatSettingsPanel compact={true} />
+            <div className="mt-3">
+              <MCPServerToggle
+                isOpen={showMCPPanel}
+                onToggle={() => setShowMCPPanel(!showMCPPanel)}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Chat area */}
         <div className="flex-1 overflow-hidden">
@@ -578,6 +566,20 @@ export function MultiAgentPage() {
                       </div>
                     )}
                     <div className="flex flex-col gap-2 max-w-[80%]">
+                      {/* Display images if present */}
+                      {msg.role === 'user' && msg.images && msg.images.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {msg.images.map((img, imgIdx) => (
+                            <img
+                              key={imgIdx}
+                              src={img}
+                              alt={`Uploaded image ${imgIdx + 1}`}
+                              className="max-h-32 rounded cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={() => window.open(img, '_blank')}
+                            />
+                          ))}
+                        </div>
+                      )}
                       {/* Tool call badges for assistant messages */}
                       {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
@@ -655,13 +657,267 @@ export function MultiAgentPage() {
               </div>
             </ScrollArea>
 
-            <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
+            {/* Input area */}
+            <div className="mt-4">
+              {/* Image Preview */}
+              <ImagePreviewGrid
+                images={selectedImages}
+                onRemove={handleRemoveImage}
+                className="mb-2"
+              />
+
+              <form onSubmit={handleSubmit} className="flex gap-2">
+                {/* Image upload button */}
+                <ImageUpload
+                  selectedImages={selectedImages}
+                  fileInputRef={fileInputRef}
+                  onImageSelect={handleImageSelect}
+                  onImageRemove={handleRemoveImage}
+                  onOpenFileDialog={() => fileInputRef.current?.click()}
+                  disabled={isLoading || !isReady}
+                />
+
+                <Input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onPaste={handlePaste}
+                  placeholder={`Ask ${agentDisplayName}... (paste images)`}
+                  disabled={isLoading || !isReady}
+                  className="flex-1"
+                />
+                <Button type="submit" disabled={isLoading || !isReady || !input.trim()}>
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Multi-agent mode: Split view with workflow graph
+  return (
+    <div className="flex h-[calc(100vh-3.5rem)]">
+      {/* Left Panel - Chat */}
+      <div className="flex w-1/2 flex-col border-r">
+        {/* Header with settings */}
+        <div className="border-b px-4 py-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Multi-Agent Chat</h2>
+            <div className="flex items-center gap-2">
+              <Select value={agentPreset} onValueChange={setAgentPreset}>
+                <SelectTrigger className="w-[140px] h-8">
+                  <SelectValue placeholder="Select preset" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sql_expert">SQL Expert</SelectItem>
+                </SelectContent>
+              </Select>
+              <ChatSettingsBar
+                showSettings={showSettings}
+                onToggleSettings={() => setShowSettings(!showSettings)}
+                compact={true}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="border-b px-4 py-3">
+            <ChatSettingsPanel compact={true} />
+            <div className="mt-3">
+              <MCPServerToggle
+                isOpen={showMCPPanel}
+                onToggle={() => setShowMCPPanel(!showMCPPanel)}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 flex flex-col p-4 overflow-hidden">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {selectedAgents.map((agent) => (
+              <Badge key={agent} variant="secondary">
+                {agent.replace('_', ' ')}
+              </Badge>
+            ))}
+          </div>
+
+          <ScrollArea className="flex-1 pr-4">
+            <div className="space-y-4 pb-4">
+              {messages.length === 0 && (
+                <div className="flex h-full items-center justify-center text-muted-foreground">
+                  <p>Ask a question that requires multiple agents.</p>
+                </div>
+              )}
+
+              {messages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={cn(
+                    'flex',
+                    msg.role === 'user' ? 'justify-end' : 'justify-start'
+                  )}
+                >
+                  <div className="flex flex-col gap-2 max-w-[80%]">
+                    {/* Display images if present */}
+                    {msg.role === 'user' && msg.images && msg.images.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {msg.images.map((img, imgIdx) => (
+                          <img
+                            key={imgIdx}
+                            src={img}
+                            alt={`Uploaded image ${imgIdx + 1}`}
+                            className="max-h-32 rounded cursor-pointer hover:opacity-90 transition-opacity"
+                            onClick={() => window.open(img, '_blank')}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {/* Agents used badges for assistant messages */}
+                    {msg.role === 'assistant' && msg.agentsUsed && msg.agentsUsed.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {msg.agentsUsed.map((agent, agentIdx) => (
+                          <div
+                            key={agentIdx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-teal-500/20 text-teal-400 border border-teal-500/30"
+                          >
+                            <Check className="h-3 w-3" />
+                            <span>{agent.replace(/_/g, ' ')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Tool call badges for assistant messages */}
+                    {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {msg.toolCalls.map((tc, tcIdx) => (
+                          <ToolCallBadge key={tcIdx} toolCall={tc} showAgent={true} />
+                        ))}
+                      </div>
+                    )}
+                    <div
+                      className={cn(
+                        'rounded-lg px-4 py-2',
+                        msg.role === 'user'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted'
+                      )}
+                    >
+                      {msg.role === 'assistant' ? (
+                        <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {isLoading && (
+                <div className="flex flex-col gap-2 max-w-[80%]">
+                  {/* Show agents used so far during streaming */}
+                  {agentsUsedInStream.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {agentsUsedInStream.map((agent, idx) => (
+                        <div
+                          key={idx}
+                          className={cn(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border',
+                            activeAgent === agent
+                              ? 'bg-teal-500/30 text-teal-300 border-teal-400/50'
+                              : 'bg-teal-500/20 text-teal-400 border-teal-500/30'
+                          )}
+                        >
+                          {activeAgent === agent ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="h-3 w-3" />
+                          )}
+                          <span>{agent.replace(/_/g, ' ')}</span>
+                          {activeAgent === agent && (
+                            <span className="text-teal-300/70">working...</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Show streaming tool calls */}
+                  {streamingToolCalls.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {streamingToolCalls.map((tc, idx) => (
+                        <ToolCallBadge key={idx} toolCall={tc} showAgent={true} />
+                      ))}
+                    </div>
+                  )}
+                  {/* Show streaming content or thinking indicator */}
+                  <div className="rounded-lg bg-muted px-4 py-2">
+                    {streamingContent ? (
+                      <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {streamingContent}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>
+                          {activeAgent
+                            ? `${activeAgent.replace(/_/g, ' ')} working...`
+                            : streamingToolCalls.length > 0
+                            ? 'Processing tools...'
+                            : 'Agents coordinating...'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="rounded-lg bg-destructive/10 px-4 py-2 text-destructive">
+                  {error}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Input area */}
+          <div className="mt-4">
+            {/* Image Preview */}
+            <ImagePreviewGrid
+              images={selectedImages}
+              onRemove={handleRemoveImage}
+              className="mb-2"
+            />
+
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              {/* Image upload button */}
+              <ImageUpload
+                selectedImages={selectedImages}
+                fileInputRef={fileInputRef}
+                onImageSelect={handleImageSelect}
+                onImageRemove={handleRemoveImage}
+                onOpenFileDialog={() => fileInputRef.current?.click()}
+                disabled={isLoading || !isReady}
+              />
+
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={`Ask ${agentDisplayName}...`}
+                onPaste={handlePaste}
+                placeholder="Ask a question... (paste images)"
                 disabled={isLoading || !isReady}
-                className="flex-1"
               />
               <Button type="submit" disabled={isLoading || !isReady || !input.trim()}>
                 {isLoading ? (
@@ -673,180 +929,6 @@ export function MultiAgentPage() {
             </form>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  // Multi-agent mode: Split view with workflow graph
-  return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
-      {/* Left Panel - Chat */}
-      <div className="flex w-1/2 flex-col border-r p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Multi-Agent Chat</h2>
-          <Select value={agentPreset} onValueChange={setAgentPreset}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select preset" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="sql_expert">SQL Expert</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="mb-4 flex flex-wrap gap-2">
-          {selectedAgents.map((agent) => (
-            <Badge key={agent} variant="secondary">
-              {agent.replace('_', ' ')}
-            </Badge>
-          ))}
-        </div>
-
-        <ScrollArea className="flex-1 pr-4">
-          <div className="space-y-4 pb-4">
-            {messages.length === 0 && (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
-                <p>Ask a question that requires multiple agents.</p>
-              </div>
-            )}
-
-            {messages.map((msg, index) => (
-              <div
-                key={index}
-                className={cn(
-                  'flex',
-                  msg.role === 'user' ? 'justify-end' : 'justify-start'
-                )}
-              >
-                <div className="flex flex-col gap-2 max-w-[80%]">
-                  {/* Agents used badges for assistant messages */}
-                  {msg.role === 'assistant' && msg.agentsUsed && msg.agentsUsed.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.agentsUsed.map((agent, agentIdx) => (
-                        <div
-                          key={agentIdx}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-teal-500/20 text-teal-400 border border-teal-500/30"
-                        >
-                          <Check className="h-3 w-3" />
-                          <span>{agent.replace(/_/g, ' ')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Tool call badges for assistant messages */}
-                  {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.toolCalls.map((tc, tcIdx) => (
-                        <ToolCallBadge key={tcIdx} toolCall={tc} showAgent={true} />
-                      ))}
-                    </div>
-                  )}
-                  <div
-                    className={cn(
-                      'rounded-lg px-4 py-2',
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    )}
-                  >
-                    {msg.role === 'assistant' ? (
-                      <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.content}
-                        </ReactMarkdown>
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="flex flex-col gap-2 max-w-[80%]">
-                {/* Show agents used so far during streaming */}
-                {agentsUsedInStream.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {agentsUsedInStream.map((agent, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border',
-                          activeAgent === agent
-                            ? 'bg-teal-500/30 text-teal-300 border-teal-400/50'
-                            : 'bg-teal-500/20 text-teal-400 border-teal-500/30'
-                        )}
-                      >
-                        {activeAgent === agent ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Check className="h-3 w-3" />
-                        )}
-                        <span>{agent.replace(/_/g, ' ')}</span>
-                        {activeAgent === agent && (
-                          <span className="text-teal-300/70">working...</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* Show streaming tool calls */}
-                {streamingToolCalls.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {streamingToolCalls.map((tc, idx) => (
-                      <ToolCallBadge key={idx} toolCall={tc} showAgent={true} />
-                    ))}
-                  </div>
-                )}
-                {/* Show streaming content or thinking indicator */}
-                <div className="rounded-lg bg-muted px-4 py-2">
-                  {streamingContent ? (
-                    <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {streamingContent}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>
-                        {activeAgent
-                          ? `${activeAgent.replace(/_/g, ' ')} working...`
-                          : streamingToolCalls.length > 0
-                          ? 'Processing tools...'
-                          : 'Agents coordinating...'}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="rounded-lg bg-destructive/10 px-4 py-2 text-destructive">
-                {error}
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-
-        <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question..."
-            disabled={isLoading || !isReady}
-          />
-          <Button type="submit" disabled={isLoading || !isReady || !input.trim()}>
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </form>
-
       </div>
 
       {/* Right Panel - Workflow Graph */}

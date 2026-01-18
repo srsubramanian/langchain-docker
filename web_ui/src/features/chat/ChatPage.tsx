@@ -1,42 +1,40 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Loader2, Settings2, Wrench, ImageIcon, X } from 'lucide-react';
+import { Send, Loader2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Card, CardContent } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
-import { Badge } from '@/components/ui/badge';
 import { useSessionStore, useSettingsStore } from '@/stores';
 import { useMCPStore } from '@/stores/mcpStore';
-import { chatApi, sessionsApi, modelsApi } from '@/api';
-import type { ProviderInfo, ModelInfo, Message, SessionSummary } from '@/types/api';
+import { chatApi, sessionsApi } from '@/api';
+import type { Message, SessionSummary } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
 import { MCPServerToggle } from './MCPServerToggle';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import { useImageUpload } from '@/hooks/useImageUpload';
 
 export function ChatPage() {
   const [input, setInput] = useState('');
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showMCPPanel, setShowMCPPanel] = useState(false);
   const [threads, setThreads] = useState<SessionSummary[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
-  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Use the shared image upload hook
+  const {
+    selectedImages,
+    fileInputRef,
+    handleImageSelect,
+    handleRemoveImage,
+    handlePaste,
+    clearImages,
+  } = useImageUpload();
 
   // MCP store
-  const { getEnabledServers, enabledServerIds } = useMCPStore();
+  const { getEnabledServers } = useMCPStore();
 
   const {
     sessionId,
@@ -54,25 +52,7 @@ export function ChatPage() {
     clearStreamingContent,
   } = useSessionStore();
 
-  const { provider, model, temperature, setProvider, setModel, setTemperature } =
-    useSettingsStore();
-
-  // Fetch providers on mount
-  useEffect(() => {
-    modelsApi.listProviders().then(setProviders).catch(console.error);
-  }, []);
-
-  // Fetch available models when provider changes
-  useEffect(() => {
-    if (provider) {
-      modelsApi
-        .getProviderDetails(provider)
-        .then((details) => {
-          setAvailableModels(details.available_models);
-        })
-        .catch(console.error);
-    }
-  }, [provider]);
+  const { provider, model, temperature } = useSettingsStore();
 
   // Fetch thread history
   const loadThreads = useCallback(async () => {
@@ -157,53 +137,6 @@ export function ChatPage() {
     }
   };
 
-  // Image upload handlers
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    Array.from(files).forEach((file) => {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        console.error('Invalid file type:', file.type);
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        setSelectedImages((prev) => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Reset input to allow selecting the same file again
-    e.target.value = '';
-  };
-
-  const handleRemoveImage = (index: number) => {
-    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Handle paste from clipboard
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault(); // Prevent default paste behavior for images
-        const file = item.getAsFile();
-        if (!file) continue;
-
-        const reader = new FileReader();
-        reader.onload = () => {
-          setSelectedImages((prev) => [...prev, reader.result as string]);
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-  }, []);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || isStreaming) return;
@@ -217,7 +150,7 @@ export function ChatPage() {
 
     addMessage(userMessage);
     setInput('');
-    setSelectedImages([]); // Clear images after adding to message
+    clearImages(); // Clear images after adding to message
     setError(null);
     setStreaming(true);
     clearStreamingContent();
@@ -272,8 +205,6 @@ export function ChatPage() {
     }
   };
 
-  const availableProvider = providers.find((p) => p.name === provider);
-
   return (
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
       {/* Thread Sidebar */}
@@ -290,88 +221,17 @@ export function ChatPage() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 flex flex-col p-4 overflow-hidden">
-          {/* Settings Panel */}
-          <div className="mb-4 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">{provider}</Badge>
-              {model && <Badge variant="secondary">{model}</Badge>}
-              <Badge variant="secondary">temp: {temperature}</Badge>
-              {enabledServerIds.length > 0 && (
-                <Badge variant="default" className="bg-teal-600">
-                  <Wrench className="mr-1 h-3 w-3" />
-                  {enabledServerIds.length} MCP
-                </Badge>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowSettings(!showSettings)}
-            >
-              <Settings2 className="mr-2 h-4 w-4" />
-              Settings
-            </Button>
+          {/* Settings Bar */}
+          <div className="mb-4 shrink-0">
+            <ChatSettingsBar
+              showSettings={showSettings}
+              onToggleSettings={() => setShowSettings(!showSettings)}
+            />
           </div>
 
+          {/* Settings Panel */}
           {showSettings && (
-            <Card className="mb-4 shrink-0">
-              <CardContent className="pt-4">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Provider</label>
-                    <Select value={provider} onValueChange={setProvider}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select provider" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {providers
-                          .filter((p) => p.configured)
-                          .map((p) => (
-                            <SelectItem key={p.name} value={p.name}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Model</label>
-                    <Select
-                      value={model || 'default'}
-                      onValueChange={(v) => setModel(v === 'default' ? null : v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={availableProvider?.default_model || 'Default'}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="default">
-                          Default ({availableProvider?.default_model || 'auto'})
-                        </SelectItem>
-                        {availableModels.map((m) => (
-                          <SelectItem key={m.name} value={m.name}>
-                            {m.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Temperature: {temperature}
-                    </label>
-                    <Slider
-                      value={[temperature]}
-                      onValueChange={([v]) => setTemperature(v)}
-                      min={0}
-                      max={2}
-                      step={0.1}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <ChatSettingsPanel className="mb-4 shrink-0" />
           )}
 
           {/* MCP Servers Panel */}
@@ -471,49 +331,22 @@ export function ChatPage() {
           {/* Input */}
           <div className="mt-4 shrink-0">
             {/* Image Preview */}
-            {selectedImages.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2 p-2 bg-muted/50 rounded-lg">
-                {selectedImages.map((img, idx) => (
-                  <div key={idx} className="relative group">
-                    <img
-                      src={img}
-                      alt={`Preview ${idx + 1}`}
-                      className="h-16 w-16 object-cover rounded"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveImage(idx)}
-                      className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <ImagePreviewGrid
+              images={selectedImages}
+              onRemove={handleRemoveImage}
+              className="mb-2"
+            />
 
             <form onSubmit={handleSubmit} className="flex gap-2">
-              {/* Hidden file input */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                multiple
-                onChange={handleImageSelect}
-              />
-
               {/* Image upload button */}
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => fileInputRef.current?.click()}
+              <ImageUpload
+                selectedImages={selectedImages}
+                fileInputRef={fileInputRef}
+                onImageSelect={handleImageSelect}
+                onImageRemove={handleRemoveImage}
+                onOpenFileDialog={() => fileInputRef.current?.click()}
                 disabled={isLoading || isStreaming}
-                title="Upload images"
-              >
-                <ImageIcon className="h-4 w-4" />
-              </Button>
+              />
 
               <Input
                 value={input}

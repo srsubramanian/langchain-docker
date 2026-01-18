@@ -249,7 +249,7 @@ def invoke_agent(
 
     Args:
         agent_id: Agent ID (custom or built-in)
-        request: Message to process with memory options
+        request: Message to process with memory options and optional images
 
     Returns:
         Agent response with session ID and memory metadata
@@ -260,6 +260,7 @@ def invoke_agent(
         result = agent_service.invoke_agent(
             agent_id=agent_id,
             message=request.message,
+            images=request.images,
             session_id=session_id,
             user_id=user_id,
             enable_memory=request.enable_memory,
@@ -294,7 +295,7 @@ async def invoke_agent_stream(
 
     Args:
         agent_id: Agent ID (custom or built-in)
-        request: Message to process with memory options
+        request: Message to process with memory options and optional images
 
     Returns:
         SSE stream of events
@@ -305,6 +306,7 @@ async def invoke_agent_stream(
         async for event in agent_service.stream_agent(
             agent_id=agent_id,
             message=request.message,
+            images=request.images,
             session_id=session_id,
             user_id=user_id,
             enable_memory=request.enable_memory,
@@ -475,7 +477,7 @@ def invoke_workflow(
 
     Args:
         workflow_id: ID of the workflow to invoke
-        request: Message to process with memory options
+        request: Message to process with memory options and optional images
 
     Returns:
         Workflow response with session_id and memory metadata
@@ -486,6 +488,7 @@ def invoke_workflow(
         result = agent_service.invoke_workflow(
             workflow_id=workflow_id,
             message=request.message,
+            images=request.images,
             session_id=session_id,
             user_id=user_id,
             enable_memory=request.enable_memory,
@@ -522,7 +525,7 @@ async def invoke_workflow_stream(
 
     Args:
         workflow_id: ID of the workflow to invoke
-        request: Message to process with memory options
+        request: Message to process with memory options and optional images
 
     Returns:
         SSE stream of events
@@ -533,6 +536,7 @@ async def invoke_workflow_stream(
         async for event in agent_service.stream_workflow(
             workflow_id=workflow_id,
             message=request.message,
+            images=request.images,
             session_id=session_id,
             user_id=user_id,
             enable_memory=request.enable_memory,

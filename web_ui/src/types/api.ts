@@ -216,6 +216,7 @@ export interface WorkflowCreateResponse {
 
 export interface WorkflowInvokeRequest {
   message: string;
+  images?: string[];  // Base64 data URIs for images
   session_id?: string | null;
   // Memory options for unified conversation management
   enable_memory?: boolean;
@@ -235,6 +236,7 @@ export interface WorkflowInvokeResponse {
 // Direct agent invocation (no supervisor) for human-in-the-loop
 export interface DirectInvokeRequest {
   message: string;
+  images?: string[];  // Base64 data URIs for images
   session_id?: string | null;
   // Memory options for unified conversation management
   enable_memory?: boolean;

@@ -1562,6 +1562,7 @@ Always use the tools to interact with the database.""")
         self,
         agent_id: str,
         message: str,
+        images: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         user_id: str = "default",
         provider: str = "openai",
@@ -1577,6 +1578,7 @@ Always use the tools to interact with the database.""")
         Args:
             agent_id: Agent ID (custom or built-in)
             message: User message
+            images: Optional list of base64 data URIs for images
             session_id: Session ID for conversation continuity
             user_id: User ID for session scoping
             provider: Model provider (overridden by agent config if set)
@@ -1652,7 +1654,7 @@ Always use the tools to interact with the database.""")
                 user_id=user_id,
                 metadata={"agent_id": agent_id, "agent_type": agent_type},
             )
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, agent_provider)
             session.messages.append(user_msg)
 
             if enable_memory and self.memory_service is not None:
@@ -1669,7 +1671,7 @@ Always use the tools to interact with the database.""")
             if cache_key not in self._direct_sessions or "messages" not in self._direct_sessions[cache_key]:
                 self._direct_sessions[cache_key]["messages"] = []
             history = self._direct_sessions[cache_key]["messages"]
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, agent_provider)
             history.append(user_msg)
             context_messages = history
 
@@ -1719,6 +1721,7 @@ Always use the tools to interact with the database.""")
         self,
         agent_id: str,
         message: str,
+        images: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         user_id: str = "default",
         provider: str = "openai",
@@ -1736,6 +1739,7 @@ Always use the tools to interact with the database.""")
         Args:
             agent_id: Agent ID (custom or built-in)
             message: User message
+            images: Optional list of base64 data URIs for images
             session_id: Session ID for conversation continuity
             user_id: User ID for session scoping
             provider: Model provider (overridden by agent config if set)
@@ -1823,7 +1827,7 @@ Always use the tools to interact with the database.""")
                 user_id=user_id,
                 metadata={"agent_id": agent_id, "agent_type": agent_type},
             )
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, agent_provider)
             session.messages.append(user_msg)
 
             if enable_memory and self.memory_service is not None:
@@ -1840,7 +1844,7 @@ Always use the tools to interact with the database.""")
             if "messages" not in self._direct_sessions.get(cache_key, {}):
                 self._direct_sessions[cache_key]["messages"] = []
             history = self._direct_sessions[cache_key]["messages"]
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, agent_provider)
             history.append(user_msg)
             context_messages = history
 
@@ -2059,6 +2063,7 @@ Always use the tools to interact with the database.""")
         self,
         workflow_id: str,
         message: str,
+        images: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         user_id: str = "default",
         enable_memory: bool = True,
@@ -2074,6 +2079,7 @@ Always use the tools to interact with the database.""")
         Args:
             workflow_id: Workflow to invoke
             message: User message
+            images: Optional list of base64 data URIs for images
             session_id: Optional session ID for persistence
             user_id: User ID for session scoping
             enable_memory: Whether to enable memory summarization
@@ -2110,7 +2116,7 @@ Always use the tools to interact with the database.""")
                 session.session_type = "workflow"
 
             # Add user message to session
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, provider)
             session.messages.append(user_msg)
 
             # Apply memory summarization if MemoryService is available
@@ -2158,7 +2164,7 @@ Always use the tools to interact with the database.""")
         else:
             # Fallback: Use legacy workflow-based storage
             history = workflow_data.get("messages", [])
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, provider)
             history.append(user_msg)
 
             with trace_operation(
@@ -2200,6 +2206,7 @@ Always use the tools to interact with the database.""")
         self,
         workflow_id: str,
         message: str,
+        images: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         user_id: str = "default",
         enable_memory: bool = True,
@@ -2213,6 +2220,7 @@ Always use the tools to interact with the database.""")
         Args:
             workflow_id: Workflow to invoke
             message: User message
+            images: Optional list of base64 data URIs for images
             session_id: Optional session ID for persistence
             user_id: User ID for session scoping
             enable_memory: Whether to enable memory summarization
@@ -2257,7 +2265,7 @@ Always use the tools to interact with the database.""")
             if session.session_type == "chat":
                 session.session_type = "workflow"
 
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, provider)
             session.messages.append(user_msg)
 
             if enable_memory and self.memory_service is not None:
@@ -2273,7 +2281,7 @@ Always use the tools to interact with the database.""")
         else:
             # Fallback: Use legacy workflow-based storage
             history = workflow_data.get("messages", [])
-            user_msg = HumanMessage(content=message)
+            user_msg = self._build_user_message(message, images, provider)
             history.append(user_msg)
             context_messages = history
 
@@ -2393,6 +2401,60 @@ Always use the tools to interact with the database.""")
         except Exception as e:
             logger.error(f"[Stream Workflow] Error for {workflow_id}: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+    def _parse_data_uri(self, uri: str) -> tuple[str, str]:
+        """Parse data URI into mime type and base64 data.
+
+        Args:
+            uri: Data URI (e.g., 'data:image/png;base64,iVBORw0KGgo...')
+
+        Returns:
+            Tuple of (mime_type, base64_data)
+        """
+        # data:image/png;base64,iVBORw0KGgo...
+        header, data = uri.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+        return mime_type, data
+
+    def _build_user_message(
+        self, text: str, images: Optional[list[str]], provider: str
+    ) -> HumanMessage:
+        """Build a HumanMessage with optional image content.
+
+        Args:
+            text: Text message content
+            images: Optional list of base64 data URIs
+            provider: Model provider (for format-specific handling)
+
+        Returns:
+            HumanMessage with text and/or image content
+        """
+        if not images:
+            return HumanMessage(content=text)
+
+        # Build multimodal content blocks
+        content: list[dict] = [{"type": "text", "text": text}]
+
+        for image_uri in images:
+            if provider == "anthropic":
+                # Anthropic format: base64 with source
+                mime_type, data = self._parse_data_uri(image_uri)
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": data
+                    }
+                })
+            else:
+                # OpenAI/Google/Bedrock format: image_url
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": image_uri}
+                })
+
+        return HumanMessage(content=content)
 
     def _create_memory_request(
         self,

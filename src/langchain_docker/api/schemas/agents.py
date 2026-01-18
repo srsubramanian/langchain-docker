@@ -232,6 +232,10 @@ class WorkflowInvokeRequest(BaseModel):
     """Request to invoke a workflow."""
 
     message: str = Field(..., description="User message to process")
+    images: Optional[list[str]] = Field(
+        None,
+        description="Optional list of base64 data URIs for images",
+    )
     session_id: Optional[str] = Field(
         None,
         description="Session ID for persistence and conversation continuity",
@@ -281,6 +285,10 @@ class DirectInvokeRequest(BaseModel):
     """Request to invoke an agent directly (no supervisor)."""
 
     message: str = Field(..., description="User message")
+    images: Optional[list[str]] = Field(
+        None,
+        description="Optional list of base64 data URIs for images",
+    )
     session_id: Optional[str] = Field(
         None,
         description="Session ID for conversation continuity",
