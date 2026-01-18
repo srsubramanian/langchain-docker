@@ -46,6 +46,15 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Provider Selection**: Switch between OpenAI, Anthropic, Google, and Bedrock
 - **Multi-User Support**: User selector dropdown with isolated sessions per user
 
+### Skills System (Progressive Disclosure)
+- **Three-Level Architecture**: Metadata → Core Content → Details loaded on-demand
+- **Built-in Skills**: SQL Query Expert, Jira Query Expert, XLSX Spreadsheet Expert
+- **Custom Skills**: Create, version, and manage custom skills via API
+- **Gated Tools**: Domain tools check skill state before execution
+- **Redis Versioning**: Immutable version history with rollback support
+
+> **Full Documentation**: See [docs/SKILLS_ARCHITECTURE.md](docs/SKILLS_ARCHITECTURE.md) for the complete architecture guide.
+
 ### Chainlit UI (Legacy)
 - **Interactive Chat Interface**: Web-based chat UI powered by Chainlit
 - **Real-time Streaming**: See AI responses as they're being generated
@@ -541,6 +550,8 @@ curl -X DELETE http://localhost:8000/api/v1/agents/workflows/my-workflow
 ```
 
 #### Skills API Endpoints
+
+> **Architecture Deep Dive**: See [docs/SKILLS_ARCHITECTURE.md](docs/SKILLS_ARCHITECTURE.md) for comprehensive documentation on the Progressive Disclosure Pattern, skill implementation details, and how to add new skills.
 
 **GET /api/v1/skills** - List all skills (metadata only)
 ```bash
