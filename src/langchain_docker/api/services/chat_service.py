@@ -150,6 +150,9 @@ class ChatService:
         # Add AI response to session
         session.messages.append(ai_response)
 
+        # Save session (required for Redis persistence)
+        self.session_service.save(session)
+
         # Update session timestamp
         self.session_service.update_timestamp(session.session_id)
 
@@ -366,6 +369,9 @@ class ChatService:
             # Create final AI message
             ai_message = AIMessage(content=full_content)
             session.messages.append(ai_message)
+
+            # Save session (required for Redis persistence)
+            self.session_service.save(session)
 
             # Update session timestamp
             self.session_service.update_timestamp(session.session_id)
