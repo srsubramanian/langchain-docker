@@ -4,7 +4,6 @@
 
 import { create } from 'zustand';
 import type {
-  SkillInfo,
   SkillMetadata,
   SkillCreateRequest,
   SkillUpdateRequest,

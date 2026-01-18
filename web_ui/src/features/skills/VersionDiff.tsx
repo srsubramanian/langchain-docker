@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { GitCompare, ChevronDown, Loader2, AlertCircle } from 'lucide-react';
+import { GitCompare, ChevronDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,9 +25,7 @@ interface VersionDiffProps {
 export function VersionDiff({ skillId, isBuiltin = false }: VersionDiffProps) {
   const {
     versions,
-    versionsTotal,
     isLoading,
-    error,
     fetchVersions,
     fetchDiff,
     diffResult,

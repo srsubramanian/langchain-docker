@@ -10,7 +10,6 @@ import {
   GitBranch,
   Check,
   RotateCcw,
-  ChevronRight,
   Loader2,
   AlertCircle,
   GitCompare,
@@ -52,7 +51,6 @@ export function VersionHistory({ skillId, isBuiltin = false }: VersionHistoryPro
   const [showRollbackDialog, setShowRollbackDialog] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
   const [showDiffDialog, setShowDiffDialog] = useState(false);
-  const [diffFromVersion, setDiffFromVersion] = useState<number | null>(null);
 
   useEffect(() => {
     if (skillId) {
@@ -77,11 +75,10 @@ export function VersionHistory({ skillId, isBuiltin = false }: VersionHistoryPro
     const activeVersion = versions.find((v) => v.is_active);
     if (!activeVersion || activeVersion.version_number === version.version_number) return;
 
-    const fromVersion = Math.min(version.version_number, activeVersion.version_number);
-    const toVersion = Math.max(version.version_number, activeVersion.version_number);
+    const fromVersionNum = Math.min(version.version_number, activeVersion.version_number);
+    const toVersionNum = Math.max(version.version_number, activeVersion.version_number);
 
-    setDiffFromVersion(fromVersion);
-    await fetchDiff(skillId, fromVersion, toVersion);
+    await fetchDiff(skillId, fromVersionNum, toVersionNum);
     setShowDiffDialog(true);
   };
 
@@ -289,7 +286,7 @@ export function VersionHistory({ skillId, isBuiltin = false }: VersionHistoryPro
       </Dialog>
 
       {/* Diff Dialog */}
-      <Dialog open={showDiffDialog} onOpenChange={(open) => {
+      <Dialog open={showDiffDialog} onOpenChange={(open: boolean) => {
         setShowDiffDialog(open);
         if (!open) clearDiff();
       }}>
