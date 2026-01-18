@@ -38,6 +38,7 @@ import { skillsApi } from '@/api';
 import type { SkillResource, SkillScript, SkillToolConfig, SkillResourceConfig } from '@/types/api';
 import { VersionHistory } from './VersionHistory';
 import { SkillMetricsPanel } from './SkillMetricsPanel';
+import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { Wrench, Database } from 'lucide-react';
 
 const CATEGORIES = [
@@ -84,6 +85,9 @@ export function SkillEditor() {
   // Version save dialog state
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [changeSummary, setChangeSummary] = useState('');
+
+  // Preview mode: 'rendered' or 'raw'
+  const [previewMode, setPreviewMode] = useState<'rendered' | 'raw'>('rendered');
 
   // Load skill data when editing
   useEffect(() => {
@@ -722,16 +726,46 @@ When this skill is activated, follow these steps:
         {/* Preview Tab */}
         <TabsContent value="preview">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">SKILL.md Preview</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                This is how your skill will look in the portable SKILL.md format.
-              </p>
+            <CardHeader className="flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base">SKILL.md Preview</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {previewMode === 'rendered'
+                    ? 'Rendered markdown with syntax highlighting.'
+                    : 'Raw SKILL.md content in portable format.'}
+                </p>
+              </div>
+              <div className="flex gap-1 rounded-lg border p-1">
+                <Button
+                  variant={previewMode === 'rendered' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setPreviewMode('rendered')}
+                  className="gap-1.5"
+                >
+                  <Eye className="h-4 w-4" />
+                  Rendered
+                </Button>
+                <Button
+                  variant={previewMode === 'raw' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setPreviewMode('raw')}
+                  className="gap-1.5"
+                >
+                  <Code className="h-4 w-4" />
+                  Raw
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              <pre className="p-4 bg-muted rounded-lg overflow-x-auto text-sm font-mono whitespace-pre-wrap">
-                {generateSkillMd()}
-              </pre>
+              {previewMode === 'rendered' ? (
+                <div className="rounded-lg border bg-card p-6">
+                  <MarkdownRenderer content={generateSkillMd()} />
+                </div>
+              ) : (
+                <pre className="p-4 bg-muted rounded-lg overflow-x-auto text-sm font-mono whitespace-pre-wrap">
+                  {generateSkillMd()}
+                </pre>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
