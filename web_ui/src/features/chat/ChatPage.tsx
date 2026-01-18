@@ -186,18 +186,19 @@ export function ChatPage() {
           // Clear after a short delay
           setTimeout(() => setToolActivity(null), 1500);
         } else if (event.event === 'approval_request') {
-          // HITL approval required
+          // HITL approval required - clear tool activity since it's now pending approval
+          setToolActivity(null);
           const approvalRequest: ApprovalRequestEvent = {
-            approval_id: event.approval_id,
-            tool_name: event.tool_name,
-            tool_id: event.tool_id,
-            message: event.message,
-            tool_args: event.tool_args,
+            approval_id: event.approval_id || '',
+            tool_name: event.tool_name || 'unknown',
+            tool_id: event.tool_id || '',
+            message: typeof event.message === 'string' ? event.message : 'Approve this action?',
+            tool_args: event.tool_args || {},
             expires_at: event.expires_at,
-            config: event.config || {
-              show_args: true,
-              timeout_seconds: 300,
-              require_reason_on_reject: false,
+            config: {
+              show_args: event.config?.show_args ?? true,
+              timeout_seconds: event.config?.timeout_seconds ?? 300,
+              require_reason_on_reject: event.config?.require_reason_on_reject ?? false,
             },
           };
           setPendingApprovals((prev) => [...prev, approvalRequest]);
@@ -349,7 +350,7 @@ export function ChatPage() {
                 <div key={approval.approval_id} className="flex justify-center">
                   <ApprovalCard
                     request={approval}
-                    onResolved={(status) => {
+                    onResolved={() => {
                       // Remove from pending list when resolved
                       setPendingApprovals((prev) =>
                         prev.filter((a) => a.approval_id !== approval.approval_id)

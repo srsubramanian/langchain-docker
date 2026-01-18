@@ -29,7 +29,8 @@ import { useMCPStore } from '@/stores/mcpStore';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard } from '@/components/chat';
+import type { ApprovalRequestEvent } from '@/components/chat';
 import { MCPServerToggle } from '@/features/chat/MCPServerToggle';
 import { useImageUpload } from '@/hooks/useImageUpload';
 
@@ -214,6 +215,7 @@ export function MultiAgentPage() {
   const [isReady, setIsReady] = useState(false); // Track if agent/workflow is ready
   const [showSettings, setShowSettings] = useState(false);
   const [showMCPPanel, setShowMCPPanel] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
 
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
@@ -375,6 +377,29 @@ export function MultiAgentPage() {
           } else if (event.event === 'token' && event.content) {
             fullContent += event.content;
             setStreamingContent(fullContent);
+          } else if (event.event === 'approval_request') {
+            // HITL approval required - update tool call to show pending approval
+            const toolCall = toolCalls.find((tc) => tc.tool_id === event.tool_id);
+            if (toolCall) {
+              toolCall.result = 'Pending approval...';
+              toolCall.isLoading = false;
+              setStreamingToolCalls([...toolCalls]);
+            }
+
+            const approvalRequest: ApprovalRequestEvent = {
+              approval_id: event.approval_id || '',
+              tool_name: event.tool_name || 'unknown',
+              tool_id: event.tool_id || '',
+              message: typeof event.message === 'string' ? event.message : 'Approve this action?',
+              tool_args: event.tool_args || {},
+              expires_at: event.expires_at,
+              config: {
+                show_args: event.config?.show_args ?? true,
+                timeout_seconds: event.config?.timeout_seconds ?? 300,
+                require_reason_on_reject: event.config?.require_reason_on_reject ?? false,
+              },
+            };
+            setPendingApprovals((prev) => [...prev, approvalRequest]);
           } else if (event.event === 'error') {
             throw new Error(event.error || 'Streaming error');
           }
@@ -653,6 +678,22 @@ export function MultiAgentPage() {
                     {error}
                   </div>
                 )}
+
+                {/* Pending Approval Requests */}
+                {pendingApprovals.map((approval) => (
+                  <div key={approval.approval_id} className="flex justify-center">
+                    <ApprovalCard
+                      request={approval}
+                      onResolved={() => {
+                        // Remove from pending list when resolved
+                        setPendingApprovals((prev) =>
+                          prev.filter((a) => a.approval_id !== approval.approval_id)
+                        );
+                      }}
+                      className="max-w-[80%]"
+                    />
+                  </div>
+                ))}
                 <div ref={messagesEndRef} />
               </div>
             </ScrollArea>

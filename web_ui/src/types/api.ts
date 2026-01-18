@@ -39,7 +39,7 @@ export interface ChatResponse {
 
 // SSE Stream events
 export interface StreamEvent {
-  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'agent_start' | 'agent_end';
+  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'approval_request';
   session_id?: string;
   model?: string;
   provider?: string;
@@ -61,6 +61,15 @@ export interface StreamEvent {
   agent_id?: string;
   response?: string;
   message_count?: number;
+  // HITL approval fields
+  approval_id?: string;
+  tool_args?: Record<string, unknown>;
+  expires_at?: string;
+  config?: {
+    show_args?: boolean;
+    timeout_seconds?: number;
+    require_reason_on_reject?: boolean;
+  };
 }
 
 // Session types
