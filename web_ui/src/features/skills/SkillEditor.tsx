@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  Pencil,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,6 +101,10 @@ export function SkillEditor() {
   const [resourceContents, setResourceContents] = useState<Record<string, string>>({});
   const [loadingResources, setLoadingResources] = useState<Set<string>>(new Set());
 
+  // Resource editing state (for built-in skills)
+  const [editingResources, setEditingResources] = useState<Set<string>>(new Set());
+  const [editedResourceContents, setEditedResourceContents] = useState<Record<string, string>>({});
+
   // Load skill data when editing
   useEffect(() => {
     if (isEditing) {
@@ -146,6 +152,9 @@ export function SkillEditor() {
     setShowSaveDialog(false);
     try {
       if (isEditing) {
+        // For built-in skills, include any modified resources
+        const resourcesToSave = isBuiltin ? getModifiedResources() : resources;
+
         await skillsApi.update(skillId!, {
           name,
           description,
@@ -153,7 +162,7 @@ export function SkillEditor() {
           version,
           author: author || null,
           core_content: coreContent,
-          resources,
+          resources: resourcesToSave,
           scripts,
           change_summary: changeSummary || null,
         });
@@ -161,6 +170,9 @@ export function SkillEditor() {
         if (isBuiltin) {
           setHasCustomContent(true);
           setChangeSummary('');
+          // Clear editing state
+          setEditingResources(new Set());
+          setEditedResourceContents({});
           // Reload to get fresh data
           await loadSkill();
           return;
@@ -292,6 +304,57 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
         }
       }
     }
+  };
+
+  // Start editing a resource
+  const startEditingResource = (resourceName: string) => {
+    const content = resourceContents[resourceName] || '';
+    setEditedResourceContents(prev => ({ ...prev, [resourceName]: content }));
+    setEditingResources(prev => new Set(prev).add(resourceName));
+  };
+
+  // Cancel editing a resource
+  const cancelEditingResource = (resourceName: string) => {
+    setEditingResources(prev => {
+      const next = new Set(prev);
+      next.delete(resourceName);
+      return next;
+    });
+    setEditedResourceContents(prev => {
+      const next = { ...prev };
+      delete next[resourceName];
+      return next;
+    });
+  };
+
+  // Save edited resource content (applies to local state, saved with skill)
+  const saveResourceEdit = (resourceName: string) => {
+    const editedContent = editedResourceContents[resourceName];
+    if (editedContent !== undefined) {
+      setResourceContents(prev => ({ ...prev, [resourceName]: editedContent }));
+    }
+    setEditingResources(prev => {
+      const next = new Set(prev);
+      next.delete(resourceName);
+      return next;
+    });
+  };
+
+  // Check if there are any modified resources
+  const getModifiedResources = () => {
+    const modified: Array<{ name: string; description: string; content: string }> = [];
+    for (const [name, content] of Object.entries(resourceContents)) {
+      // Find the resource config for description
+      const config = resourceConfigs.find(r => r.name === name);
+      if (config && !config.dynamic) {
+        modified.push({
+          name,
+          description: config.description || '',
+          content,
+        });
+      }
+    }
+    return modified;
   };
 
   const canSave = name.trim().length >= 1 && description.trim().length >= 10 && coreContent.trim().length >= 10;
@@ -672,8 +735,75 @@ When this skill is activated, follow these steps:
                                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                                   </div>
                                 ) : content ? (
-                                  <div className="rounded-lg border bg-card p-4 max-h-[500px] overflow-y-auto">
-                                    <MarkdownRenderer content={content} />
+                                  <div>
+                                    {/* Edit controls for non-dynamic resources */}
+                                    {!resource.dynamic && !isViewing && (
+                                      <div className="flex justify-end mb-2 gap-2">
+                                        {editingResources.has(resource.name) ? (
+                                          <>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                cancelEditingResource(resource.name);
+                                              }}
+                                              className="gap-1"
+                                            >
+                                              <X className="h-3 w-3" />
+                                              Cancel
+                                            </Button>
+                                            <Button
+                                              size="sm"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                saveResourceEdit(resource.name);
+                                              }}
+                                              className="gap-1"
+                                            >
+                                              <Save className="h-3 w-3" />
+                                              Apply
+                                            </Button>
+                                          </>
+                                        ) : (
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              startEditingResource(resource.name);
+                                            }}
+                                            className="gap-1"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                            Edit
+                                          </Button>
+                                        )}
+                                      </div>
+                                    )}
+                                    {resource.dynamic && (
+                                      <p className="text-xs text-muted-foreground mb-2 italic">
+                                        Dynamic resources are generated at runtime and cannot be edited.
+                                      </p>
+                                    )}
+                                    {/* Content display or editor */}
+                                    {editingResources.has(resource.name) ? (
+                                      <Textarea
+                                        value={editedResourceContents[resource.name] || ''}
+                                        onChange={(e) =>
+                                          setEditedResourceContents(prev => ({
+                                            ...prev,
+                                            [resource.name]: e.target.value
+                                          }))
+                                        }
+                                        className="min-h-[400px] font-mono text-sm"
+                                        placeholder="Resource content in markdown..."
+                                      />
+                                    ) : (
+                                      <div className="rounded-lg border bg-card p-4 max-h-[500px] overflow-y-auto">
+                                        <MarkdownRenderer content={content} />
+                                      </div>
+                                    )}
                                   </div>
                                 ) : (
                                   <div className="text-center py-4 text-muted-foreground">
