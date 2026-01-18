@@ -188,6 +188,7 @@ class XLSXSkill(Skill):
         )
         self.category = "data"
         self.is_builtin = True
+        self.version = "1.0.0"
         self._skill_dir = SKILLS_DIR / "xlsx"
         self._custom_content = None
         self._custom_resources = None
@@ -349,6 +350,7 @@ class SQLSkill(Skill):
         self.description = "Write and execute SQL queries against the database"
         self.category = "database"
         self.is_builtin = True
+        self.version = "2.0.0"
         self.db_url = db_url or get_database_url()
         self.read_only = read_only if read_only is not None else is_sql_read_only()
         self._db: Optional[SQLDatabase] = None
@@ -534,6 +536,8 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
         resource_map = {
             "examples": "examples.md",
             "patterns": "patterns.md",
+            "anti_patterns": "anti_patterns.md",
+            "dialect_reference": "dialect_reference.md",
         }
 
         if resource in resource_map:
@@ -592,6 +596,125 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
         except Exception as e:
             return f"Error getting schema for {table_name}: {str(e)}"
 
+    def describe_table(self, table_name: str) -> str:
+        """Get detailed schema information for a specific table.
+
+        Includes column names, types, constraints, and any available index information.
+
+        Args:
+            table_name: Name of the table to describe
+
+        Returns:
+            Detailed table schema information
+        """
+        db = self._get_db()
+        try:
+            # Get basic table info
+            schema_info = db.get_table_info([table_name])
+
+            # Try to get additional index information if available
+            try:
+                if "sqlite" in str(db.dialect).lower():
+                    # SQLite-specific index query
+                    index_info = db.run(f"PRAGMA index_list('{table_name}')")
+                    if index_info:
+                        schema_info += f"\n\n## Indexes\n{index_info}"
+                elif "postgresql" in str(db.dialect).lower():
+                    # PostgreSQL-specific
+                    index_query = f"""
+                    SELECT indexname, indexdef
+                    FROM pg_indexes
+                    WHERE tablename = '{table_name}'
+                    """
+                    index_info = db.run(index_query)
+                    if index_info:
+                        schema_info += f"\n\n## Indexes\n{index_info}"
+            except Exception:
+                # Index info is optional, don't fail if we can't get it
+                pass
+
+            return schema_info
+        except Exception as e:
+            return f"Error describing table {table_name}: {str(e)}"
+
+    def explain_query(self, query: str) -> str:
+        """Get the execution plan for a SQL query.
+
+        Analyzes the query without executing it to show how the database
+        would process the query. Useful for performance optimization.
+
+        Args:
+            query: The SQL query to analyze
+
+        Returns:
+            Query execution plan
+        """
+        db = self._get_db()
+        try:
+            # Determine the appropriate EXPLAIN syntax based on dialect
+            dialect = str(db.dialect).lower()
+
+            if "sqlite" in dialect:
+                explain_query = f"EXPLAIN QUERY PLAN {query}"
+            elif "postgresql" in dialect:
+                explain_query = f"EXPLAIN (ANALYZE false, COSTS true, FORMAT TEXT) {query}"
+            elif "mysql" in dialect:
+                explain_query = f"EXPLAIN {query}"
+            else:
+                # Generic EXPLAIN for other databases
+                explain_query = f"EXPLAIN {query}"
+
+            result = db.run(explain_query)
+            return f"## Query Execution Plan\n\n{result}"
+        except Exception as e:
+            return f"Error explaining query: {str(e)}"
+
+    def validate_query(self, query: str) -> str:
+        """Validate SQL syntax without executing the query.
+
+        Checks if the query is syntactically correct by preparing it
+        without actually running it.
+
+        Args:
+            query: The SQL query to validate
+
+        Returns:
+            Validation result (success or error details)
+        """
+        db = self._get_db()
+        try:
+            # Get the raw connection to prepare the statement
+            from sqlalchemy import text
+            from sqlalchemy.exc import SQLAlchemyError
+
+            # Use EXPLAIN to validate without executing
+            # This works because EXPLAIN parses the query
+            dialect = str(db.dialect).lower()
+
+            if "sqlite" in dialect:
+                # SQLite: Use EXPLAIN to validate
+                validate_query = f"EXPLAIN {query}"
+            elif "postgresql" in dialect:
+                # PostgreSQL: PREPARE statement validates syntax
+                validate_query = f"EXPLAIN (ANALYZE false) {query}"
+            elif "mysql" in dialect:
+                # MySQL: EXPLAIN validates syntax
+                validate_query = f"EXPLAIN {query}"
+            else:
+                validate_query = f"EXPLAIN {query}"
+
+            # Try to run the explain query - if it fails, syntax is invalid
+            db.run(validate_query)
+
+            # If we get here, syntax is valid
+            return "✓ Query syntax is valid.\n\nThe query is syntactically correct and can be executed."
+
+        except SQLAlchemyError as e:
+            error_msg = str(e)
+            return f"✗ Query syntax error:\n\n{error_msg}\n\nPlease fix the syntax and try again."
+        except Exception as e:
+            return f"✗ Validation error: {str(e)}"
+
 
 class JiraSkill(Skill):
     """Jira skill for read-only Jira integration.
@@ -621,6 +744,7 @@ class JiraSkill(Skill):
         self.description = "Query Jira issues, sprints, projects, and users (read-only)"
         self.category = "project_management"
         self.is_builtin = True
+        self.version = "1.0.0"
 
         # Load config values and log them
         self.url = url or get_jira_url()
