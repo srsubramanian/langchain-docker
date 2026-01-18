@@ -30,6 +30,7 @@ from langchain_docker.core.config import (
     is_jira_configured,
     is_sql_read_only,
 )
+from langchain_docker.core.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -1165,6 +1166,17 @@ class SkillRegistry:
             available = ", ".join(self._skills.keys())
             return f"Unknown skill: {skill_id}. Available skills: {available}"
 
+        # Add custom span for skill loading visibility in Phoenix
+        tracer = get_tracer()
+        if tracer:
+            with tracer.start_as_current_span("skill.load_core") as span:
+                span.set_attribute("skill.id", skill_id)
+                span.set_attribute("skill.name", skill.name)
+                span.set_attribute("skill.category", skill.category)
+                content = skill.load_core()
+                span.set_attribute("content_length", len(content))
+                return content
+
         return skill.load_core()
 
     def load_skill_details(self, skill_id: str, resource: str) -> str:
@@ -1181,6 +1193,17 @@ class SkillRegistry:
         if not skill:
             available = ", ".join(self._skills.keys())
             return f"Unknown skill: {skill_id}. Available skills: {available}"
+
+        # Add custom span for skill details loading visibility in Phoenix
+        tracer = get_tracer()
+        if tracer:
+            with tracer.start_as_current_span("skill.load_details") as span:
+                span.set_attribute("skill.id", skill_id)
+                span.set_attribute("skill.name", skill.name)
+                span.set_attribute("resource", resource)
+                content = skill.load_details(resource)
+                span.set_attribute("content_length", len(content))
+                return content
 
         return skill.load_details(resource)
 
