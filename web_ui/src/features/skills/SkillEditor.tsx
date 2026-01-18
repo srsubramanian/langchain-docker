@@ -12,6 +12,8 @@ import {
   Download,
   History,
   BarChart3,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -88,6 +90,11 @@ export function SkillEditor() {
 
   // Preview mode: 'rendered' or 'raw'
   const [previewMode, setPreviewMode] = useState<'rendered' | 'raw'>('rendered');
+
+  // Resource expansion state (for built-in skills)
+  const [expandedResources, setExpandedResources] = useState<Set<string>>(new Set());
+  const [resourceContents, setResourceContents] = useState<Record<string, string>>({});
+  const [loadingResources, setLoadingResources] = useState<Set<string>>(new Set());
 
   // Load skill data when editing
   useEffect(() => {
@@ -221,6 +228,41 @@ category: ${category}
 version: ${version}${author ? `\nauthor: ${author}` : ''}
 ---`;
     return `${frontmatter}\n\n${coreContent}`;
+  };
+
+  // Toggle resource expansion and load content if needed
+  const toggleResourceExpansion = async (resourceName: string) => {
+    const newExpanded = new Set(expandedResources);
+
+    if (newExpanded.has(resourceName)) {
+      // Collapse
+      newExpanded.delete(resourceName);
+      setExpandedResources(newExpanded);
+    } else {
+      // Expand
+      newExpanded.add(resourceName);
+      setExpandedResources(newExpanded);
+
+      // Load content if not already loaded
+      if (!resourceContents[resourceName] && skillId) {
+        setLoadingResources(prev => new Set(prev).add(resourceName));
+        try {
+          const result = await skillsApi.loadResource(skillId, resourceName);
+          setResourceContents(prev => ({ ...prev, [resourceName]: result.content }));
+        } catch (err) {
+          setResourceContents(prev => ({
+            ...prev,
+            [resourceName]: `Error loading resource: ${err instanceof Error ? err.message : 'Unknown error'}`
+          }));
+        } finally {
+          setLoadingResources(prev => {
+            const next = new Set(prev);
+            next.delete(resourceName);
+            return next;
+          });
+        }
+      }
+    }
   };
 
   const canSave = name.trim().length >= 1 && description.trim().length >= 10 && coreContent.trim().length >= 10;
@@ -514,7 +556,7 @@ When this skill is activated, follow these steps:
               )}
             </CardHeader>
             <CardContent>
-              {/* Built-in skills: show resourceConfigs */}
+              {/* Built-in skills: show resourceConfigs with expandable content */}
               {isBuiltin ? (
                 resourceConfigs.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
@@ -522,40 +564,77 @@ When this skill is activated, follow these steps:
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {resourceConfigs.map((resource, index) => (
-                      <Card key={index}>
-                        <CardContent className="pt-4">
-                          <div className="flex items-start justify-between mb-2">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <code className="text-sm font-semibold bg-muted px-2 py-0.5 rounded">
-                                  {resource.name}
-                                </code>
-                                {resource.dynamic && (
-                                  <Badge variant="outline" className="text-xs">
-                                    Dynamic
-                                  </Badge>
+                    {resourceConfigs.map((resource, index) => {
+                      const isExpanded = expandedResources.has(resource.name);
+                      const isLoadingContent = loadingResources.has(resource.name);
+                      const content = resourceContents[resource.name];
+
+                      return (
+                        <Card key={index}>
+                          <CardContent className="pt-4">
+                            <div
+                              className="flex items-start justify-between cursor-pointer"
+                              onClick={() => toggleResourceExpansion(resource.name)}
+                            >
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <code className="text-sm font-semibold bg-muted px-2 py-0.5 rounded">
+                                    {resource.name}
+                                  </code>
+                                  {resource.dynamic && (
+                                    <Badge variant="outline" className="text-xs">
+                                      Dynamic
+                                    </Badge>
+                                  )}
+                                  {resource.file && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      {resource.file}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {resource.description}
+                                </p>
+                                {resource.method && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    <span className="font-medium">Method:</span>{' '}
+                                    <code className="bg-muted px-1 rounded">{resource.method}</code>
+                                  </p>
                                 )}
                               </div>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                {resource.description}
-                              </p>
+                              <Button variant="ghost" size="sm" className="ml-2">
+                                {isLoadingContent ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : isExpanded ? (
+                                  <ChevronUp className="h-4 w-4" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4" />
+                                )}
+                              </Button>
                             </div>
-                            {resource.file && (
-                              <Badge variant="secondary" className="text-xs">
-                                {resource.file}
-                              </Badge>
+
+                            {/* Expanded content */}
+                            {isExpanded && (
+                              <div className="mt-4 pt-4 border-t">
+                                {isLoadingContent ? (
+                                  <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                  </div>
+                                ) : content ? (
+                                  <div className="rounded-lg border bg-card p-4 max-h-[500px] overflow-y-auto">
+                                    <MarkdownRenderer content={content} />
+                                  </div>
+                                ) : (
+                                  <div className="text-center py-4 text-muted-foreground">
+                                    Click to load resource content
+                                  </div>
+                                )}
+                              </div>
                             )}
-                          </div>
-                          {resource.method && (
-                            <p className="text-xs text-muted-foreground mt-2">
-                              <span className="font-medium">Method:</span>{' '}
-                              <code className="bg-muted px-1 rounded">{resource.method}</code>
-                            </p>
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )
               ) : (
