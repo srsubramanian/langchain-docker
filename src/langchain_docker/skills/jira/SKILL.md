@@ -2,7 +2,7 @@
 name: jira
 description: "Read-only Jira integration for querying issues, sprints, projects, and users"
 category: project_management
-version: "1.0.0"
+version: "1.1.0"
 
 # Tool configurations - gated tools that require this skill
 tool_configs:
@@ -61,6 +61,52 @@ tool_configs:
         description: "Resource to load"
         required: false
         default: "jql_reference"
+
+  - name: jira_get_comments
+    description: "Get comments on a Jira issue."
+    method: get_comments
+    args:
+      - name: issue_key
+        type: string
+        description: "Issue key (e.g., 'PROJ-123')"
+        required: true
+      - name: max_results
+        type: int
+        description: "Maximum comments to return"
+        required: false
+        default: 50
+
+  - name: jira_get_boards
+    description: "List all accessible agile boards."
+    method: get_boards
+    args:
+      - name: project_key
+        type: string
+        description: "Optional project key to filter boards"
+        required: false
+      - name: board_type
+        type: string
+        description: "Board type filter - 'scrum', 'kanban', or empty for all"
+        required: false
+        default: "scrum"
+
+  - name: jira_get_worklogs
+    description: "Get work logs for a Jira issue."
+    method: get_worklogs
+    args:
+      - name: issue_key
+        type: string
+        description: "Issue key (e.g., 'PROJ-123')"
+        required: true
+
+  - name: jira_get_sprint_issues
+    description: "Get all issues in a specific sprint."
+    method: get_sprint_issues
+    args:
+      - name: sprint_id
+        type: int
+        description: "The sprint ID"
+        required: true
 
 # Resource configurations - Level 3 content
 resource_configs:

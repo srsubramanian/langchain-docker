@@ -214,6 +214,73 @@ class ToolRegistry:
             )
         )
 
+        # New Jira tools
+        self.register(
+            ToolTemplate(
+                id="jira_get_comments",
+                name="Get Jira Comments",
+                description="Get comments on a Jira issue",
+                category="project_management",
+                parameters=[
+                    ToolParameter(
+                        name="max_results",
+                        description="Maximum comments to return (default: 50)",
+                        type="int",
+                        required=False,
+                        default=50,
+                    ),
+                ],
+                factory=lambda: self._create_jira_get_comments_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_boards",
+                name="List Jira Boards",
+                description="List all accessible agile boards",
+                category="project_management",
+                parameters=[
+                    ToolParameter(
+                        name="project_key",
+                        description="Optional project key to filter boards",
+                        type="string",
+                        required=False,
+                    ),
+                    ToolParameter(
+                        name="board_type",
+                        description="Board type: scrum, kanban, or empty for all",
+                        type="string",
+                        required=False,
+                        default="scrum",
+                    ),
+                ],
+                factory=lambda: self._create_jira_get_boards_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_worklogs",
+                name="Get Jira Worklogs",
+                description="Get work logs for a Jira issue",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_get_worklogs_tool(),
+            )
+        )
+
+        self.register(
+            ToolTemplate(
+                id="jira_get_sprint_issues",
+                name="Get Jira Sprint Issues",
+                description="Get all issues in a specific sprint",
+                category="project_management",
+                parameters=[],
+                factory=lambda: self._create_jira_get_sprint_issues_tool(),
+            )
+        )
+
     # SQL tool factory methods
     def _get_sql_skill(self) -> Any:
         """Get SQL skill from SkillRegistry (lazy loading)."""
@@ -519,6 +586,115 @@ class ToolRegistry:
             return jira_skill.load_details("jql_reference")
 
         return jira_jql_reference
+
+    def _create_jira_get_comments_tool(self) -> Callable[[str, int], str]:
+        """Create Jira get comments tool."""
+        jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_get_comments tool")
+
+        def jira_get_comments(issue_key: str, max_results: int = 50) -> str:
+            """Get comments on a Jira issue.
+
+            Args:
+                issue_key: Issue key (e.g., "PROJ-123")
+                max_results: Maximum comments to return (default: 50)
+
+            Returns:
+                Formatted list of comments
+            """
+            logger.info(f"[Jira Tool] jira_get_comments() called with issue_key: {issue_key}")
+            try:
+                result = jira_skill.get_comments(issue_key, max_results)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_get_comments() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_get_comments() exception: {type(e).__name__}: {str(e)}")
+                return f"Error getting comments: {str(e)}"
+
+        return jira_get_comments
+
+    def _create_jira_get_boards_tool(self) -> Callable[[], str]:
+        """Create Jira get boards tool."""
+        jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_get_boards tool")
+
+        def jira_get_boards(
+            project_key: str | None = None,
+            board_type: str = "scrum"
+        ) -> str:
+            """List all accessible agile boards.
+
+            Args:
+                project_key: Optional project key to filter boards
+                board_type: Board type filter (scrum, kanban, or empty for all)
+
+            Returns:
+                Formatted list of boards
+            """
+            logger.info(f"[Jira Tool] jira_get_boards() called with project_key={project_key}, board_type={board_type}")
+            try:
+                result = jira_skill.get_boards(project_key, board_type)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_get_boards() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_get_boards() exception: {type(e).__name__}: {str(e)}")
+                return f"Error getting boards: {str(e)}"
+
+        return jira_get_boards
+
+    def _create_jira_get_worklogs_tool(self) -> Callable[[str], str]:
+        """Create Jira get worklogs tool."""
+        jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_get_worklogs tool")
+
+        def jira_get_worklogs(issue_key: str) -> str:
+            """Get work logs for a Jira issue.
+
+            Args:
+                issue_key: Issue key (e.g., "PROJ-123")
+
+            Returns:
+                Formatted list of worklogs with time tracking
+            """
+            logger.info(f"[Jira Tool] jira_get_worklogs() called with issue_key: {issue_key}")
+            try:
+                result = jira_skill.get_worklogs(issue_key)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_get_worklogs() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_get_worklogs() exception: {type(e).__name__}: {str(e)}")
+                return f"Error getting worklogs: {str(e)}"
+
+        return jira_get_worklogs
+
+    def _create_jira_get_sprint_issues_tool(self) -> Callable[[int], str]:
+        """Create Jira get sprint issues tool."""
+        jira_skill = self._get_jira_skill()
+        logger.info("[Jira Tool] Creating jira_get_sprint_issues tool")
+
+        def jira_get_sprint_issues(sprint_id: int) -> str:
+            """Get all issues in a specific sprint.
+
+            Args:
+                sprint_id: The sprint ID
+
+            Returns:
+                Formatted list of issues in the sprint
+            """
+            logger.info(f"[Jira Tool] jira_get_sprint_issues() called with sprint_id: {sprint_id}")
+            try:
+                result = jira_skill.get_sprint_issues(sprint_id)
+                preview = result[:200] + "..." if len(result) > 200 else result
+                logger.info(f"[Jira Tool] jira_get_sprint_issues() result preview: {preview}")
+                return result
+            except Exception as e:
+                logger.error(f"[Jira Tool] jira_get_sprint_issues() exception: {type(e).__name__}: {str(e)}")
+                return f"Error getting sprint issues: {str(e)}"
+
+        return jira_get_sprint_issues
 
     # Registry methods
     def register(self, template: ToolTemplate) -> None:

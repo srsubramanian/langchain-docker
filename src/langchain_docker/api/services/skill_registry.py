@@ -1238,6 +1238,119 @@ class JiraSkill(Skill):
 
         return "\n".join(output)
 
+    def get_comments(self, issue_key: str, max_results: int = 50) -> str:
+        """Get comments on a Jira issue.
+
+        Args:
+            issue_key: Issue key (e.g., "PROJ-123")
+            max_results: Maximum comments to return
+
+        Returns:
+            Formatted list of comments or error message
+        """
+        params = {"maxResults": max_results, "orderBy": "-created"}
+        result = self._api_get(
+            f"/rest/api/{self.api_version}/issue/{issue_key}/comment",
+            params
+        )
+
+        if "error" in result:
+            return result["error"]
+
+        comments = result.get("comments", [])
+        total = result.get("total", 0)
+
+        if not comments:
+            return f"No comments found on {issue_key}."
+
+        output = [f"**Comments on {issue_key}** ({total} total, showing {len(comments)}):\n"]
+        for comment in comments:
+            author = comment.get("author", {}).get("displayName", "Unknown")
+            created = comment.get("created", "Unknown")
+            body = comment.get("body", "")
+            # Truncate long comments
+            if len(body) > 500:
+                body = body[:500] + "..."
+
+            output.append(f"**{author}** ({created}):")
+            output.append(f"{body}\n")
+
+        return "\n".join(output)
+
+    def get_boards(self, project_key: Optional[str] = None, board_type: str = "scrum") -> str:
+        """List all accessible agile boards.
+
+        Args:
+            project_key: Optional project key to filter boards
+            board_type: Board type filter (scrum, kanban, or empty for all)
+
+        Returns:
+            Formatted list of boards or error message
+        """
+        params = {}
+        if project_key:
+            params["projectKeyOrId"] = project_key
+        if board_type:
+            params["type"] = board_type
+
+        result = self._api_get("/rest/agile/1.0/board", params)
+
+        if "error" in result:
+            return result["error"]
+
+        boards = result.get("values", [])
+
+        if not boards:
+            return "No boards found."
+
+        output = ["**Available Boards:**\n"]
+        for board in boards:
+            board_id = board.get("id", "")
+            name = board.get("name", "")
+            b_type = board.get("type", "")
+            project = board.get("location", {}).get("projectKey", "N/A")
+
+            output.append(f"- **{name}** (ID: {board_id})")
+            output.append(f"  Type: {b_type} | Project: {project}")
+
+        return "\n".join(output)
+
+    def get_worklogs(self, issue_key: str) -> str:
+        """Get work logs for a Jira issue.
+
+        Args:
+            issue_key: Issue key (e.g., "PROJ-123")
+
+        Returns:
+            Formatted list of worklogs or error message
+        """
+        result = self._api_get(f"/rest/api/{self.api_version}/issue/{issue_key}/worklog")
+
+        if "error" in result:
+            return result["error"]
+
+        worklogs = result.get("worklogs", [])
+
+        if not worklogs:
+            return f"No work logs found on {issue_key}."
+
+        total_seconds = sum(w.get("timeSpentSeconds", 0) for w in worklogs)
+        total_hours = total_seconds / 3600
+
+        output = [f"**Work Logs for {issue_key}** (Total: {total_hours:.1f}h):\n"]
+        for log in worklogs:
+            author = log.get("author", {}).get("displayName", "Unknown")
+            started = log.get("started", "Unknown")
+            time_spent = log.get("timeSpent", "Unknown")
+            comment = log.get("comment", "")
+
+            output.append(f"- **{author}** logged {time_spent} on {started}")
+            if comment:
+                truncated = comment[:100] + "..." if len(comment) > 100 else comment
+                output.append(f"  Comment: {truncated}")
+
+        return "\n".join(output)
+
 
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
