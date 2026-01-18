@@ -25,7 +25,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { agentsApi, modelsApi } from '@/api';
 import { useSettingsStore } from '@/stores';
-import type { WorkflowInvokeResponse, DirectInvokeResponse, ProviderInfo, ModelInfo } from '@/types/api';
+import type { ProviderInfo, ModelInfo } from '@/types/api';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -37,21 +37,29 @@ interface ToolCallInfo {
   arguments?: string;
   result?: string;
   isLoading?: boolean;
+  agent_name?: string; // Which agent made this call
 }
 
-// Message with optional tool calls
+// Message with optional tool calls and agent info
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   toolCalls?: ToolCallInfo[];
+  agentsUsed?: string[]; // Agents that contributed to this response
 }
 
 // Helper component to render a tool call badge
-function ToolCallBadge({ toolCall }: { toolCall: ToolCallInfo }) {
+function ToolCallBadge({ toolCall, showAgent = false }: { toolCall: ToolCallInfo; showAgent?: boolean }) {
   const isSkillLoader = toolCall.tool_name.startsWith('load_') && toolCall.tool_name.endsWith('_skill');
+  const isTransfer = toolCall.tool_name.startsWith('transfer_to_');
   const displayName = isSkillLoader
     ? toolCall.tool_name.replace('load_', '').replace('_skill', '') + ' skill'
+    : isTransfer
+    ? toolCall.tool_name.replace('transfer_to_', '').replace(/_/g, ' ')
     : toolCall.tool_name;
+
+  // Skip rendering transfer tools - they're internal to the supervisor
+  if (isTransfer) return null;
 
   return (
     <div className={cn(
@@ -69,6 +77,9 @@ function ToolCallBadge({ toolCall }: { toolCall: ToolCallInfo }) {
         <Sparkles className="h-3 w-3" />
       ) : (
         <Wrench className="h-3 w-3" />
+      )}
+      {showAgent && toolCall.agent_name && (
+        <span className="text-muted-foreground">{toolCall.agent_name.replace(/_/g, ' ')}:</span>
       )}
       <span>{displayName}</span>
       {toolCall.isLoading && <span className="text-muted-foreground">loading...</span>}
@@ -197,7 +208,6 @@ export function MultiAgentPage() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null); // For session persistence
   const [isLoading, setIsLoading] = useState(false);
-  const [response, setResponse] = useState<WorkflowInvokeResponse | DirectInvokeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isReady, setIsReady] = useState(false); // Track if agent/workflow is ready
@@ -205,6 +215,8 @@ export function MultiAgentPage() {
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCallInfo[]>([]);
+  const [activeAgent, setActiveAgent] = useState<string | null>(null); // Currently processing agent
+  const [agentsUsedInStream, setAgentsUsedInStream] = useState<string[]>([]); // Agents that have contributed
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { provider, model, agentPreset, setAgentPreset, setProvider, setModel } = useSettingsStore();
@@ -251,7 +263,6 @@ export function MultiAgentPage() {
     // Clear conversation state when switching workflows/presets
     setSessionId(null);
     setMessages([]);
-    setResponse(null);
     setError(null);
     setIsReady(false);
 
@@ -329,6 +340,8 @@ export function MultiAgentPage() {
     setError(null);
     setStreamingContent('');
     setStreamingToolCalls([]);
+    setActiveAgent(null);
+    setAgentsUsedInStream([]);
 
     try {
       // For single-agent mode (built-in or custom), use streaming API to show tool calls
@@ -337,7 +350,7 @@ export function MultiAgentPage() {
         const toolCalls: ToolCallInfo[] = [];
         let fullContent = '';
 
-        for await (const event of agentsApi.invokeAgentDirectStream(agentId, {
+        for await (const event of agentsApi.invokeAgentStream(agentId, {
           message: userMessage,
           session_id: sessionId,
         })) {
@@ -381,14 +394,69 @@ export function MultiAgentPage() {
         setStreamingContent('');
         setStreamingToolCalls([]);
       } else if (workflowId) {
-        // Use non-streaming workflow API for multi-agent mode
-        const result = await agentsApi.invokeWorkflow(workflowId, {
+        // Use streaming workflow API for multi-agent mode
+        const toolCalls: ToolCallInfo[] = [];
+        const usedAgents: string[] = [];
+        let fullContent = '';
+
+        for await (const event of agentsApi.invokeWorkflowStream(workflowId, {
           message: userMessage,
           session_id: sessionId,
-        });
-        setResponse(result);
-        setSessionId(result.session_id);
-        setMessages((prev) => [...prev, { role: 'assistant', content: result.response }]);
+        })) {
+          if (event.event === 'start' && event.session_id) {
+            setSessionId(event.session_id);
+          } else if (event.event === 'agent_start' && event.agent_name) {
+            // Track which agent is currently working
+            setActiveAgent(event.agent_name);
+            if (!usedAgents.includes(event.agent_name)) {
+              usedAgents.push(event.agent_name);
+              setAgentsUsedInStream([...usedAgents]);
+            }
+          } else if (event.event === 'agent_end') {
+            setActiveAgent(null);
+          } else if (event.event === 'tool_call') {
+            // Add new tool call (loading state) with agent info
+            const newToolCall: ToolCallInfo = {
+              tool_name: event.tool_name || 'unknown',
+              tool_id: event.tool_id || '',
+              arguments: event.arguments,
+              agent_name: event.agent_name || undefined,
+              isLoading: true,
+            };
+            toolCalls.push(newToolCall);
+            setStreamingToolCalls([...toolCalls]);
+          } else if (event.event === 'tool_result') {
+            // Update the tool call with result
+            const toolCall = toolCalls.find((tc) => tc.tool_id === event.tool_id);
+            if (toolCall) {
+              toolCall.result = event.result;
+              toolCall.isLoading = false;
+              setStreamingToolCalls([...toolCalls]);
+            }
+          } else if (event.event === 'token' && event.content) {
+            fullContent += event.content;
+            setStreamingContent(fullContent);
+          } else if (event.event === 'error') {
+            throw new Error(event.error || 'Streaming error');
+          }
+        }
+
+        // Add the final message with tool calls and agents used
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: fullContent,
+            toolCalls: toolCalls.filter((tc) => !tc.tool_name.startsWith('transfer_to_')).length > 0
+              ? toolCalls.filter((tc) => !tc.tool_name.startsWith('transfer_to_'))
+              : undefined,
+            agentsUsed: usedAgents.length > 0 ? usedAgents : undefined,
+          },
+        ]);
+        setStreamingContent('');
+        setStreamingToolCalls([]);
+        setActiveAgent(null);
+        setAgentsUsedInStream([]);
       } else {
         throw new Error('No agent or workflow available');
       }
@@ -396,6 +464,8 @@ export function MultiAgentPage() {
       setError(err instanceof Error ? err.message : 'Agent execution failed');
       setStreamingContent('');
       setStreamingToolCalls([]);
+      setActiveAgent(null);
+      setAgentsUsedInStream([]);
     } finally {
       setIsLoading(false);
     }
@@ -654,32 +724,107 @@ export function MultiAgentPage() {
                   msg.role === 'user' ? 'justify-end' : 'justify-start'
                 )}
               >
-                <div
-                  className={cn(
-                    'max-w-[80%] rounded-lg px-4 py-2',
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted'
-                  )}
-                >
-                  {msg.role === 'assistant' ? (
-                    <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
+                <div className="flex flex-col gap-2 max-w-[80%]">
+                  {/* Agents used badges for assistant messages */}
+                  {msg.role === 'assistant' && msg.agentsUsed && msg.agentsUsed.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.agentsUsed.map((agent, agentIdx) => (
+                        <div
+                          key={agentIdx}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-teal-500/20 text-teal-400 border border-teal-500/30"
+                        >
+                          <Check className="h-3 w-3" />
+                          <span>{agent.replace(/_/g, ' ')}</span>
+                        </div>
+                      ))}
                     </div>
-                  ) : (
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
                   )}
+                  {/* Tool call badges for assistant messages */}
+                  {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.toolCalls.map((tc, tcIdx) => (
+                        <ToolCallBadge key={tcIdx} toolCall={tc} showAgent={true} />
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    className={cn(
+                      'rounded-lg px-4 py-2',
+                      msg.role === 'user'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted'
+                    )}
+                  >
+                    {msg.role === 'assistant' ? (
+                      <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
 
             {isLoading && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-lg bg-muted px-4 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Agents working...</span>
+              <div className="flex flex-col gap-2 max-w-[80%]">
+                {/* Show agents used so far during streaming */}
+                {agentsUsedInStream.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {agentsUsedInStream.map((agent, idx) => (
+                      <div
+                        key={idx}
+                        className={cn(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border',
+                          activeAgent === agent
+                            ? 'bg-teal-500/30 text-teal-300 border-teal-400/50'
+                            : 'bg-teal-500/20 text-teal-400 border-teal-500/30'
+                        )}
+                      >
+                        {activeAgent === agent ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                        <span>{agent.replace(/_/g, ' ')}</span>
+                        {activeAgent === agent && (
+                          <span className="text-teal-300/70">working...</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Show streaming tool calls */}
+                {streamingToolCalls.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {streamingToolCalls.map((tc, idx) => (
+                      <ToolCallBadge key={idx} toolCall={tc} showAgent={true} />
+                    ))}
+                  </div>
+                )}
+                {/* Show streaming content or thinking indicator */}
+                <div className="rounded-lg bg-muted px-4 py-2">
+                  {streamingContent ? (
+                    <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {streamingContent}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>
+                        {activeAgent
+                          ? `${activeAgent.replace(/_/g, ' ')} working...`
+                          : streamingToolCalls.length > 0
+                          ? 'Processing tools...'
+                          : 'Agents coordinating...'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -708,13 +853,6 @@ export function MultiAgentPage() {
           </Button>
         </form>
 
-        {response && 'agents' in response && response.agents.length > 0 && (
-          <div className="mt-4">
-            <p className="text-sm text-muted-foreground">
-              Agents used: {response.agents.join(', ')}
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Right Panel - Workflow Graph */}

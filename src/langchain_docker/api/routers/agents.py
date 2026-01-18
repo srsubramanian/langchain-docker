@@ -1,9 +1,28 @@
-"""Multi-agent API endpoints."""
+"""Multi-agent API endpoints.
+
+Unified endpoint structure:
+- GET  /agents                    - List all agents (custom + builtin)
+- GET  /agents/{agent_id}         - Get agent details
+- POST /agents                    - Create custom agent
+- DELETE /agents/{agent_id}       - Delete custom agent
+- POST /agents/{agent_id}/invoke  - Invoke any agent (non-streaming)
+- POST /agents/{agent_id}/invoke/stream - Invoke any agent (streaming)
+- DELETE /agents/{agent_id}/session - Clear agent session
+
+- GET  /agents/tools              - List tool templates
+- GET  /agents/tools/categories   - List tool categories
+
+- GET  /workflows                 - List workflows
+- POST /workflows                 - Create workflow
+- POST /workflows/{id}/invoke     - Invoke workflow (non-streaming)
+- POST /workflows/{id}/invoke/stream - Invoke workflow (streaming)
+- DELETE /workflows/{id}          - Delete workflow
+"""
 
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
 from langchain_docker.api.dependencies import get_agent_service, get_current_user_id
@@ -29,53 +48,97 @@ from langchain_docker.api.services.agent_service import AgentService
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-# Tool Registry Endpoints
+# =============================================================================
+# UNIFIED AGENT ENDPOINTS
+# These endpoints work with both custom and built-in agents
+# =============================================================================
 
 
-@router.get("/tools", response_model=list[ToolTemplateSchema])
-def list_tool_templates(
+@router.get("", response_model=list[dict])
+def list_all_agents(
+    agent_type: str = Query(None, description="Filter by type: 'custom' or 'builtin'"),
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """List all available tool templates.
+    """List all agents (both custom and built-in).
 
-    Returns tool templates with their configurable parameters.
-    These can be used to build custom agents.
+    Args:
+        agent_type: Optional filter for agent type ('custom' or 'builtin')
 
     Returns:
-        List of tool templates
+        List of all agents with unified schema
     """
-    return agent_service.list_tool_templates()
+    agents = agent_service.list_all_agents()
+
+    if agent_type:
+        agents = [a for a in agents if a.get("type") == agent_type]
+
+    return agents
 
 
-@router.get("/tools/categories", response_model=list[str])
-def list_tool_categories(
+@router.get("/{agent_id}")
+def get_agent(
+    agent_id: str,
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """List all tool categories.
+    """Get details of any agent (custom or built-in).
+
+    Args:
+        agent_id: Agent ID
 
     Returns:
-        List of category names (math, weather, research, finance, etc.)
+        Agent information
     """
-    return agent_service.list_tool_categories()
+    try:
+        agent_type, config, custom = agent_service._get_agent_info(agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if agent_type == "custom":
+        # Build detailed custom agent info
+        schedule_info = None
+        if custom.schedule:
+            schedule_data = agent_service.get_agent_schedule(agent_id)
+            schedule_info = {
+                "enabled": custom.schedule.enabled,
+                "cron_expression": custom.schedule.cron_expression,
+                "trigger_prompt": custom.schedule.trigger_prompt,
+                "timezone": custom.schedule.timezone,
+                "next_run": schedule_data.get("next_run") if schedule_data else None,
+            }
+
+        return {
+            "id": agent_id,
+            "name": custom.name,
+            "type": "custom",
+            "tools": [tc["tool_id"] for tc in custom.tool_configs],
+            "skills": custom.skill_ids or [],
+            "description": custom.system_prompt[:100] + "..." if len(custom.system_prompt) > 100 else custom.system_prompt,
+            "system_prompt": custom.system_prompt,
+            "schedule": schedule_info,
+            "created_at": custom.created_at.isoformat(),
+            "provider": custom.provider,
+            "model": custom.model,
+            "temperature": custom.temperature,
+        }
+    else:
+        # Built-in agent info
+        if "tool_ids" in config:
+            tool_names = config["tool_ids"]
+        else:
+            tool_names = [t.__name__ for t in config.get("tools", [])]
+
+        return {
+            "id": agent_id,
+            "name": config["name"],
+            "type": "builtin",
+            "tools": tool_names,
+            "description": config["prompt"][:100] + "..." if len(config["prompt"]) > 100 else config["prompt"],
+            "system_prompt": config["prompt"],
+        }
 
 
-# Custom Agent Endpoints
-
-
-@router.get("/custom", response_model=list[CustomAgentInfo])
-def list_custom_agents(
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """List all custom agents created by users.
-
-    Returns:
-        List of custom agent information
-    """
-    return agent_service.list_custom_agents()
-
-
-@router.post("/custom", response_model=CustomAgentCreateResponse, status_code=201)
-def create_custom_agent(
+@router.post("", response_model=CustomAgentCreateResponse, status_code=201)
+def create_agent(
     request: CustomAgentCreateRequest,
     agent_service: AgentService = Depends(get_agent_service),
 ):
@@ -99,7 +162,6 @@ def create_custom_agent(
             for t in request.tools
         ]
 
-        # Build schedule config if provided
         schedule_config = None
         if request.schedule:
             schedule_config = {
@@ -141,66 +203,30 @@ def create_custom_agent(
     )
 
 
-@router.get("/custom/{agent_id}", response_model=CustomAgentInfo)
-def get_custom_agent(
-    agent_id: str,
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """Get details of a specific custom agent.
-
-    Args:
-        agent_id: Custom agent ID
-
-    Returns:
-        Custom agent information
-    """
-    agent = agent_service.get_custom_agent(agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail=f"Custom agent not found: {agent_id}")
-
-    # Build schedule info if agent has a schedule
-    schedule_info = None
-    if agent.schedule:
-        schedule_data = agent_service.get_agent_schedule(agent_id)
-        schedule_info = ScheduleInfo(
-            enabled=agent.schedule.enabled,
-            cron_expression=agent.schedule.cron_expression,
-            trigger_prompt=agent.schedule.trigger_prompt,
-            timezone=agent.schedule.timezone,
-            next_run=schedule_data.get("next_run") if schedule_data else None,
-        )
-
-    return CustomAgentInfo(
-        id=agent.id,
-        name=agent.name,
-        tools=[tc["tool_id"] for tc in agent.tool_configs],
-        skills=getattr(agent, "skill_ids", []) or [],
-        description=agent.system_prompt[:100] + "..." if len(agent.system_prompt) > 100 else agent.system_prompt,
-        schedule=schedule_info,
-        created_at=agent.created_at.isoformat(),
-        provider=agent.provider,
-        model=agent.model,
-        temperature=agent.temperature,
-    )
-
-
-@router.delete("/custom/{agent_id}", response_model=CustomAgentDeleteResponse)
-def delete_custom_agent(
+@router.delete("/{agent_id}", response_model=CustomAgentDeleteResponse)
+def delete_agent(
     agent_id: str,
     agent_service: AgentService = Depends(get_agent_service),
 ):
     """Delete a custom agent.
 
+    Note: Built-in agents cannot be deleted.
+
     Args:
-        agent_id: Custom agent ID to delete
+        agent_id: Agent ID to delete
 
     Returns:
         Deletion status
     """
+    # Check if it's a built-in agent
+    all_builtin = agent_service._get_all_builtin_agents()
+    if agent_id in all_builtin:
+        raise HTTPException(status_code=400, detail="Cannot delete built-in agents")
+
     deleted = agent_service.delete_custom_agent(agent_id)
 
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"Custom agent not found: {agent_id}")
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
 
     return CustomAgentDeleteResponse(
         agent_id=agent_id,
@@ -208,31 +234,30 @@ def delete_custom_agent(
     )
 
 
-@router.post("/custom/{agent_id}/invoke", response_model=DirectInvokeResponse)
-def invoke_custom_agent_direct(
+@router.post("/{agent_id}/invoke", response_model=DirectInvokeResponse)
+def invoke_agent(
     agent_id: str,
     request: DirectInvokeRequest,
     user_id: str = Depends(get_current_user_id),
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """Invoke a custom agent directly without supervisor.
+    """Invoke any agent (custom or built-in) directly without supervisor.
 
-    This endpoint allows direct interaction with a custom agent, enabling
+    This endpoint allows direct interaction with any agent, enabling
     human-in-the-loop scenarios where the agent can ask for confirmation
     and the user can respond.
 
     Args:
-        agent_id: Custom agent ID
+        agent_id: Agent ID (custom or built-in)
         request: Message to process with memory options
 
     Returns:
         Agent response with session ID and memory metadata
     """
-    # Include user_id in session for conversation isolation
-    session_id = request.session_id or f"{user_id}:direct:{agent_id}"
+    session_id = request.session_id or f"{user_id}:agent:{agent_id}"
 
     try:
-        result = agent_service.invoke_agent_direct(
+        result = agent_service.invoke_agent(
             agent_id=agent_id,
             message=request.message,
             session_id=session_id,
@@ -247,20 +272,17 @@ def invoke_custom_agent_direct(
     return DirectInvokeResponse(**result)
 
 
-@router.post("/custom/{agent_id}/invoke/stream")
-async def invoke_custom_agent_direct_stream(
+@router.post("/{agent_id}/invoke/stream")
+async def invoke_agent_stream(
     agent_id: str,
     request: DirectInvokeRequest,
     user_id: str = Depends(get_current_user_id),
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """Stream responses from a custom or built-in agent directly without supervisor.
+    """Stream responses from any agent (custom or built-in) directly.
 
     This endpoint streams SSE events for tool calls, tool results, and tokens.
     Use this to show real-time skill loading and agent responses.
-
-    The endpoint first tries to find a custom agent with the given ID.
-    If not found, it falls back to checking built-in agents.
 
     Events:
         - start: Initial event with session info
@@ -271,88 +293,88 @@ async def invoke_custom_agent_direct_stream(
         - error: If an error occurs
 
     Args:
-        agent_id: Agent ID (custom or built-in like 'sql_expert', 'math_expert')
+        agent_id: Agent ID (custom or built-in)
         request: Message to process with memory options
 
     Returns:
         SSE stream of events
     """
-    # Check if agent exists (custom or built-in)
-    is_custom = agent_service.get_custom_agent(agent_id) is not None
-    builtin_names = [a["name"] for a in agent_service.list_builtin_agents()]
-    is_builtin = agent_id in builtin_names
-
-    if not is_custom and not is_builtin:
-        async def error_generator():
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": f"Agent not found: {agent_id}"}),
-            }
-        return EventSourceResponse(error_generator())
-
-    # Include user_id in session for conversation isolation
-    agent_type = "direct" if is_custom else "builtin"
-    session_id = request.session_id or f"{user_id}:{agent_type}:{agent_id}"
+    session_id = request.session_id or f"{user_id}:agent:{agent_id}"
 
     async def event_generator():
-        try:
-            # Use appropriate streaming method based on agent type
-            if is_custom:
-                stream = agent_service.stream_agent_direct(
-                    agent_id=agent_id,
-                    message=request.message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    enable_memory=request.enable_memory,
-                    memory_trigger_count=request.memory_trigger_count,
-                    memory_keep_recent=request.memory_keep_recent,
-                )
-            else:
-                stream = agent_service.stream_builtin_agent(
-                    agent_id=agent_id,
-                    message=request.message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    enable_memory=request.enable_memory,
-                    memory_trigger_count=request.memory_trigger_count,
-                    memory_keep_recent=request.memory_keep_recent,
-                )
-
-            async for event in stream:
-                yield {
-                    "event": event.get("event", "message"),
-                    "data": event.get("data", "{}"),
-                }
-        except ValueError as e:
+        async for event in agent_service.stream_agent(
+            agent_id=agent_id,
+            message=request.message,
+            session_id=session_id,
+            user_id=user_id,
+            enable_memory=request.enable_memory,
+            memory_trigger_count=request.memory_trigger_count,
+            memory_keep_recent=request.memory_keep_recent,
+        ):
             yield {
-                "event": "error",
-                "data": json.dumps({"error": str(e)}),
+                "event": event.get("event", "message"),
+                "data": event.get("data", "{}"),
             }
 
     return EventSourceResponse(event_generator())
 
 
-@router.delete("/custom/{agent_id}/session", status_code=204)
-def clear_direct_session(
+@router.delete("/{agent_id}/session", status_code=204)
+def clear_agent_session(
     agent_id: str,
     session_id: str = None,
     user_id: str = Depends(get_current_user_id),
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """Clear a direct agent session's conversation history.
+    """Clear an agent session's conversation history.
 
-    Use this to reset the conversation state for a custom agent.
+    Use this to reset the conversation state for any agent.
 
     Args:
-        agent_id: Custom agent ID
+        agent_id: Agent ID
         session_id: Session ID to clear (optional, defaults to user's default session)
     """
-    sess_key = session_id or f"{user_id}:direct:{agent_id}"
+    sess_key = session_id or f"{user_id}:agent:{agent_id}"
     agent_service.clear_direct_session(sess_key)
     return None
 
 
-# Built-in Agent Endpoints
+# =============================================================================
+# TOOL REGISTRY ENDPOINTS
+# =============================================================================
+
+
+@router.get("/tools", response_model=list[ToolTemplateSchema])
+def list_tool_templates(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all available tool templates.
+
+    Returns tool templates with their configurable parameters.
+    These can be used to build custom agents.
+
+    Returns:
+        List of tool templates
+    """
+    return agent_service.list_tool_templates()
+
+
+@router.get("/tools/categories", response_model=list[str])
+def list_tool_categories(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all tool categories.
+
+    Returns:
+        List of category names (math, weather, research, finance, etc.)
+    """
+    return agent_service.list_tool_categories()
+
+
+# =============================================================================
+# LEGACY ENDPOINTS (Deprecated - use unified endpoints above)
+# Kept for backward compatibility
+# =============================================================================
 
 
 @router.get("/builtin", response_model=list[AgentInfo])
@@ -361,13 +383,38 @@ def list_builtin_agents(
 ):
     """List all available built-in agents.
 
+    DEPRECATED: Use GET /agents?agent_type=builtin instead.
+
     Returns:
         List of built-in agent configurations
     """
     return agent_service.list_builtin_agents()
 
 
-@router.get("/workflows", response_model=list[WorkflowInfo])
+@router.get("/custom", response_model=list[CustomAgentInfo])
+def list_custom_agents(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all custom agents created by users.
+
+    DEPRECATED: Use GET /agents?agent_type=custom instead.
+
+    Returns:
+        List of custom agent information
+    """
+    return agent_service.list_custom_agents()
+
+
+# =============================================================================
+# WORKFLOW ENDPOINTS
+# Multi-agent orchestration with supervisor
+# =============================================================================
+
+# Create a separate router for workflows
+workflow_router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+
+@workflow_router.get("", response_model=list[WorkflowInfo])
 def list_workflows(
     agent_service: AgentService = Depends(get_agent_service),
 ):
@@ -379,7 +426,7 @@ def list_workflows(
     return agent_service.list_workflows()
 
 
-@router.post("/workflows", response_model=WorkflowCreateResponse, status_code=201)
+@workflow_router.post("", response_model=WorkflowCreateResponse, status_code=201)
 def create_workflow(
     request: WorkflowCreateRequest,
     agent_service: AgentService = Depends(get_agent_service),
@@ -394,7 +441,6 @@ def create_workflow(
     Returns:
         Created workflow information
     """
-    # Generate workflow ID if not provided
     workflow_id = request.workflow_id or str(uuid.uuid4())
 
     try:
@@ -415,7 +461,7 @@ def create_workflow(
     )
 
 
-@router.post("/workflows/{workflow_id}/invoke", response_model=WorkflowInvokeResponse)
+@workflow_router.post("/{workflow_id}/invoke", response_model=WorkflowInvokeResponse)
 def invoke_workflow(
     workflow_id: str,
     request: WorkflowInvokeRequest,
@@ -434,7 +480,6 @@ def invoke_workflow(
     Returns:
         Workflow response with session_id and memory metadata
     """
-    # Include user_id in session for persistence and tracing
     session_id = request.session_id or f"{user_id}:workflow:{workflow_id}"
 
     try:
@@ -453,7 +498,56 @@ def invoke_workflow(
     return WorkflowInvokeResponse(**result)
 
 
-@router.delete("/workflows/{workflow_id}", response_model=WorkflowDeleteResponse)
+@workflow_router.post("/{workflow_id}/invoke/stream")
+async def invoke_workflow_stream(
+    workflow_id: str,
+    request: WorkflowInvokeRequest,
+    user_id: str = Depends(get_current_user_id),
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Stream responses from a multi-agent workflow.
+
+    This endpoint streams SSE events for agent delegation, tool calls, and tokens.
+    Use this to show real-time multi-agent coordination and responses.
+
+    Events:
+        - start: Initial event with session and workflow info
+        - agent_start: When a specialist agent begins processing
+        - agent_end: When a specialist agent completes
+        - tool_call: When a tool is called by an agent
+        - tool_result: Result of a tool call
+        - token: Streaming text token
+        - done: Final event with complete response
+        - error: If an error occurs
+
+    Args:
+        workflow_id: ID of the workflow to invoke
+        request: Message to process with memory options
+
+    Returns:
+        SSE stream of events
+    """
+    session_id = request.session_id or f"{user_id}:workflow:{workflow_id}"
+
+    async def event_generator():
+        async for event in agent_service.stream_workflow(
+            workflow_id=workflow_id,
+            message=request.message,
+            session_id=session_id,
+            user_id=user_id,
+            enable_memory=request.enable_memory,
+            memory_trigger_count=request.memory_trigger_count,
+            memory_keep_recent=request.memory_keep_recent,
+        ):
+            yield {
+                "event": event.get("event", "message"),
+                "data": event.get("data", "{}"),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+@workflow_router.delete("/{workflow_id}", response_model=WorkflowDeleteResponse)
 def delete_workflow(
     workflow_id: str,
     agent_service: AgentService = Depends(get_agent_service),

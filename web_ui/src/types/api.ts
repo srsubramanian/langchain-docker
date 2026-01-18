@@ -39,7 +39,7 @@ export interface ChatResponse {
 
 // SSE Stream events
 export interface StreamEvent {
-  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error';
+  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'agent_start' | 'agent_end';
   session_id?: string;
   model?: string;
   provider?: string;
@@ -54,6 +54,13 @@ export interface StreamEvent {
   arguments?: string;
   result?: string;
   error?: string;
+  // Workflow-specific fields
+  workflow_id?: string;
+  agents?: string[];
+  agent_name?: string;
+  agent_id?: string;
+  response?: string;
+  message_count?: number;
 }
 
 // Session types

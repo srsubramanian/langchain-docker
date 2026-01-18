@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { agentsApi } from '@/api';
-import type { AgentInfo, CustomAgentInfo } from '@/types/api';
+import type { UnifiedAgentInfo } from '@/api/agents';
 import { cn } from '@/lib/cn';
 
 // Generate a consistent color from agent name
@@ -137,8 +137,7 @@ function AgentCard({ name, description, tools, type, onChat, onEdit, onDelete }:
 
 export function AgentsPage() {
   const navigate = useNavigate();
-  const [builtinAgents, setBuiltinAgents] = useState<AgentInfo[]>([]);
-  const [customAgents, setCustomAgents] = useState<CustomAgentInfo[]>([]);
+  const [agents, setAgents] = useState<UnifiedAgentInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -150,12 +149,8 @@ export function AgentsPage() {
   const loadAgents = async () => {
     setIsLoading(true);
     try {
-      const [builtin, custom] = await Promise.all([
-        agentsApi.listBuiltin(),
-        agentsApi.listCustomAgents(),
-      ]);
-      setBuiltinAgents(builtin);
-      setCustomAgents(custom);
+      const allAgents = await agentsApi.listAllAgents();
+      setAgents(allAgents);
     } catch (error) {
       console.error('Failed to load agents:', error);
     } finally {
@@ -166,8 +161,8 @@ export function AgentsPage() {
   const handleDelete = async (agentId: string) => {
     if (deleteConfirm === agentId) {
       try {
-        await agentsApi.deleteCustomAgent(agentId);
-        setCustomAgents((prev) => prev.filter((a) => a.id !== agentId));
+        await agentsApi.deleteAgent(agentId);
+        setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setDeleteConfirm(null);
       } catch (error) {
         console.error('Failed to delete agent:', error);
@@ -189,28 +184,16 @@ export function AgentsPage() {
     }
   };
 
-  const filteredBuiltin = builtinAgents.filter(
+  // Filter agents by search query
+  const filteredAgents = agents.filter(
     (a) =>
       a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.description.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredCustom = customAgents.filter(
-    (a) =>
-      a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (a.description && a.description.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  const allAgents = [
-    ...filteredBuiltin.map((a) => ({ ...a, type: 'builtin' as const, id: undefined as string | undefined })),
-    ...filteredCustom.map((a) => ({
-      name: a.name,
-      description: a.description || 'Custom agent',
-      tools: a.tools || [],
-      type: 'custom' as const,
-      id: a.id,
-    })),
-  ];
+  // Split by type for tab counts
+  const filteredBuiltin = filteredAgents.filter((a) => a.type === 'builtin');
+  const filteredCustom = filteredAgents.filter((a) => a.type === 'custom');
 
   return (
     <div className="container py-8">
@@ -243,7 +226,7 @@ export function AgentsPage() {
       <Tabs defaultValue="all" className="space-y-6">
         <TabsList>
           <TabsTrigger value="all">
-            All Agents ({allAgents.length})
+            All Agents ({filteredAgents.length})
           </TabsTrigger>
           <TabsTrigger value="builtin">
             Built-in ({filteredBuiltin.length})
@@ -273,7 +256,7 @@ export function AgentsPage() {
         ) : (
           <>
             <TabsContent value="all" className="space-y-4">
-              {allAgents.length === 0 ? (
+              {filteredAgents.length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
                     <Bot className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -293,9 +276,9 @@ export function AgentsPage() {
                 </Card>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {allAgents.map((agent) => (
+                  {filteredAgents.map((agent) => (
                     <AgentCard
-                      key={agent.type === 'custom' ? agent.id : agent.name}
+                      key={agent.id}
                       name={agent.name}
                       description={agent.description}
                       tools={agent.tools}
@@ -308,7 +291,7 @@ export function AgentsPage() {
                       }
                       onDelete={
                         agent.type === 'custom'
-                          ? () => handleDelete(agent.id!)
+                          ? () => handleDelete(agent.id)
                           : undefined
                       }
                     />
@@ -321,12 +304,12 @@ export function AgentsPage() {
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {filteredBuiltin.map((agent) => (
                   <AgentCard
-                    key={agent.name}
+                    key={agent.id}
                     name={agent.name}
                     description={agent.description}
                     tools={agent.tools}
                     type="builtin"
-                    onChat={() => handleChatWithAgent(agent.name, undefined, false)}
+                    onChat={() => handleChatWithAgent(agent.name, agent.id, false)}
                   />
                 ))}
               </div>
@@ -353,8 +336,8 @@ export function AgentsPage() {
                     <AgentCard
                       key={agent.id}
                       name={agent.name}
-                      description={agent.description || 'Custom agent'}
-                      tools={agent.tools || []}
+                      description={agent.description}
+                      tools={agent.tools}
                       type="custom"
                       agentId={agent.id}
                       onChat={() => handleChatWithAgent(agent.name, agent.id, true)}

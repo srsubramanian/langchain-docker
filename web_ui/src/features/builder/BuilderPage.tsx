@@ -393,7 +393,7 @@ export function BuilderPage() {
       const toolCalls: ToolCallInfo[] = [];
       let fullContent = '';
 
-      for await (const event of agentsApi.invokeAgentDirectStream(agentId, {
+      for await (const event of agentsApi.invokeAgentStream(agentId, {
         message: userMessage,
         session_id: testSessionId,
       })) {

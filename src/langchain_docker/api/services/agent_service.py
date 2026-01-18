@@ -1473,6 +1473,467 @@ Always use the tools to interact with the database.""")
             logger.error(f"[Stream Builtin Agent] Error: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
+    # =========================================================================
+    # UNIFIED AGENT METHODS
+    # These methods handle both custom and built-in agents through a single API
+    # =========================================================================
+
+    def _get_agent_info(self, agent_id: str) -> tuple[str, dict, Optional[Any]]:
+        """Get agent information for any agent type.
+
+        Args:
+            agent_id: Agent ID (custom or built-in)
+
+        Returns:
+            Tuple of (agent_type, config, custom_agent_obj)
+            - agent_type: "custom" or "builtin"
+            - config: Agent configuration dict
+            - custom_agent_obj: CustomAgent object if custom, None if builtin
+
+        Raises:
+            ValueError: If agent not found
+        """
+        # Check custom agents first
+        if agent_id in self._custom_agents:
+            custom = self._custom_agents[agent_id]
+            return "custom", {
+                "name": custom.name,
+                "prompt": custom.system_prompt,
+                "provider": custom.provider,
+                "model": custom.model,
+                "temperature": custom.temperature,
+                "tool_configs": custom.tool_configs,
+                "skill_ids": custom.skill_ids,
+            }, custom
+
+        # Check built-in agents
+        all_builtin = self._get_all_builtin_agents()
+        if agent_id in all_builtin:
+            return "builtin", all_builtin[agent_id], None
+
+        # Not found
+        available = list(self._custom_agents.keys()) + list(all_builtin.keys())
+        raise ValueError(f"Agent not found: {agent_id}. Available: {available}")
+
+    def list_all_agents(self) -> list[dict]:
+        """List all agents (both custom and built-in).
+
+        Returns:
+            List of agent info dicts with unified schema
+        """
+        agents = []
+
+        # Add built-in agents
+        for config in self._get_all_builtin_agents().values():
+            if "tool_ids" in config:
+                tool_names = config["tool_ids"]
+            else:
+                tool_names = [t.__name__ for t in config.get("tools", [])]
+
+            agents.append({
+                "id": config["name"],
+                "name": config["name"],
+                "type": "builtin",
+                "tools": tool_names,
+                "description": config["prompt"][:100] + "..." if len(config["prompt"]) > 100 else config["prompt"],
+            })
+
+        # Add custom agents
+        for agent_id, custom in self._custom_agents.items():
+            agents.append({
+                "id": agent_id,
+                "name": custom.name,
+                "type": "custom",
+                "tools": [tc["tool_id"] for tc in custom.tool_configs],
+                "skills": custom.skill_ids,
+                "description": custom.system_prompt[:100] + "..." if len(custom.system_prompt) > 100 else custom.system_prompt,
+                "provider": custom.provider,
+                "model": custom.model,
+            })
+
+        return agents
+
+    def invoke_agent(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        provider: str = "openai",
+        model: Optional[str] = None,
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
+    ) -> dict:
+        """Invoke any agent (custom or built-in) without supervisor.
+
+        This is the unified method for non-streaming agent invocation.
+
+        Args:
+            agent_id: Agent ID (custom or built-in)
+            message: User message
+            session_id: Session ID for conversation continuity
+            user_id: User ID for session scoping
+            provider: Model provider (overridden by agent config if set)
+            model: Model name (overridden by agent config if set)
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
+
+        Returns:
+            Agent response with session_id and memory metadata
+
+        Raises:
+            ValueError: If agent not found
+        """
+        agent_type, config, custom = self._get_agent_info(agent_id)
+
+        # Determine provider/model - agent config takes precedence
+        agent_provider = config.get("provider", provider)
+        agent_model = config.get("model", model)
+        agent_temp = config.get("temperature", 0.7)
+
+        # Build session key
+        sess_key = session_id or f"{user_id}:agent:{agent_id}"
+        memory_metadata = None
+
+        # Cache key for compiled agent
+        cache_key = f"unified:{agent_id}"
+
+        # Get or create compiled agent
+        if cache_key not in self._direct_sessions:
+            llm = self.model_service.get_or_create(
+                provider=agent_provider,
+                model=agent_model,
+                temperature=agent_temp,
+            )
+
+            if agent_type == "custom":
+                agent = self._build_agent_from_custom(agent_id, llm)
+            else:
+                # Build from builtin config
+                use_middleware = config.get("use_middleware", False)
+                if "tool_ids" in config:
+                    tools = [self._tool_registry.create_tool_instance(tid) for tid in config["tool_ids"]]
+                else:
+                    tools = config.get("tools", [])
+
+                if use_middleware:
+                    agent = self.create_middleware_enabled_agent(
+                        agent_name=config["name"],
+                        llm=llm,
+                        tools=tools,
+                        system_prompt=config["prompt"],
+                        use_skills=True,
+                    )
+                else:
+                    agent = create_agent(
+                        model=llm,
+                        tools=tools,
+                        name=config["name"],
+                        system_prompt=config["prompt"],
+                        checkpointer=self._checkpointer,
+                    )
+
+            compiled = agent.compile() if hasattr(agent, 'compile') else agent
+            self._direct_sessions[cache_key] = {"app": compiled, "agent_id": agent_id}
+
+        app = self._direct_sessions[cache_key]["app"]
+
+        # Session management
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_key,
+                user_id=user_id,
+                metadata={"agent_id": agent_id, "agent_type": agent_type},
+            )
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, agent_provider, agent_model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+        else:
+            if cache_key not in self._direct_sessions or "messages" not in self._direct_sessions[cache_key]:
+                self._direct_sessions[cache_key]["messages"] = []
+            history = self._direct_sessions[cache_key]["messages"]
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+            context_messages = history
+
+        # Invoke agent with tracing
+        with trace_operation(
+            session_id=sess_key,
+            user_id=user_id,
+            operation="invoke_agent",
+            metadata={
+                "agent_id": agent_id,
+                "agent_type": agent_type,
+                "agent_name": config.get("name", agent_id),
+                "provider": agent_provider,
+                "model": agent_model,
+                "message_count": len(context_messages),
+            },
+            tags=["agent", agent_type, agent_provider],
+        ):
+            result = app.invoke(
+                {"messages": context_messages},
+                config={
+                    "configurable": {"thread_id": sess_key},
+                    "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                },
+            )
+
+        # Update session
+        messages = result.get("messages", [])
+        if self.session_service is not None:
+            session.messages = messages
+            session.updated_at = datetime.utcnow()
+        else:
+            self._direct_sessions[cache_key]["messages"] = messages
+
+        response_content = self._extract_response_content(messages)
+
+        return {
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "session_id": sess_key,
+            "response": response_content,
+            "message_count": len(messages),
+            "memory_metadata": memory_metadata,
+        }
+
+    async def stream_agent(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        provider: str = "openai",
+        model: Optional[str] = None,
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
+    ):
+        """Stream responses from any agent (custom or built-in).
+
+        This is the unified method for streaming agent invocation.
+
+        Yields SSE events for tool calls, tool results, and tokens.
+
+        Args:
+            agent_id: Agent ID (custom or built-in)
+            message: User message
+            session_id: Session ID for conversation continuity
+            user_id: User ID for session scoping
+            provider: Model provider (overridden by agent config if set)
+            model: Model name (overridden by agent config if set)
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
+
+        Yields:
+            Dict events: start, tool_call, tool_result, token, done, error
+        """
+        import json
+
+        try:
+            agent_type, config, custom = self._get_agent_info(agent_id)
+        except ValueError as e:
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            return
+
+        # Determine provider/model - agent config takes precedence
+        agent_provider = config.get("provider", provider)
+        agent_model = config.get("model", model)
+        agent_temp = config.get("temperature", 0.7)
+
+        # Build session key
+        sess_key = session_id or f"{user_id}:agent:{agent_id}"
+        memory_metadata = None
+
+        # Cache key for compiled agent
+        cache_key = f"unified:{agent_id}"
+
+        # Get or create compiled agent
+        if cache_key not in self._direct_sessions:
+            llm = self.model_service.get_or_create(
+                provider=agent_provider,
+                model=agent_model,
+                temperature=agent_temp,
+            )
+
+            if agent_type == "custom":
+                agent = self._build_agent_from_custom(agent_id, llm)
+            else:
+                # Build from builtin config
+                use_middleware = config.get("use_middleware", False)
+                if "tool_ids" in config:
+                    tools = [self._tool_registry.create_tool_instance(tid) for tid in config["tool_ids"]]
+                else:
+                    tools = config.get("tools", [])
+
+                if use_middleware:
+                    agent = self.create_middleware_enabled_agent(
+                        agent_name=config["name"],
+                        llm=llm,
+                        tools=tools,
+                        system_prompt=config["prompt"],
+                        use_skills=True,
+                    )
+                else:
+                    agent = create_agent(
+                        model=llm,
+                        tools=tools,
+                        name=config["name"],
+                        system_prompt=config["prompt"],
+                        checkpointer=self._checkpointer,
+                    )
+
+            compiled = agent.compile() if hasattr(agent, 'compile') else agent
+            self._direct_sessions[cache_key] = {"app": compiled, "agent_id": agent_id}
+
+        app = self._direct_sessions[cache_key]["app"]
+
+        # Emit start event
+        yield {"event": "start", "data": json.dumps({
+            "session_id": sess_key,
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "provider": agent_provider,
+            "model": agent_model,
+        })}
+
+        # Session management
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_key,
+                user_id=user_id,
+                metadata={"agent_id": agent_id, "agent_type": agent_type},
+            )
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, agent_provider, agent_model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+        else:
+            if "messages" not in self._direct_sessions.get(cache_key, {}):
+                self._direct_sessions[cache_key]["messages"] = []
+            history = self._direct_sessions[cache_key]["messages"]
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+            context_messages = history
+
+        # Stream agent response with tracing
+        try:
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="stream_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "agent_name": config.get("name", agent_id),
+                    "provider": agent_provider,
+                    "model": agent_model,
+                    "message_count": len(context_messages),
+                },
+                tags=["agent", "streaming", agent_type, agent_provider],
+            ):
+                final_messages = []
+                accumulated_content = ""
+
+                async for event in app.astream_events(
+                    {"messages": context_messages},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    data = event.get("data", {})
+
+                    # Tool call started
+                    if kind == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = data.get("input", {})
+                        yield {"event": "tool_call", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                        })}
+
+                    # Tool call completed
+                    elif kind == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = data.get("output", "")
+                        output_str = str(output)[:500] if output else ""
+                        yield {"event": "tool_result", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "result": output_str,
+                        })}
+
+                    # Streaming tokens from LLM
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk and hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+
+                    # Chain/graph end - capture final messages
+                    elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                        output = data.get("output", {})
+                        if isinstance(output, dict) and "messages" in output:
+                            final_messages = output["messages"]
+
+                # Update session with final messages
+                if final_messages:
+                    if self.session_service is not None:
+                        session.messages = final_messages
+                        session.updated_at = datetime.utcnow()
+                    else:
+                        self._direct_sessions[cache_key]["messages"] = final_messages
+
+                # Extract final response
+                response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
+
+                # Emit done event
+                yield {"event": "done", "data": json.dumps({
+                    "session_id": sess_key,
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "response": response_content,
+                    "message_count": len(final_messages) if final_messages else len(context_messages) + 1,
+                    "memory_metadata": {
+                        "summarized": memory_metadata.summarized if memory_metadata else False,
+                        "summary_triggered": memory_metadata.summary_triggered if memory_metadata else False,
+                        "total_messages": memory_metadata.total_messages if memory_metadata else 0,
+                    } if memory_metadata else None,
+                })}
+
+        except Exception as e:
+            logger.error(f"[Stream Agent] Error for {agent_id}: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
     def create_workflow(
         self,
         workflow_id: str,
@@ -1729,6 +2190,204 @@ Always use the tools to interact with the database.""")
             "session_id": sess_id,
             "memory_metadata": memory_metadata,
         }
+
+    async def stream_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
+    ):
+        """Stream responses from a multi-agent workflow.
+
+        Yields SSE events for agent delegation, tool calls, tool results, and tokens.
+
+        Args:
+            workflow_id: Workflow to invoke
+            message: User message
+            session_id: Optional session ID for persistence
+            user_id: User ID for session scoping
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
+
+        Yields:
+            Dict events: start, agent_start, agent_end, tool_call, tool_result, token, done, error
+        """
+        import json
+
+        if workflow_id not in self._workflows:
+            yield {"event": "error", "data": json.dumps({"error": f"Workflow not found: {workflow_id}"})}
+            return
+
+        workflow_data = self._workflows[workflow_id]
+        app = workflow_data["app"]
+        provider = workflow_data.get("provider", "openai")
+        model = workflow_data.get("model")
+        agents = workflow_data.get("agents", [])
+
+        # Determine session ID
+        sess_id = session_id or f"{user_id}:workflow:{workflow_id}"
+        memory_metadata = None
+
+        # Emit start event
+        yield {"event": "start", "data": json.dumps({
+            "session_id": sess_id,
+            "workflow_id": workflow_id,
+            "agents": agents,
+            "provider": provider,
+            "model": model,
+        })}
+
+        # Use SessionService if available for unified memory
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_id,
+                user_id=user_id,
+                metadata={"workflow_id": workflow_id, "session_type": "workflow"},
+            )
+            if session.session_type == "chat":
+                session.session_type = "workflow"
+
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, provider, model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+        else:
+            # Fallback: Use legacy workflow-based storage
+            history = workflow_data.get("messages", [])
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+            context_messages = history
+
+        # Stream workflow response with tracing
+        try:
+            with trace_operation(
+                session_id=sess_id,
+                user_id=user_id,
+                operation="stream_workflow",
+                metadata={
+                    "workflow_id": workflow_id,
+                    "agents": agents,
+                    "provider": provider,
+                    "model": model,
+                    "message_count": len(context_messages),
+                },
+                tags=["workflow", "multi-agent", "streaming", provider],
+            ):
+                final_messages = []
+                accumulated_content = ""
+                current_agent = None
+
+                async for event in app.astream_events(
+                    {"messages": context_messages},
+                    config={
+                        "configurable": {"thread_id": sess_id},
+                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    data = event.get("data", {})
+                    name = event.get("name", "")
+
+                    # Agent node started (subgraph invocation)
+                    if kind == "on_chain_start" and name in agents:
+                        current_agent = name
+                        yield {"event": "agent_start", "data": json.dumps({
+                            "agent_name": name,
+                            "agent_id": event.get("run_id", ""),
+                        })}
+
+                    # Agent node ended
+                    elif kind == "on_chain_end" and name in agents:
+                        yield {"event": "agent_end", "data": json.dumps({
+                            "agent_name": name,
+                            "agent_id": event.get("run_id", ""),
+                        })}
+                        current_agent = None
+
+                    # Tool call started
+                    elif kind == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = data.get("input", {})
+                        yield {"event": "tool_call", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "agent_name": current_agent,
+                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                        })}
+
+                    # Tool call completed
+                    elif kind == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = data.get("output", "")
+                        output_str = str(output)[:500] if output else ""
+                        yield {"event": "tool_result", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "agent_name": current_agent,
+                            "result": output_str,
+                        })}
+
+                    # Streaming tokens from LLM
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk and hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({
+                                    "content": content,
+                                    "agent_name": current_agent,
+                                })}
+
+                    # Chain/graph end - capture final messages
+                    elif kind == "on_chain_end" and name == "LangGraph":
+                        output = data.get("output", {})
+                        if isinstance(output, dict) and "messages" in output:
+                            final_messages = output["messages"]
+
+                # Update session with final messages
+                if final_messages:
+                    if self.session_service is not None:
+                        session.messages = final_messages
+                        session.updated_at = datetime.utcnow()
+                    else:
+                        workflow_data["messages"] = final_messages
+
+                # Extract final response
+                response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
+
+                # Emit done event
+                yield {"event": "done", "data": json.dumps({
+                    "session_id": sess_id,
+                    "workflow_id": workflow_id,
+                    "agents": agents,
+                    "response": response_content,
+                    "message_count": len(final_messages) if final_messages else len(context_messages) + 1,
+                    "memory_metadata": {
+                        "summarized": memory_metadata.summarized if memory_metadata else False,
+                        "summary_triggered": memory_metadata.summary_triggered if memory_metadata else False,
+                        "total_messages": memory_metadata.total_messages if memory_metadata else 0,
+                    } if memory_metadata else None,
+                })}
+
+        except Exception as e:
+            logger.error(f"[Stream Workflow] Error for {workflow_id}: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
     def _create_memory_request(
         self,
