@@ -13,7 +13,7 @@ from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
-from langchain_docker.core.tracing import trace_operation
+from langchain_docker.core.tracing import trace_operation, get_tracer
 
 # Import middleware-based skills components
 from langchain_docker.skills.middleware import (
@@ -225,6 +225,15 @@ class AgentService:
             # When using middleware, gated tools are preferred
             def load_sql_skill() -> str:
                 """Load the SQL skill with database schema and guidelines."""
+                tracer = get_tracer()
+                if tracer:
+                    with tracer.start_as_current_span("skill.load_core") as span:
+                        span.set_attribute("skill.id", "write_sql")
+                        span.set_attribute("skill.name", sql_skill.name)
+                        span.set_attribute("skill.category", sql_skill.category)
+                        content = sql_skill.load_core()
+                        span.set_attribute("content_length", len(content))
+                        return content
                 return sql_skill.load_core()
 
             def sql_query(query: str) -> str:
@@ -794,6 +803,15 @@ Guidelines:
 
                             def load_sql_skill() -> str:
                                 """Load the SQL skill with database schema and guidelines."""
+                                tracer = get_tracer()
+                                if tracer:
+                                    with tracer.start_as_current_span("skill.load_core") as span:
+                                        span.set_attribute("skill.id", "write_sql")
+                                        span.set_attribute("skill.name", sql_skill.name)
+                                        span.set_attribute("skill.category", sql_skill.category)
+                                        content = sql_skill.load_core()
+                                        span.set_attribute("content_length", len(content))
+                                        return content
                                 return sql_skill.load_core()
 
                             def sql_query(query: str) -> str:

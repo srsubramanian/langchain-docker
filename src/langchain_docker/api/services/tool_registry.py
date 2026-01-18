@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from langchain_docker.core.tracing import get_tracer
+
 logger = logging.getLogger(__name__)
 
 # Type aliases for tool function signatures
@@ -204,6 +206,17 @@ class ToolRegistry:
             Returns:
                 Database schema, available tables, and SQL guidelines
             """
+            # Add custom span for skill loading visibility in Phoenix
+            tracer = get_tracer()
+            logger.info(f"[SQL Skill] get_tracer() returned: {tracer}")
+            if tracer:
+                with tracer.start_as_current_span("skill.load_core") as span:
+                    span.set_attribute("skill.id", "write_sql")
+                    span.set_attribute("skill.name", sql_skill.name)
+                    span.set_attribute("skill.category", sql_skill.category)
+                    content = sql_skill.load_core()
+                    span.set_attribute("content_length", len(content))
+                    return content
             return sql_skill.load_core()
 
         return load_sql_skill
@@ -288,6 +301,16 @@ class ToolRegistry:
             Returns:
                 Jira skill context including configuration and guidelines
             """
+            # Add custom span for skill loading visibility in Phoenix
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("skill.load_core") as span:
+                    span.set_attribute("skill.id", "jira")
+                    span.set_attribute("skill.name", jira_skill.name)
+                    span.set_attribute("skill.category", jira_skill.category)
+                    content = jira_skill.load_core()
+                    span.set_attribute("content_length", len(content))
+                    return content
             return jira_skill.load_core()
 
         return load_jira_skill
