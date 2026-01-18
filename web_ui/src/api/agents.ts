@@ -1,4 +1,5 @@
-import { apiClient } from './client';
+import { apiClient, API_BASE_URL } from './client';
+import { useUserStore } from '@/stores/userStore';
 import type {
   AgentInfo,
   ToolTemplate,
@@ -12,6 +13,7 @@ import type {
   WorkflowInvokeResponse,
   DirectInvokeRequest,
   DirectInvokeResponse,
+  StreamEvent,
 } from '@/types/api';
 
 export const agentsApi = {
@@ -61,6 +63,60 @@ export const agentsApi = {
       { timeout: 120000 } // 2 minute timeout for agent execution
     );
     return data;
+  },
+
+  // Streaming direct agent invocation with SSE
+  async *invokeAgentDirectStream(agentId: string, request: DirectInvokeRequest): AsyncGenerator<StreamEvent> {
+    const userId = useUserStore.getState().currentUserId;
+    const response = await fetch(`${API_BASE_URL}/api/v1/agents/custom/${agentId}/invoke/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(userId && { 'X-User-ID': userId }),
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      yield { event: 'error', error: error.message || error.error || 'Request failed' };
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      yield { event: 'error', error: 'No response body' };
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentEvent = 'message';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('event: ')) {
+          currentEvent = trimmed.slice(7);
+        } else if (trimmed.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+            yield { event: currentEvent as StreamEvent['event'], ...data };
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
   },
 
   async clearAgentSession(agentId: string, sessionId?: string): Promise<void> {

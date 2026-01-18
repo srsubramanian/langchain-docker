@@ -1,8 +1,10 @@
 """Multi-agent API endpoints."""
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sse_starlette.sse import EventSourceResponse
 
 from langchain_docker.api.dependencies import get_agent_service, get_current_user_id
 from langchain_docker.api.schemas.agents import (
@@ -243,6 +245,60 @@ def invoke_custom_agent_direct(
         raise HTTPException(status_code=404, detail=str(e))
 
     return DirectInvokeResponse(**result)
+
+
+@router.post("/custom/{agent_id}/invoke/stream")
+async def invoke_custom_agent_direct_stream(
+    agent_id: str,
+    request: DirectInvokeRequest,
+    user_id: str = Depends(get_current_user_id),
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Stream responses from a custom agent directly without supervisor.
+
+    This endpoint streams SSE events for tool calls, tool results, and tokens.
+    Use this to show real-time skill loading and agent responses.
+
+    Events:
+        - start: Initial event with session info
+        - tool_call: When a tool (including skill loaders) is called
+        - tool_result: Result of a tool call
+        - token: Streaming text token
+        - done: Final event with complete response
+        - error: If an error occurs
+
+    Args:
+        agent_id: Custom agent ID
+        request: Message to process with memory options
+
+    Returns:
+        SSE stream of events
+    """
+    # Include user_id in session for conversation isolation
+    session_id = request.session_id or f"{user_id}:direct:{agent_id}"
+
+    async def event_generator():
+        try:
+            async for event in agent_service.stream_agent_direct(
+                agent_id=agent_id,
+                message=request.message,
+                session_id=session_id,
+                user_id=user_id,
+                enable_memory=request.enable_memory,
+                memory_trigger_count=request.memory_trigger_count,
+                memory_keep_recent=request.memory_keep_recent,
+            ):
+                yield {
+                    "event": event.get("event", "message"),
+                    "data": event.get("data", "{}"),
+                }
+        except ValueError as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
+
+    return EventSourceResponse(event_generator())
 
 
 @router.delete("/custom/{agent_id}/session", status_code=204)

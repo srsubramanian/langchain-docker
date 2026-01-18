@@ -36,9 +36,18 @@ import type { AgentTemplate } from './templates';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+interface ToolCallInfo {
+  tool_name: string;
+  tool_id: string;
+  arguments?: string;
+  result?: string;
+  isLoading?: boolean;
+}
+
 interface TestMessage {
   role: 'user' | 'assistant';
   content: string;
+  toolCalls?: ToolCallInfo[];
 }
 
 // Cron expression presets for easy selection
@@ -51,6 +60,36 @@ const CRON_PRESETS = [
   { label: 'Every weekday at 9am', value: '0 9 * * 1-5', description: 'Mon-Fri at 9:00 AM' },
   { label: 'First of month at 9am', value: '0 9 1 * *', description: 'Monthly on the 1st' },
 ];
+
+// Helper component to render a tool call badge
+function ToolCallBadge({ toolCall }: { toolCall: ToolCallInfo }) {
+  const isSkillLoader = toolCall.tool_name.startsWith('load_') && toolCall.tool_name.endsWith('_skill');
+  const displayName = isSkillLoader
+    ? toolCall.tool_name.replace('load_', '').replace('_skill', '') + ' skill'
+    : toolCall.tool_name;
+
+  return (
+    <div className={cn(
+      'inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs',
+      isSkillLoader
+        ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+        : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+    )}>
+      {toolCall.isLoading ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Check className="h-3 w-3" />
+      )}
+      {isSkillLoader ? (
+        <Sparkles className="h-3 w-3" />
+      ) : (
+        <Wrench className="h-3 w-3" />
+      )}
+      <span>{displayName}</span>
+      {toolCall.isLoading && <span className="text-muted-foreground">loading...</span>}
+    </div>
+  );
+}
 
 // Generate avatar color from name
 function getAvatarColor(name: string): string {
@@ -118,6 +157,8 @@ export function BuilderPage() {
   const [testAgentId, setTestAgentId] = useState<string | null>(null);
   const [testSessionId, setTestSessionId] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [streamingContent, setStreamingContent] = useState('');
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCallInfo[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Resizable panel state
@@ -321,6 +362,8 @@ export function BuilderPage() {
     setTestMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setIsTesting(true);
     setTestError(null);
+    setStreamingContent('');
+    setStreamingToolCalls([]);
 
     try {
       // Create a temporary custom agent for testing if needed
@@ -347,19 +390,53 @@ export function BuilderPage() {
         setTestAgentId(agentId);
       }
 
-      // Invoke the agent directly (no supervisor) for human-in-the-loop support
-      const result = await agentsApi.invokeAgentDirect(agentId, {
+      // Stream the agent response
+      const toolCalls: ToolCallInfo[] = [];
+      let fullContent = '';
+
+      for await (const event of agentsApi.invokeAgentDirectStream(agentId, {
         message: userMessage,
         session_id: testSessionId,
-      });
+      })) {
+        if (event.event === 'start' && event.session_id) {
+          setTestSessionId(event.session_id);
+        } else if (event.event === 'tool_call') {
+          // Add new tool call (loading state)
+          const newToolCall: ToolCallInfo = {
+            tool_name: event.tool_name || 'unknown',
+            tool_id: event.tool_id || '',
+            arguments: event.arguments,
+            isLoading: true,
+          };
+          toolCalls.push(newToolCall);
+          setStreamingToolCalls([...toolCalls]);
+        } else if (event.event === 'tool_result') {
+          // Update the tool call with result
+          const toolCall = toolCalls.find((tc) => tc.tool_id === event.tool_id);
+          if (toolCall) {
+            toolCall.result = event.result;
+            toolCall.isLoading = false;
+            setStreamingToolCalls([...toolCalls]);
+          }
+        } else if (event.event === 'token' && event.content) {
+          fullContent += event.content;
+          setStreamingContent(fullContent);
+        } else if (event.event === 'error') {
+          throw new Error(event.error || 'Streaming error');
+        }
+      }
 
-      // Store session ID for follow-up messages
-      setTestSessionId(result.session_id);
-
+      // Add the final message with tool calls
       setTestMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: result.response },
+        {
+          role: 'assistant',
+          content: fullContent,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        },
       ]);
+      setStreamingContent('');
+      setStreamingToolCalls([]);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Test failed';
       setTestError(errorMessage);
@@ -367,6 +444,8 @@ export function BuilderPage() {
         ...prev,
         { role: 'assistant', content: `Error: ${errorMessage}` },
       ]);
+      setStreamingContent('');
+      setStreamingToolCalls([]);
     } finally {
       setIsTesting(false);
     }
@@ -1141,10 +1220,20 @@ export function BuilderPage() {
                             )}
                           >
                             {msg.role === 'assistant' ? (
-                              <div className="text-sm prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {msg.content}
-                                </ReactMarkdown>
+                              <div className="space-y-2">
+                                {/* Show tool calls if any */}
+                                {msg.toolCalls && msg.toolCalls.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mb-2">
+                                    {msg.toolCalls.map((tc, idx) => (
+                                      <ToolCallBadge key={idx} toolCall={tc} />
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="text-sm prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {msg.content}
+                                  </ReactMarkdown>
+                                </div>
                               </div>
                             ) : (
                               <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
@@ -1157,6 +1246,7 @@ export function BuilderPage() {
                           )}
                         </div>
                       ))}
+                      {/* Streaming response indicator */}
                       {isTesting && (
                         <div className="flex gap-3">
                           <div
@@ -1167,8 +1257,30 @@ export function BuilderPage() {
                           >
                             {initials}
                           </div>
-                          <div className="rounded-lg px-3 py-2 bg-muted">
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                          <div className="rounded-lg px-3 py-2 bg-muted max-w-[80%]">
+                            {/* Show streaming tool calls */}
+                            {streamingToolCalls.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {streamingToolCalls.map((tc, idx) => (
+                                  <ToolCallBadge key={idx} toolCall={tc} />
+                                ))}
+                              </div>
+                            )}
+                            {/* Show streaming content or loading indicator */}
+                            {streamingContent ? (
+                              <div className="text-sm prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {streamingContent}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                {streamingToolCalls.length > 0
+                                  ? 'Processing...'
+                                  : 'Thinking...'}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}

@@ -784,15 +784,51 @@ Guidelines:
                 use_skills=True,
             )
         else:
-            # Legacy pattern: directly embed skill content in system prompt
+            # Legacy pattern: Add skill tools and context
             if custom.skill_ids:
                 skill_contexts = []
                 for skill_id in custom.skill_ids:
                     skill = self._skill_registry.get_skill(skill_id)
                     if skill:
-                        # Load Level 2 content from the skill
-                        core_content = skill.load_core()
-                        skill_contexts.append(f"\n## {skill.name} Skill\n{core_content}")
+                        # Add skill tools based on skill type
+                        from langchain_docker.api.services.skill_registry import SQLSkill
+                        if isinstance(skill, SQLSkill):
+                            sql_skill = skill  # Capture for closures
+
+                            def load_sql_skill() -> str:
+                                """Load the SQL skill with database schema and guidelines."""
+                                return sql_skill.load_core()
+
+                            def sql_query(query: str) -> str:
+                                """Execute a SQL query against the database."""
+                                return sql_skill.execute_query(query)
+
+                            def sql_list_tables() -> str:
+                                """List all available tables in the database."""
+                                return sql_skill.list_tables()
+
+                            def sql_get_samples() -> str:
+                                """Get sample rows from database tables."""
+                                return sql_skill.load_details("samples")
+
+                            # Add skill tools
+                            tools.extend([load_sql_skill, sql_query, sql_list_tables, sql_get_samples])
+
+                            # Add context about using tools
+                            skill_contexts.append(f"""
+## {skill.name} Skill
+
+You have access to SQL tools. Follow this workflow:
+1. First call load_sql_skill() to get the database schema
+2. Use sql_query(query) to execute SQL queries
+3. Use sql_list_tables() to see available tables
+4. Use sql_get_samples() to see sample data
+
+Always use the tools to interact with the database.""")
+                        else:
+                            # Generic skill - just add context
+                            core_content = skill.load_core()
+                            skill_contexts.append(f"\n## {skill.name} Skill\n{core_content}")
 
                 if skill_contexts:
                     system_prompt = system_prompt + "\n\n# Equipped Skills\n" + "\n".join(skill_contexts)
@@ -965,6 +1001,197 @@ Guidelines:
             del self._direct_sessions[session_id]
             return True
         return False
+
+    async def stream_agent_direct(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        provider: str = "openai",
+        model: Optional[str] = None,
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
+    ):
+        """Stream responses from a custom agent directly without supervisor.
+
+        Yields SSE events for tool calls, tool results, and tokens.
+
+        Args:
+            agent_id: Custom agent ID
+            message: User message
+            session_id: Session ID for conversation continuity
+            user_id: User ID for session scoping
+            provider: Model provider
+            model: Model name (optional)
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
+
+        Yields:
+            Dict events: start, tool_call, tool_result, token, done, error
+
+        Raises:
+            ValueError: If agent not found
+        """
+        import json
+
+        if agent_id not in self._custom_agents:
+            yield {"event": "error", "data": json.dumps({"error": f"Custom agent not found: {agent_id}"})}
+            return
+
+        custom = self._custom_agents[agent_id]
+
+        # Use session_id or create one based on agent_id and user_id
+        sess_key = session_id or f"{user_id}:direct:{agent_id}"
+
+        # Get model - use agent's configured provider/model if available
+        agent_provider = custom.provider if hasattr(custom, 'provider') else provider
+        agent_model = custom.model if hasattr(custom, 'model') else model
+        memory_metadata = None
+
+        # Get or create compiled agent (cached in _direct_sessions for performance)
+        if sess_key not in self._direct_sessions:
+            llm = self.model_service.get_or_create(
+                provider=agent_provider,
+                model=agent_model,
+                temperature=custom.temperature if hasattr(custom, 'temperature') else 0.7,
+            )
+
+            agent = self._build_agent_from_custom(agent_id, llm)
+            compiled = agent.compile() if hasattr(agent, 'compile') else agent
+
+            self._direct_sessions[sess_key] = {
+                "app": compiled,
+                "agent_id": agent_id,
+            }
+
+        app = self._direct_sessions[sess_key]["app"]
+
+        # Emit start event
+        yield {"event": "start", "data": json.dumps({
+            "session_id": sess_key,
+            "agent_id": agent_id,
+            "provider": agent_provider,
+            "model": agent_model,
+        })}
+
+        # Get or create session and add user message
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_key,
+                user_id=user_id,
+                metadata={"agent_id": agent_id, "session_type": "direct_agent"},
+            )
+            if session.session_type == "chat":
+                session.session_type = "direct_agent"
+
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            # Apply memory summarization if available
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, agent_provider, agent_model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+        else:
+            # Fallback: Use legacy storage
+            if "messages" not in self._direct_sessions[sess_key]:
+                self._direct_sessions[sess_key]["messages"] = []
+
+            history = self._direct_sessions[sess_key]["messages"]
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+            context_messages = history
+
+        # Stream agent response
+        try:
+            with trace_session(sess_key):
+                final_messages = []
+                accumulated_content = ""
+
+                async for event in app.astream_events(
+                    {"messages": context_messages},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    data = event.get("data", {})
+
+                    # Tool call started
+                    if kind == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = data.get("input", {})
+                        yield {"event": "tool_call", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                        })}
+
+                    # Tool call completed
+                    elif kind == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = data.get("output", "")
+                        # Truncate long outputs
+                        output_str = str(output)[:500] if output else ""
+                        yield {"event": "tool_result", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "result": output_str,
+                        })}
+
+                    # Streaming tokens from LLM
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk and hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+
+                    # Chain/graph end - capture final messages
+                    elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                        output = data.get("output", {})
+                        if isinstance(output, dict) and "messages" in output:
+                            final_messages = output["messages"]
+
+                # Update session with final messages
+                if final_messages:
+                    if self.session_service is not None:
+                        session.messages = final_messages
+                        session.updated_at = datetime.utcnow()
+                    else:
+                        self._direct_sessions[sess_key]["messages"] = final_messages
+
+                # Extract final response
+                response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
+
+                # Emit done event
+                yield {"event": "done", "data": json.dumps({
+                    "session_id": sess_key,
+                    "agent_id": agent_id,
+                    "response": response_content,
+                    "message_count": len(final_messages) if final_messages else len(context_messages) + 1,
+                    "memory_metadata": {
+                        "summarized": memory_metadata.summarized if memory_metadata else False,
+                        "summary_triggered": memory_metadata.summary_triggered if memory_metadata else False,
+                        "total_messages": memory_metadata.total_messages if memory_metadata else 0,
+                    } if memory_metadata else None,
+                })}
+
+        except Exception as e:
+            logger.error(f"[Stream Agent] Error: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
     def create_workflow(
         self,
