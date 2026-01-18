@@ -122,6 +122,10 @@ class SkillInfo(BaseModel):
     )
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     updated_at: Optional[str] = Field(None, description="Last update timestamp")
+    has_custom_content: Optional[bool] = Field(
+        None,
+        description="For built-in skills: whether the skill has custom content from Redis",
+    )
 
 
 class SkillListResponse(BaseModel):

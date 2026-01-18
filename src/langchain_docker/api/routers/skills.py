@@ -82,6 +82,7 @@ def _skill_data_to_info(skill_data: dict) -> SkillInfo:
         ],
         created_at=skill_data.get("created_at"),
         updated_at=skill_data.get("updated_at"),
+        has_custom_content=skill_data.get("has_custom_content"),
     )
 
 
@@ -165,26 +166,44 @@ async def update_skill(
     request: SkillUpdateRequest,
     skill_registry: SkillRegistry = Depends(get_skill_registry),
 ) -> SkillInfo:
-    """Update an existing custom skill.
+    """Update an existing skill (custom or built-in).
 
-    Only custom skills can be updated. Built-in skills are read-only.
+    For custom skills: Full update of all fields is supported.
+    For built-in skills: Only core_content and resources can be updated.
+                         Requires Redis for persistence.
+
     When Redis is configured, this creates a new immutable version.
     """
-    try:
-        skill = skill_registry.update_custom_skill(
-            skill_id=skill_id,
-            name=request.name,
-            description=request.description,
-            core_content=request.core_content,
-            category=request.category,
-            version=request.version,
-            author=request.author,
-            resources=_resources_to_dicts(request.resources),
-            scripts=_scripts_to_dicts(request.scripts),
-            change_summary=request.change_summary,
-        )
+    skill = skill_registry.get_skill(skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
 
-        return _skill_data_to_info(skill.to_dict())
+    try:
+        if getattr(skill, "is_builtin", False):
+            # Built-in skill: only update content and resources
+            updated_skill = skill_registry.update_builtin_skill(
+                skill_id=skill_id,
+                core_content=request.core_content,
+                resources=_resources_to_dicts(request.resources),
+                change_summary=request.change_summary,
+            )
+            skill_data = skill_registry.get_skill_full(skill_id)
+            return _skill_data_to_info(skill_data)
+        else:
+            # Custom skill: full update
+            updated_skill = skill_registry.update_custom_skill(
+                skill_id=skill_id,
+                name=request.name,
+                description=request.description,
+                core_content=request.core_content,
+                category=request.category,
+                version=request.version,
+                author=request.author,
+                resources=_resources_to_dicts(request.resources),
+                scripts=_scripts_to_dicts(request.scripts),
+                change_summary=request.change_summary,
+            )
+            return _skill_data_to_info(updated_skill.to_dict())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -201,6 +220,26 @@ async def delete_skill(
     try:
         skill_registry.delete_custom_skill(skill_id)
         return SkillDeleteResponse(skill_id=skill_id, deleted=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{skill_id}/reset", response_model=SkillInfo)
+async def reset_skill(
+    skill_id: str,
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+) -> SkillInfo:
+    """Reset a built-in skill to its original file-based content.
+
+    This clears all custom versions from Redis and reverts the skill
+    to using the original SKILL.md file content.
+
+    Only built-in skills can be reset. Custom skills should be deleted instead.
+    """
+    try:
+        skill = skill_registry.reset_builtin_skill(skill_id)
+        skill_data = skill_registry.get_skill_full(skill_id)
+        return _skill_data_to_info(skill_data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

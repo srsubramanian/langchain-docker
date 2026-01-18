@@ -63,12 +63,56 @@ class Skill(ABC):
     - Level 1 (Metadata): Skill id, name, description - always visible in agent prompt
     - Level 2 (Core): Main skill content - loaded on-demand via load_core()
     - Level 3 (Details): Specific resources - loaded as needed via load_details()
+
+    Built-in skills can be customized via Redis. Custom content overrides
+    the file-based content while preserving dynamic content generation.
     """
 
     id: str
     name: str
     description: str
     category: str
+    is_builtin: bool = False
+
+    # Redis-loaded content override (for built-in skills)
+    _custom_content: Optional[str] = None
+    _custom_resources: Optional[list] = None
+
+    def has_custom_content(self) -> bool:
+        """Check if skill has Redis-customized content.
+
+        Returns:
+            True if custom content from Redis is set
+        """
+        return self._custom_content is not None
+
+    def set_custom_content(
+        self, content: str, resources: Optional[list] = None
+    ) -> None:
+        """Set custom content from Redis.
+
+        Args:
+            content: Custom core content to use instead of file-based
+            resources: Optional custom resources
+        """
+        self._custom_content = content
+        self._custom_resources = resources or []
+
+    def clear_custom_content(self) -> None:
+        """Clear custom content, reverting to file-based defaults."""
+        self._custom_content = None
+        self._custom_resources = None
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Override in subclasses to return the static content from SKILL.md.
+        Used when resetting a skill to its default state.
+
+        Returns:
+            Original file-based content
+        """
+        return ""
 
     @abstractmethod
     def load_core(self) -> str:
@@ -134,29 +178,39 @@ class XLSXSkill(Skill):
             logger.error(f"Error reading skill file {filename}: {e}")
             return f"Error reading {filename}: {str(e)}"
 
-    def load_core(self) -> str:
-        """Level 2: Load XLSX skill instructions from SKILL.md.
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
 
         Returns:
-            Complete skill context for spreadsheet operations
+            Original SKILL.md content with YAML frontmatter stripped
         """
         content = self._read_md_file("SKILL.md")
 
         # Strip YAML frontmatter if present
         if content.startswith("---"):
-            # Find the second '---' delimiter
             lines = content.split("\n")
-            in_frontmatter = True
-            body_start = 0
             for i, line in enumerate(lines[1:], 1):
                 if line.strip() == "---":
-                    body_start = i + 1
+                    content = "\n".join(lines[i + 1 :]).strip()
                     break
 
-            if body_start > 0:
-                content = "\n".join(lines[body_start:]).strip()
+        return content
 
-        return f"## XLSX Skill Activated\n\n{content}"
+    def load_core(self) -> str:
+        """Level 2: Load XLSX skill instructions.
+
+        Uses Redis custom content if available, otherwise falls back to SKILL.md.
+
+        Returns:
+            Complete skill context for spreadsheet operations
+        """
+        # Use custom content from Redis if available, otherwise use file content
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self.get_file_content()
+
+        return f"## XLSX Skill Activated\n\n{static_content}"
 
     def load_details(self, resource: str) -> str:
         """Level 3: Load detailed resources from .md files.
@@ -250,10 +304,19 @@ class SQLSkill(Skill):
             logger.error(f"Error reading skill file {filename}: {e}")
             return f"Error reading {filename}: {str(e)}"
 
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Returns:
+            Original SKILL.md content (static guidelines only)
+        """
+        return self._read_md_file("SKILL.md")
+
     def load_core(self) -> str:
         """Level 2: Load database schema and SQL guidelines.
 
-        Combines static content from SKILL.md with dynamic database information.
+        Combines dynamic database information with static content.
+        Static content uses Redis custom content if available, otherwise SKILL.md.
 
         Returns:
             Complete skill context including tables, schema, and guidelines
@@ -271,8 +334,11 @@ This database is in READ-ONLY mode. Only SELECT queries are allowed.
 INSERT, UPDATE, DELETE, and other write operations will be rejected.
 """
 
-        # Load static guidelines from SKILL.md
-        static_content = self._read_md_file("SKILL.md")
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
 
         return f"""## SQL Skill Activated
 
@@ -521,13 +587,24 @@ class JiraSkill(Skill):
             logger.error(f"[Jira Debug] Traceback:\n{traceback.format_exc()}")
             return {"error": f"Jira API error: {str(e)}"}
 
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Returns:
+            Original SKILL.md content (static guidelines only)
+        """
+        return self._read_md_file("SKILL.md")
+
     def load_core(self) -> str:
-        """Level 2: Load Jira skill instructions from SKILL.md.
+        """Level 2: Load Jira skill instructions.
+
+        Combines dynamic configuration status with static content.
+        Static content uses Redis custom content if available, otherwise SKILL.md.
 
         Returns:
             Complete skill context for Jira operations
         """
-        # Check if Jira is configured
+        # Dynamic content: Check if Jira is configured
         config_status = ""
         if not is_jira_configured():
             config_status = """
@@ -543,8 +620,11 @@ class JiraSkill(Skill):
 - API Version: {self.api_version}
 """
 
-        # Load static content from SKILL.md
-        static_content = self._read_md_file("SKILL.md")
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
 
         return f"""## Jira Skill Activated
 {config_status}
@@ -1105,19 +1185,34 @@ class SkillRegistry:
             self._load_custom_from_redis()
 
     def _register_builtin_skills(self) -> None:
-        """Register all built-in skills."""
-        # SQL skill
-        sql_skill = SQLSkill()
-        sql_skill.is_builtin = True  # Mark as built-in
-        self.register(sql_skill)
+        """Register all built-in skills, loading custom content from Redis if available."""
+        builtin_skills = [
+            SQLSkill(),
+            XLSXSkill(),
+            JiraSkill(),
+        ]
 
-        # XLSX skill (from Anthropic skills repository)
-        xlsx_skill = XLSXSkill()
-        self.register(xlsx_skill)
+        for skill in builtin_skills:
+            skill.is_builtin = True
 
-        # Jira skill (read-only Jira integration)
-        jira_skill = JiraSkill()
-        self.register(jira_skill)
+            # Check Redis for custom content
+            if self._redis_store:
+                try:
+                    versioned = self._redis_store.get_skill(skill.id)
+                    if versioned and versioned.active_version_data:
+                        active = versioned.active_version_data
+                        skill.set_custom_content(
+                            content=active.core_content,
+                            resources=[r for r in active.resources] if active.resources else None,
+                        )
+                        logger.info(
+                            f"Loaded custom content for built-in skill: {skill.id} "
+                            f"(v{active.version_number})"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to load custom content for {skill.id}: {e}")
+
+            self.register(skill)
 
     def _load_custom_from_redis(self) -> None:
         """Load custom skills from Redis on startup."""
@@ -1451,7 +1546,7 @@ class SkillRegistry:
         skill = self._custom_skills.get(skill_id)
         if not skill:
             if skill_id in self._skills:
-                raise ValueError(f"Cannot update built-in skill: {skill_id}")
+                raise ValueError(f"Use update_builtin_skill() for built-in skills: {skill_id}")
             raise ValueError(f"Skill not found: {skill_id}")
 
         # Convert resource/script dicts to objects if provided
@@ -1540,6 +1635,142 @@ class SkillRegistry:
         logger.info(f"Updated custom skill: {skill_id}")
         return skill
 
+    def update_builtin_skill(
+        self,
+        skill_id: str,
+        core_content: Optional[str] = None,
+        resources: Optional[list[dict]] = None,
+        change_summary: Optional[str] = None,
+    ) -> Skill:
+        """Update a built-in skill's content.
+
+        Saves to Redis and updates in-memory skill.
+        Only core_content and resources can be updated (not name/description/category).
+        Requires Redis for persistence.
+
+        Args:
+            skill_id: Skill ID to update
+            core_content: New core content (optional)
+            resources: New resources (optional)
+            change_summary: Description of what changed (for version history)
+
+        Returns:
+            Updated Skill instance
+
+        Raises:
+            ValueError: If skill not found, not a built-in skill, or Redis not configured
+        """
+        skill = self.get_skill(skill_id)
+        if not skill:
+            raise ValueError(f"Skill not found: {skill_id}")
+
+        if not getattr(skill, "is_builtin", False):
+            raise ValueError(f"Use update_custom_skill() for custom skills: {skill_id}")
+
+        if not self._redis_store:
+            raise ValueError("Redis is required for editing built-in skills")
+
+        # Determine the content to save
+        if core_content is None:
+            # Use existing custom content or get from file
+            if skill._custom_content is not None:
+                core_content = skill._custom_content
+            else:
+                core_content = skill.get_file_content()
+
+        # Convert resources if provided
+        skill_resources = []
+        if resources is not None:
+            for r in resources:
+                skill_resources.append(
+                    SkillResource(
+                        name=r["name"],
+                        description=r.get("description", ""),
+                        content=r.get("content", ""),
+                    )
+                )
+
+        try:
+            from langchain_docker.api.services.versioned_skill import (
+                SkillVersion,
+                SkillVersionResource,
+            )
+
+            # Get the next version number
+            current_count = self._redis_store.get_version_count(skill_id)
+            next_version_number = current_count + 1
+
+            # Calculate semantic version
+            semantic_version = f"1.{next_version_number - 1}.0"
+
+            skill_version = SkillVersion(
+                version_number=next_version_number,
+                semantic_version=semantic_version,
+                name=skill.name,
+                description=skill.description,
+                category=skill.category,
+                author="user",
+                core_content=core_content,
+                resources=[
+                    SkillVersionResource(r.name, r.description, r.content)
+                    for r in skill_resources
+                ],
+                scripts=[],
+                change_summary=change_summary or f"Updated built-in skill content",
+            )
+
+            self._redis_store.save_new_version(
+                skill_id=skill_id,
+                version=skill_version,
+                set_active=True,
+                is_builtin=True,
+            )
+
+            # Update in-memory skill
+            skill.set_custom_content(core_content, skill_resources)
+
+            logger.info(f"Updated built-in skill: {skill_id} (v{next_version_number})")
+            return skill
+
+        except Exception as e:
+            logger.error(f"Failed to update built-in skill: {e}")
+            raise ValueError(f"Failed to update skill: {e}")
+
+    def reset_builtin_skill(self, skill_id: str) -> Skill:
+        """Reset a built-in skill to its original file-based content.
+
+        Clears all Redis versions and custom content.
+
+        Args:
+            skill_id: Skill ID to reset
+
+        Returns:
+            Reset Skill instance
+
+        Raises:
+            ValueError: If skill not found or not a built-in skill
+        """
+        skill = self.get_skill(skill_id)
+        if not skill:
+            raise ValueError(f"Skill not found: {skill_id}")
+
+        if not getattr(skill, "is_builtin", False):
+            raise ValueError(f"Only built-in skills can be reset: {skill_id}")
+
+        # Clear Redis versions if available
+        if self._redis_store:
+            try:
+                self._redis_store.delete_skill(skill_id)
+                logger.debug(f"Cleared Redis versions for built-in skill: {skill_id}")
+            except Exception as e:
+                logger.warning(f"Failed to clear Redis versions: {e}")
+
+        # Clear in-memory custom content
+        skill.clear_custom_content()
+
+        logger.info(f"Reset built-in skill to file defaults: {skill_id}")
+        return skill
+
     def delete_custom_skill(self, skill_id: str) -> bool:
         """Delete a custom skill.
 
@@ -1587,16 +1818,32 @@ class SkillRegistry:
         if isinstance(skill, CustomSkill):
             return skill.to_dict()
 
-        # For built-in skills, return basic info
+        # For built-in skills, return editable content
+        # If custom content exists, return that; otherwise return file content
+        if skill._custom_content is not None:
+            editable_content = skill._custom_content
+        else:
+            editable_content = skill.get_file_content()
+
+        # Get version info if available
+        version = "1.0.0"
+        if self._redis_store:
+            meta = self._redis_store.get_skill_meta(skill_id)
+            if meta:
+                active_version = meta.get("active_version", 1)
+                version = f"1.{active_version - 1}.0"
+
         return {
             "id": skill.id,
             "name": skill.name,
             "description": skill.description,
             "category": skill.category,
             "is_builtin": True,
-            "core_content": skill.load_core(),
+            "version": version,
+            "core_content": editable_content,  # Editable static content
             "resources": [],
             "scripts": [],
+            "has_custom_content": skill.has_custom_content(),
         }
 
     def list_skills_full(self) -> list[dict[str, Any]]:
