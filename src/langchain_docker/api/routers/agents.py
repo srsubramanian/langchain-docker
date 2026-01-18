@@ -75,6 +75,71 @@ def list_all_agents(
     return agents
 
 
+# =============================================================================
+# STATIC PATH ENDPOINTS (must come before /{agent_id} to avoid route conflicts)
+# =============================================================================
+
+
+@router.get("/tools", response_model=list[ToolTemplateSchema])
+def list_tool_templates(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all available tool templates.
+
+    Returns tool templates with their configurable parameters.
+    These can be used to build custom agents.
+
+    Returns:
+        List of tool templates
+    """
+    return agent_service.list_tool_templates()
+
+
+@router.get("/tools/categories", response_model=list[str])
+def list_tool_categories(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all tool categories.
+
+    Returns:
+        List of category names (math, weather, research, finance, etc.)
+    """
+    return agent_service.list_tool_categories()
+
+
+@router.get("/builtin", response_model=list[AgentInfo])
+def list_builtin_agents(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all available built-in agents.
+
+    DEPRECATED: Use GET /agents?agent_type=builtin instead.
+
+    Returns:
+        List of built-in agent configurations
+    """
+    return agent_service.list_builtin_agents()
+
+
+@router.get("/custom", response_model=list[CustomAgentInfo])
+def list_custom_agents(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """List all custom agents created by users.
+
+    DEPRECATED: Use GET /agents?agent_type=custom instead.
+
+    Returns:
+        List of custom agent information
+    """
+    return agent_service.list_custom_agents()
+
+
+# =============================================================================
+# PARAMETERIZED AGENT ENDPOINTS (must come after static paths)
+# =============================================================================
+
+
 @router.get("/{agent_id}")
 def get_agent(
     agent_id: str,
@@ -339,72 +404,6 @@ def clear_agent_session(
     sess_key = session_id or f"{user_id}:agent:{agent_id}"
     agent_service.clear_direct_session(sess_key)
     return None
-
-
-# =============================================================================
-# TOOL REGISTRY ENDPOINTS
-# =============================================================================
-
-
-@router.get("/tools", response_model=list[ToolTemplateSchema])
-def list_tool_templates(
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """List all available tool templates.
-
-    Returns tool templates with their configurable parameters.
-    These can be used to build custom agents.
-
-    Returns:
-        List of tool templates
-    """
-    return agent_service.list_tool_templates()
-
-
-@router.get("/tools/categories", response_model=list[str])
-def list_tool_categories(
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """List all tool categories.
-
-    Returns:
-        List of category names (math, weather, research, finance, etc.)
-    """
-    return agent_service.list_tool_categories()
-
-
-# =============================================================================
-# LEGACY ENDPOINTS (Deprecated - use unified endpoints above)
-# Kept for backward compatibility
-# =============================================================================
-
-
-@router.get("/builtin", response_model=list[AgentInfo])
-def list_builtin_agents(
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """List all available built-in agents.
-
-    DEPRECATED: Use GET /agents?agent_type=builtin instead.
-
-    Returns:
-        List of built-in agent configurations
-    """
-    return agent_service.list_builtin_agents()
-
-
-@router.get("/custom", response_model=list[CustomAgentInfo])
-def list_custom_agents(
-    agent_service: AgentService = Depends(get_agent_service),
-):
-    """List all custom agents created by users.
-
-    DEPRECATED: Use GET /agents?agent_type=custom instead.
-
-    Returns:
-        List of custom agent information
-    """
-    return agent_service.list_custom_agents()
 
 
 # =============================================================================
