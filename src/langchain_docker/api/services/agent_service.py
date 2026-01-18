@@ -55,28 +55,15 @@ class CustomAgent:
 
 
 # Agent configurations - tools are referenced by ID and resolved via ToolRegistry
+# Note: sql_expert is created dynamically in AgentService using SkillRegistry
 BUILTIN_AGENTS = {
-    "math_expert": {
-        "name": "math_expert",
-        "tool_ids": ["add", "subtract", "multiply", "divide"],
-        "prompt": "You are a math expert. Use the provided tools to solve mathematical problems. Always show your work step by step.",
-    },
-    "weather_expert": {
-        "name": "weather_expert",
-        "tool_ids": ["get_weather"],
-        "prompt": "You are a weather expert. Use the weather tool to get current conditions for any location.",
-    },
-    "research_expert": {
-        "name": "research_expert",
-        "tool_ids": ["search_web"],
-        "prompt": "You are a research expert with web search capabilities. Search for information to answer questions accurately.",
-    },
-    "finance_expert": {
-        "name": "finance_expert",
-        "tool_ids": ["get_stock_price"],
-        "prompt": "You are a finance expert. Use the stock price tool to get current market data and provide financial insights.",
-    },
-    # sql_expert is created dynamically in AgentService using SkillRegistry
+    # Built-in agents can be added here if needed
+    # Example:
+    # "example_agent": {
+    #     "name": "example_agent",
+    #     "tool_ids": ["tool1", "tool2"],
+    #     "prompt": "You are an example agent...",
+    # },
 }
 
 DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.

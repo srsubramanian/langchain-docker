@@ -4,18 +4,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from langchain_docker.core.demo_data import WEATHER_DATA, MOCK_STOCK_PRICES
-
 logger = logging.getLogger(__name__)
 
 # Type aliases for tool function signatures
-MathToolFunc = Callable[[float, float], float]
-WeatherToolFunc = Callable[[str], str]
-SearchToolFunc = Callable[[str], str]
-StockToolFunc = Callable[[str], str]
 SQLToolFunc = Callable[[], str] | Callable[[str], str]
 JiraToolFunc = Callable[[], str] | Callable[[str], str] | Callable[[str, int], str]
-ToolFunc = MathToolFunc | WeatherToolFunc | SearchToolFunc | StockToolFunc | SQLToolFunc | JiraToolFunc
+ToolFunc = SQLToolFunc | JiraToolFunc
 ToolFactory = Callable[..., ToolFunc]
 
 
@@ -57,95 +51,6 @@ class ToolRegistry:
 
     def _register_builtin_tools(self) -> None:
         """Register all built-in tools as templates."""
-        # Math tools - simple, no parameters
-        self.register(
-            ToolTemplate(
-                id="add",
-                name="Add Numbers",
-                description="Add two numbers together",
-                category="math",
-                parameters=[],
-                factory=lambda: self._create_add_tool(),
-            )
-        )
-
-        self.register(
-            ToolTemplate(
-                id="subtract",
-                name="Subtract Numbers",
-                description="Subtract the second number from the first",
-                category="math",
-                parameters=[],
-                factory=lambda: self._create_subtract_tool(),
-            )
-        )
-
-        self.register(
-            ToolTemplate(
-                id="multiply",
-                name="Multiply Numbers",
-                description="Multiply two numbers together",
-                category="math",
-                parameters=[],
-                factory=lambda: self._create_multiply_tool(),
-            )
-        )
-
-        self.register(
-            ToolTemplate(
-                id="divide",
-                name="Divide Numbers",
-                description="Divide the first number by the second",
-                category="math",
-                parameters=[],
-                factory=lambda: self._create_divide_tool(),
-            )
-        )
-
-        # Weather tool - with configurable default city
-        self.register(
-            ToolTemplate(
-                id="get_weather",
-                name="Get Weather",
-                description="Get current weather for a location",
-                category="weather",
-                parameters=[
-                    ToolParameter(
-                        name="default_city",
-                        type="string",
-                        description="Default city when none specified",
-                        default="San Francisco",
-                        required=False,
-                    )
-                ],
-                factory=self._create_weather_tool,
-            )
-        )
-
-        # Research tool
-        self.register(
-            ToolTemplate(
-                id="search_web",
-                name="Web Search",
-                description="Search the web for information",
-                category="research",
-                parameters=[],
-                factory=lambda: self._create_search_tool(),
-            )
-        )
-
-        # Finance tool
-        self.register(
-            ToolTemplate(
-                id="get_stock_price",
-                name="Stock Price",
-                description="Get current stock price for a symbol",
-                category="finance",
-                parameters=[],
-                factory=lambda: self._create_stock_tool(),
-            )
-        )
-
         # Database/SQL tools - progressive disclosure pattern
         self.register(
             ToolTemplate(
@@ -276,83 +181,6 @@ class ToolRegistry:
                 factory=lambda: self._create_jira_jql_reference_tool(),
             )
         )
-
-    # Tool factory methods
-    def _create_add_tool(self) -> MathToolFunc:
-        """Create add tool."""
-
-        def add(a: float, b: float) -> float:
-            """Add two numbers together."""
-            return a + b
-
-        return add
-
-    def _create_subtract_tool(self) -> MathToolFunc:
-        """Create subtract tool."""
-
-        def subtract(a: float, b: float) -> float:
-            """Subtract b from a."""
-            return a - b
-
-        return subtract
-
-    def _create_multiply_tool(self) -> MathToolFunc:
-        """Create multiply tool."""
-
-        def multiply(a: float, b: float) -> float:
-            """Multiply two numbers together."""
-            return a * b
-
-        return multiply
-
-    def _create_divide_tool(self) -> MathToolFunc:
-        """Create divide tool."""
-
-        def divide(a: float, b: float) -> float:
-            """Divide a by b. Returns error if b is zero."""
-            if b == 0:
-                return float("inf")
-            return a / b
-
-        return divide
-
-    def _create_weather_tool(self, default_city: str = "San Francisco") -> WeatherToolFunc:
-        """Create weather tool with configurable default city."""
-
-        def get_current_weather(location: str | None = None) -> str:
-            """Get the current weather for a location."""
-            loc = location or default_city
-            location_lower = loc.lower()
-            for city, weather in WEATHER_DATA.items():
-                if city in location_lower:
-                    return f"Weather in {loc}: {weather}"
-            return f"Weather in {loc}: Sunny, 70°F (21°C), clear skies (default)"
-
-        return get_current_weather
-
-    def _create_search_tool(self) -> SearchToolFunc:
-        """Create web search tool."""
-
-        def search_web(query: str) -> str:
-            """Search the web for information (demo - returns mock data)."""
-            return (
-                f"Search results for '{query}': This is a demo search result. "
-                "In production, integrate with a real search API like Tavily, SerpAPI, or DuckDuckGo."
-            )
-
-        return search_web
-
-    def _create_stock_tool(self) -> StockToolFunc:
-        """Create stock price tool."""
-
-        def get_stock_price(symbol: str) -> str:
-            """Get the current stock price for a symbol (demo - returns mock data)."""
-            symbol_upper = symbol.upper()
-            if symbol_upper in MOCK_STOCK_PRICES:
-                return f"{symbol_upper}: ${MOCK_STOCK_PRICES[symbol_upper]:.2f}"
-            return f"{symbol_upper}: $100.00 (demo price)"
-
-        return get_stock_price
 
     # SQL tool factory methods
     def _get_sql_skill(self) -> Any:

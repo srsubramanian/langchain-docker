@@ -31,7 +31,7 @@ const defaultSettings = {
   model: null,
   temperature: 0.7,
   mode: 'chat' as AppMode,
-  agentPreset: 'all',
+  agentPreset: 'sql_expert',
   darkMode: true,
 };
 

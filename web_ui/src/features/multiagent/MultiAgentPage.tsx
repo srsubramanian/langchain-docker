@@ -88,10 +88,7 @@ function ToolCallBadge({ toolCall, showAgent = false }: { toolCall: ToolCallInfo
 }
 
 const AGENT_PRESETS: Record<string, string[]> = {
-  all: ['math_expert', 'weather_expert', 'research_expert', 'finance_expert'],
-  math_weather: ['math_expert', 'weather_expert'],
-  research_finance: ['research_expert', 'finance_expert'],
-  math_only: ['math_expert'],
+  sql_expert: ['sql_expert'],
 };
 
 function generateWorkflowGraph(agents: string[]): { nodes: Node[]; edges: Edge[] } {
@@ -692,10 +689,7 @@ export function MultiAgentPage() {
               <SelectValue placeholder="Select preset" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Agents</SelectItem>
-              <SelectItem value="math_weather">Math + Weather</SelectItem>
-              <SelectItem value="research_finance">Research + Finance</SelectItem>
-              <SelectItem value="math_only">Math Only</SelectItem>
+              <SelectItem value="sql_expert">SQL Expert</SelectItem>
             </SelectContent>
           </Select>
         </div>
