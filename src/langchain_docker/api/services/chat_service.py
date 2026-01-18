@@ -11,7 +11,7 @@ from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import SessionService
-from langchain_docker.core.tracing import trace_session
+from langchain_docker.core.tracing import trace_operation
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,23 @@ class ChatService:
             max_tokens=request.max_tokens,
         )
 
-        # Invoke model with optimized context window and session tracing
-        # Use both trace_session context and LangChain config for session metadata
-        with trace_session(session.session_id):
+        # Invoke model with optimized context window and enhanced tracing
+        # trace_operation provides: session_id, user_id, metadata, and tags for Phoenix filtering
+        with trace_operation(
+            session_id=session.session_id,
+            user_id=user_id,
+            operation="chat",
+            metadata={
+                "provider": request.provider,
+                "model": request.model or self.model_service._get_default_model(request.provider),
+                "temperature": request.temperature,
+                "message_count": len(context_messages),
+            },
+            tags=["chat", "non-streaming", request.provider],
+        ):
             ai_response = model.invoke(
                 context_messages,
-                config={"metadata": {"session_id": session.session_id}}
+                config={"metadata": {"session_id": session.session_id, "user_id": user_id}}
             )
 
         # Add AI response to session
@@ -219,11 +230,24 @@ class ChatService:
                 return json.loads(args)
             return args if args else {}
 
-        # Stream response tokens with session tracing
+        # Stream response tokens with enhanced tracing
+        # trace_operation provides: session_id, user_id, metadata, and tags for Phoenix filtering
         full_content = ""
         tool_calls = []
         try:
-            with trace_session(session.session_id):
+            with trace_operation(
+                session_id=session.session_id,
+                user_id=user_id,
+                operation="chat_stream",
+                metadata={
+                    "provider": request.provider,
+                    "model": request.model or self.model_service._get_default_model(request.provider),
+                    "temperature": request.temperature,
+                    "message_count": len(context_messages),
+                    "mcp_tools_count": len(mcp_tools),
+                },
+                tags=["chat", "streaming", request.provider] + (["mcp"] if mcp_tools else []),
+            ):
                 # Agentic loop: handle tool calls and continue generating
                 max_iterations = 10  # Prevent infinite loops
                 iteration = 0
@@ -237,7 +261,7 @@ class ChatService:
                     # Stream model response
                     for chunk in model.stream(
                         messages,
-                        config={"metadata": {"session_id": session.session_id}}
+                        config={"metadata": {"session_id": session.session_id, "user_id": user_id}}
                     ):
                         # Accumulate content
                         if chunk.content:

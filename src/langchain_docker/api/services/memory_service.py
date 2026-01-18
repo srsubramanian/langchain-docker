@@ -10,7 +10,7 @@ from langchain_docker.api.schemas.chat import ChatRequest, MemoryMetadata
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.session_service import Session
 from langchain_docker.core.config import Config
-from langchain_docker.core.tracing import trace_session
+from langchain_docker.core.tracing import get_tracer, trace_operation
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -189,6 +189,9 @@ class MemoryService:
         Raises:
             Exception: If summarization fails
         """
+        # Get tracer for custom spans
+        tracer = get_tracer()
+
         # Check if messages are too short to bother summarizing
         total_content_length = sum(len(m.content) for m in messages)
         if total_content_length < 500:  # Arbitrary threshold
@@ -214,23 +217,59 @@ class MemoryService:
             keep_recent=self.config.memory_keep_recent_count, conversation=conversation_text
         )
 
-        # Generate summary with session tracing
-        with trace_session(session_id):
-            summary_response = summarization_model.invoke(
-                [HumanMessage(content=prompt)],
-                config={"metadata": {"session_id": session_id, "operation": "summarization"}}
-            )
+        # Generate summary with enhanced tracing
+        with trace_operation(
+            session_id=session_id,
+            operation="memory_summarize",
+            metadata={
+                "message_count": len(messages),
+                "content_length": total_content_length,
+                "provider": summary_provider,
+                "model": summary_model,
+            },
+            tags=["memory", "summarization", summary_provider],
+        ):
+            # Add custom span for better visibility in Phoenix
+            if tracer:
+                with tracer.start_as_current_span("memory.summarize") as span:
+                    span.set_attribute("message_count", len(messages))
+                    span.set_attribute("content_length", total_content_length)
+                    span.set_attribute("provider", summary_provider)
+                    summary_response = summarization_model.invoke(
+                        [HumanMessage(content=prompt)],
+                        config={"metadata": {"session_id": session_id, "operation": "summarization"}}
+                    )
+                    span.set_attribute("summary_length", len(summary_response.content))
+            else:
+                summary_response = summarization_model.invoke(
+                    [HumanMessage(content=prompt)],
+                    config={"metadata": {"session_id": session_id, "operation": "summarization"}}
+                )
 
         # Check if summary is too long and condense if needed
         MAX_SUMMARY_LENGTH = 2000  # characters
         if len(summary_response.content) > MAX_SUMMARY_LENGTH:
             logger.warning(f"Summary too long ({len(summary_response.content)} chars), condensing...")
             condense_prompt = f"Please condense this summary to under {MAX_SUMMARY_LENGTH} characters:\n\n{summary_response.content}"
-            with trace_session(session_id):
-                condensed = summarization_model.invoke(
-                    [HumanMessage(content=condense_prompt)],
-                    config={"metadata": {"session_id": session_id, "operation": "condense_summary"}}
-                )
+            with trace_operation(
+                session_id=session_id,
+                operation="memory_condense",
+                metadata={"original_length": len(summary_response.content)},
+                tags=["memory", "condense", summary_provider],
+            ):
+                if tracer:
+                    with tracer.start_as_current_span("memory.condense") as span:
+                        span.set_attribute("original_length", len(summary_response.content))
+                        condensed = summarization_model.invoke(
+                            [HumanMessage(content=condense_prompt)],
+                            config={"metadata": {"session_id": session_id, "operation": "condense_summary"}}
+                        )
+                        span.set_attribute("condensed_length", len(condensed.content))
+                else:
+                    condensed = summarization_model.invoke(
+                        [HumanMessage(content=condense_prompt)],
+                        config={"metadata": {"session_id": session_id, "operation": "condense_summary"}}
+                    )
             return condensed.content[:MAX_SUMMARY_LENGTH]
 
         return summary_response.content

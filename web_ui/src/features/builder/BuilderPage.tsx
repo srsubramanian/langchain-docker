@@ -12,7 +12,6 @@ import {
   GitBranch,
   ArrowLeft,
   Sparkles,
-  Plus,
   Clock,
   Calendar,
   Settings,

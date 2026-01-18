@@ -3,16 +3,25 @@
 Supports multiple tracing platforms:
 - LangSmith: Hosted solution with tight LangChain integration
 - Phoenix: Open source, self-hosted, framework agnostic
+
+Features:
+- Automatic LangChain instrumentation
+- Session-based trace grouping
+- User ID tracking for multi-user isolation
+- Structured metadata for rich context
+- Tags for filtering and categorization
+- Custom spans for non-LangChain operations
 """
 
 import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import wraps
 from typing import Any, Callable, Generator, Optional, TypeVar
 
 # Global state for tracing
 _tracing_provider: Optional[str] = None
 _tracing_initialized: bool = False
+_tracer: Optional[Any] = None  # OpenTelemetry tracer for custom spans
 
 # Type variable for decorated functions
 F = TypeVar("F", bound=Callable[..., Any])
@@ -88,12 +97,18 @@ def _setup_langsmith() -> None:
 
 
 def _setup_phoenix() -> None:
-    """Set up Phoenix tracing using OpenTelemetry."""
+    """Set up Phoenix tracing using OpenTelemetry.
+
+    Uses BatchSpanProcessor for better performance (non-blocking, batched exports).
+    Creates a global tracer for custom spans in application code.
+    """
+    global _tracer
+
     from openinference.instrumentation.langchain import LangChainInstrumentor
     from opentelemetry import trace as trace_api
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk import trace as trace_sdk
-    from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
 
     # Get Phoenix endpoint from env
     endpoint = os.getenv("PHOENIX_ENDPOINT", "http://localhost:6006/v1/traces")
@@ -106,19 +121,29 @@ def _setup_phoenix() -> None:
         tracer_provider = trace_sdk.TracerProvider()
         trace_api.set_tracer_provider(tracer_provider)
 
-        # Add OTLP exporter for Phoenix
+        # Add OTLP exporter for Phoenix with BatchSpanProcessor for better performance
+        # BatchSpanProcessor exports spans asynchronously in batches, reducing latency
         otlp_exporter = OTLPSpanExporter(endpoint=endpoint)
-        tracer_provider.add_span_processor(SimpleSpanProcessor(otlp_exporter))
+        tracer_provider.add_span_processor(BatchSpanProcessor(
+            otlp_exporter,
+            max_queue_size=2048,
+            max_export_batch_size=512,
+            schedule_delay_millis=5000,
+        ))
 
-        # Optionally add console exporter for debugging
+        # Optionally add console exporter for debugging (uses SimpleSpanProcessor for immediate output)
         if console_export:
             console_exporter = ConsoleSpanExporter()
             tracer_provider.add_span_processor(SimpleSpanProcessor(console_exporter))
+
+        # Create global tracer for custom spans
+        _tracer = trace_api.get_tracer("langchain_docker")
 
         # Instrument LangChain
         LangChainInstrumentor().instrument()
 
         print(f"✓ Phoenix tracing enabled: {endpoint}")
+        print("  Using BatchSpanProcessor for async span export")
 
     except Exception as e:
         print(f"Warning: Failed to initialize Phoenix tracing: {e}")
@@ -191,6 +216,108 @@ def trace_session(session_id: str) -> Generator[None, None, None]:
 
     else:
         yield
+
+
+@contextmanager
+def trace_operation(
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    operation: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    tags: Optional[list[str]] = None,
+) -> Generator[None, None, None]:
+    """Unified tracing context manager with all Phoenix attributes.
+
+    Combines session ID, user ID, metadata, and tags into a single context manager
+    for cleaner code and consistent tracing across the application.
+
+    For Phoenix: Uses OpenInference context managers (using_session, using_user, using_metadata, using_tags)
+    For LangSmith: Uses trace context manager with metadata and tags
+
+    Args:
+        session_id: Session ID for grouping related traces
+        user_id: User ID for multi-user isolation and filtering
+        operation: Operation name (used in span name for LangSmith)
+        metadata: Structured metadata dict (agent_id, workflow_id, provider, model, etc.)
+        tags: List of tags for filtering (chat, streaming, workflow, etc.)
+
+    Yields:
+        None
+
+    Example:
+        >>> with trace_operation(
+        ...     session_id="session-123",
+        ...     user_id="alice",
+        ...     operation="chat",
+        ...     metadata={"provider": "openai", "model": "gpt-4"},
+        ...     tags=["chat", "streaming"]
+        ... ):
+        ...     response = model.invoke(messages)
+    """
+    if not is_tracing_enabled():
+        yield
+        return
+
+    if _tracing_provider == "langsmith":
+        try:
+            from langsmith.run_helpers import trace
+
+            # Combine all metadata for LangSmith
+            combined_metadata = metadata.copy() if metadata else {}
+            if session_id:
+                combined_metadata["session_id"] = session_id
+            if user_id:
+                combined_metadata["user_id"] = user_id
+
+            with trace(
+                name=operation or "operation",
+                run_type="chain",
+                metadata=combined_metadata if combined_metadata else None,
+                tags=tags,
+            ):
+                yield
+        except ImportError:
+            yield
+
+    elif _tracing_provider == "phoenix":
+        # Use OpenInference context managers for Phoenix
+        from openinference.instrumentation import using_metadata, using_session, using_tags, using_user
+
+        with ExitStack() as stack:
+            if session_id:
+                stack.enter_context(using_session(session_id=session_id))
+            if user_id:
+                stack.enter_context(using_user(user_id=user_id))
+            if metadata:
+                stack.enter_context(using_metadata(metadata=metadata))
+            if tags:
+                stack.enter_context(using_tags(tags=tags))
+            yield
+
+    else:
+        yield
+
+
+def get_tracer() -> Optional[Any]:
+    """Get the global OpenTelemetry tracer for creating custom spans.
+
+    Use this to add manual instrumentation for operations not automatically
+    traced by LangChain instrumentation (memory summarization, skill loading, etc.).
+
+    Returns:
+        OpenTelemetry tracer or None if tracing is not enabled/not Phoenix
+
+    Example:
+        >>> tracer = get_tracer()
+        >>> if tracer:
+        ...     with tracer.start_as_current_span("memory.summarize") as span:
+        ...         span.set_attribute("message_count", len(messages))
+        ...         summary = summarize_messages(messages)
+        ...         span.set_attribute("summary_length", len(summary))
+    """
+    if _tracing_provider == "phoenix" and _tracer is not None:
+        return _tracer
+    return None
 
 
 def traceable(

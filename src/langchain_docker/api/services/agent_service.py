@@ -13,7 +13,7 @@ from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.model_service import ModelService
 from langchain_docker.api.services.tool_registry import ToolRegistry
 from langchain_docker.api.services.session_service import SessionService
-from langchain_docker.core.tracing import trace_session
+from langchain_docker.core.tracing import trace_operation
 
 # Import middleware-based skills components
 from langchain_docker.skills.middleware import (
@@ -559,7 +559,17 @@ Guidelines:
             agent_graph = self._build_agent_from_custom(agent_id, llm)
             compiled = agent_graph.compile() if hasattr(agent_graph, 'compile') else agent_graph
 
-            with trace_session(workflow_id):
+            with trace_operation(
+                session_id=workflow_id,
+                operation="scheduled_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "scheduled": True,
+                    "provider": agent.provider,
+                    "model": agent.model,
+                },
+                tags=["agent", "scheduled", agent.provider],
+            ):
                 result = compiled.invoke(
                     {"messages": [HumanMessage(content=trigger_prompt)]},
                     config={
@@ -937,13 +947,25 @@ Always use the tools to interact with the database.""")
             else:
                 context_messages = session.messages
 
-            # Invoke agent with optimized context
-            with trace_session(sess_key):
+            # Invoke agent with optimized context and enhanced tracing
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="direct_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_name": custom.name,
+                    "provider": agent_provider,
+                    "model": agent_model,
+                    "message_count": len(context_messages),
+                },
+                tags=["agent", "direct", agent_provider],
+            ):
                 result = app.invoke(
                     {"messages": context_messages},
                     config={
                         "configurable": {"thread_id": sess_key},
-                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
                     },
                 )
 
@@ -962,12 +984,23 @@ Always use the tools to interact with the database.""")
 
             logger.debug(f"[Direct Agent Legacy] Session {sess_key} - {len(history)} messages")
 
-            with trace_session(sess_key):
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="direct_agent_legacy",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_name": custom.name,
+                    "provider": agent_provider,
+                    "model": agent_model,
+                },
+                tags=["agent", "direct", "legacy", agent_provider],
+            ):
                 result = app.invoke(
                     {"messages": history},
                     config={
                         "configurable": {"thread_id": sess_key},
-                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
                     },
                 )
 
@@ -1111,9 +1144,21 @@ Always use the tools to interact with the database.""")
             history.append(user_msg)
             context_messages = history
 
-        # Stream agent response
+        # Stream agent response with enhanced tracing
         try:
-            with trace_session(sess_key):
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="stream_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_name": custom.name,
+                    "provider": agent_provider,
+                    "model": agent_model,
+                    "message_count": len(context_messages),
+                },
+                tags=["agent", "streaming", agent_provider],
+            ):
                 final_messages = []
                 accumulated_content = ""
 
@@ -1121,7 +1166,7 @@ Always use the tools to interact with the database.""")
                     {"messages": context_messages},
                     config={
                         "configurable": {"thread_id": sess_key},
-                        "metadata": {"session_id": sess_key, "agent_id": agent_id},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
                     },
                     version="v2",
                 ):
@@ -1380,13 +1425,25 @@ Always use the tools to interact with the database.""")
             else:
                 context_messages = session.messages
 
-            # Invoke with optimized context
-            with trace_session(sess_id):
+            # Invoke with optimized context and enhanced tracing
+            with trace_operation(
+                session_id=sess_id,
+                user_id=user_id,
+                operation="workflow",
+                metadata={
+                    "workflow_id": workflow_id,
+                    "agents": workflow_data["agents"],
+                    "provider": provider,
+                    "model": model,
+                    "message_count": len(context_messages),
+                },
+                tags=["workflow", "multi-agent", provider],
+            ):
                 result = app.invoke(
                     {"messages": context_messages},
                     config={
                         "configurable": {"thread_id": sess_id},
-                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id},
+                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
                     },
                 )
 
@@ -1403,12 +1460,23 @@ Always use the tools to interact with the database.""")
             user_msg = HumanMessage(content=message)
             history.append(user_msg)
 
-            with trace_session(sess_id):
+            with trace_operation(
+                session_id=sess_id,
+                user_id=user_id,
+                operation="workflow_legacy",
+                metadata={
+                    "workflow_id": workflow_id,
+                    "agents": workflow_data["agents"],
+                    "provider": provider,
+                    "model": model,
+                },
+                tags=["workflow", "multi-agent", "legacy", provider],
+            ):
                 result = app.invoke(
                     {"messages": history},
                     config={
                         "configurable": {"thread_id": sess_id},
-                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id},
+                        "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
                     },
                 )
 

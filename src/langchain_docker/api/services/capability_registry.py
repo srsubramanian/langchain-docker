@@ -18,6 +18,7 @@ from typing import Any, Callable, Literal, Optional
 from langchain_community.utilities import SQLDatabase
 
 from langchain_docker.api.services.demo_database import ensure_demo_database
+from langchain_docker.core.tracing import get_tracer
 from langchain_docker.core.config import (
     get_database_url,
     get_jira_api_version,
@@ -271,10 +272,21 @@ class CapabilityRegistry:
     def _get_sql_db(self) -> SQLDatabase:
         """Get or create SQLDatabase instance."""
         if self._sql_db is None:
+            tracer = get_tracer()
             db_url = get_database_url()
-            if db_url.startswith("sqlite:///"):
-                ensure_demo_database(db_url)
-            self._sql_db = SQLDatabase.from_uri(db_url)
+
+            if tracer:
+                with tracer.start_as_current_span("capability.sql.init") as span:
+                    span.set_attribute("db_url", db_url[:50] + "..." if len(db_url) > 50 else db_url)
+                    if db_url.startswith("sqlite:///"):
+                        ensure_demo_database(db_url)
+                    self._sql_db = SQLDatabase.from_uri(db_url)
+                    span.set_attribute("tables_count", len(self._sql_db.get_usable_table_names()))
+            else:
+                if db_url.startswith("sqlite:///"):
+                    ensure_demo_database(db_url)
+                self._sql_db = SQLDatabase.from_uri(db_url)
+
         return self._sql_db
 
     def _register_sql_capability(self) -> None:
@@ -302,11 +314,26 @@ class CapabilityRegistry:
 
         def load_core() -> str:
             """Level 2: Load database schema and SQL guidelines."""
-            db = self._get_sql_db()
-            tables = db.get_usable_table_names()
-            schema = db.get_table_info()
-            dialect = db.dialect
-            read_only = is_sql_read_only()
+            tracer = get_tracer()
+
+            if tracer:
+                with tracer.start_as_current_span("capability.sql.load_core") as span:
+                    db = self._get_sql_db()
+                    tables = db.get_usable_table_names()
+                    schema = db.get_table_info()
+                    dialect = db.dialect
+                    read_only = is_sql_read_only()
+
+                    span.set_attribute("tables_count", len(tables))
+                    span.set_attribute("schema_length", len(schema))
+                    span.set_attribute("read_only", read_only)
+                    span.set_attribute("dialect", dialect)
+            else:
+                db = self._get_sql_db()
+                tables = db.get_usable_table_names()
+                schema = db.get_table_info()
+                dialect = db.dialect
+                read_only = is_sql_read_only()
 
             read_only_note = ""
             if read_only:
@@ -352,6 +379,7 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         def execute_query(query: str) -> str:
             """Execute a SQL query with read-only enforcement."""
+            tracer = get_tracer()
             db = self._get_sql_db()
             read_only = is_sql_read_only()
 
@@ -362,10 +390,22 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                     if query_upper.startswith(keyword):
                         return f"Error: {keyword} operations are not allowed in read-only mode."
 
-            try:
-                return db.run(query)
-            except Exception as e:
-                return f"Query error: {str(e)}"
+            if tracer:
+                with tracer.start_as_current_span("capability.sql.execute") as span:
+                    span.set_attribute("query_length", len(query))
+                    span.set_attribute("read_only", read_only)
+                    try:
+                        result = db.run(query)
+                        span.set_attribute("result_length", len(str(result)))
+                        return result
+                    except Exception as e:
+                        span.set_attribute("error", str(e))
+                        return f"Query error: {str(e)}"
+            else:
+                try:
+                    return db.run(query)
+                except Exception as e:
+                    return f"Query error: {str(e)}"
 
         def list_tables() -> str:
             """List all available tables."""
@@ -492,8 +532,18 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         def load_core() -> str:
             """Level 2: Load Jira skill instructions."""
+            tracer = get_tracer()
+            is_configured = is_jira_configured()
+
+            if tracer:
+                with tracer.start_as_current_span("capability.jira.load_core") as span:
+                    span.set_attribute("configured", is_configured)
+                    if is_configured:
+                        span.set_attribute("jira_url", get_jira_url())
+                        span.set_attribute("api_version", get_jira_api_version())
+
             config_status = ""
-            if not is_jira_configured():
+            if not is_configured:
                 config_status = """
 ### Configuration Status
 **Warning**: Jira is not fully configured. Set JIRA_URL and JIRA_BEARER_TOKEN.
@@ -519,12 +569,26 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         def search_issues(jql: str, max_results: int = 50) -> str:
             """Search for issues using JQL."""
+            tracer = get_tracer()
             params = {
                 "jql": jql,
                 "fields": "key,summary,status,assignee,priority,issuetype",
                 "maxResults": max_results,
             }
-            result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/search", params)
+
+            if tracer:
+                with tracer.start_as_current_span("capability.jira.search") as span:
+                    span.set_attribute("jql_length", len(jql))
+                    span.set_attribute("max_results", max_results)
+                    result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/search", params)
+                    if "error" in result:
+                        span.set_attribute("error", result["error"])
+                    else:
+                        span.set_attribute("total_found", result.get("total", 0))
+                        span.set_attribute("returned_count", len(result.get("issues", [])))
+            else:
+                result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/search", params)
+
             if "error" in result:
                 return result["error"]
 
@@ -553,7 +617,16 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         def get_issue(issue_key: str) -> str:
             """Get detailed information about a specific issue."""
-            result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/issue/{issue_key}")
+            tracer = get_tracer()
+
+            if tracer:
+                with tracer.start_as_current_span("capability.jira.get_issue") as span:
+                    span.set_attribute("issue_key", issue_key)
+                    result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/issue/{issue_key}")
+                    if "error" in result:
+                        span.set_attribute("error", result["error"])
+            else:
+                result = self._jira_api_get(f"/rest/api/{get_jira_api_version()}/issue/{issue_key}")
             if "error" in result:
                 return result["error"]
 
@@ -757,7 +830,13 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
 
         def load_core() -> str:
             """Level 2: Load XLSX skill instructions."""
+            tracer = get_tracer()
             content = read_md_file("SKILL.md")
+
+            if tracer:
+                with tracer.start_as_current_span("capability.xlsx.load_core") as span:
+                    span.set_attribute("content_length", len(content))
+
             return f"## XLSX Skill Activated\n\n{content}"
 
         def load_details(resource: str) -> str:
