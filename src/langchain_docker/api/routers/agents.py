@@ -254,10 +254,13 @@ async def invoke_custom_agent_direct_stream(
     user_id: str = Depends(get_current_user_id),
     agent_service: AgentService = Depends(get_agent_service),
 ):
-    """Stream responses from a custom agent directly without supervisor.
+    """Stream responses from a custom or built-in agent directly without supervisor.
 
     This endpoint streams SSE events for tool calls, tool results, and tokens.
     Use this to show real-time skill loading and agent responses.
+
+    The endpoint first tries to find a custom agent with the given ID.
+    If not found, it falls back to checking built-in agents.
 
     Events:
         - start: Initial event with session info
@@ -268,26 +271,54 @@ async def invoke_custom_agent_direct_stream(
         - error: If an error occurs
 
     Args:
-        agent_id: Custom agent ID
+        agent_id: Agent ID (custom or built-in like 'sql_expert', 'math_expert')
         request: Message to process with memory options
 
     Returns:
         SSE stream of events
     """
+    # Check if agent exists (custom or built-in)
+    is_custom = agent_service.get_custom_agent(agent_id) is not None
+    builtin_names = [a["name"] for a in agent_service.list_builtin_agents()]
+    is_builtin = agent_id in builtin_names
+
+    if not is_custom and not is_builtin:
+        async def error_generator():
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": f"Agent not found: {agent_id}"}),
+            }
+        return EventSourceResponse(error_generator())
+
     # Include user_id in session for conversation isolation
-    session_id = request.session_id or f"{user_id}:direct:{agent_id}"
+    agent_type = "direct" if is_custom else "builtin"
+    session_id = request.session_id or f"{user_id}:{agent_type}:{agent_id}"
 
     async def event_generator():
         try:
-            async for event in agent_service.stream_agent_direct(
-                agent_id=agent_id,
-                message=request.message,
-                session_id=session_id,
-                user_id=user_id,
-                enable_memory=request.enable_memory,
-                memory_trigger_count=request.memory_trigger_count,
-                memory_keep_recent=request.memory_keep_recent,
-            ):
+            # Use appropriate streaming method based on agent type
+            if is_custom:
+                stream = agent_service.stream_agent_direct(
+                    agent_id=agent_id,
+                    message=request.message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    enable_memory=request.enable_memory,
+                    memory_trigger_count=request.memory_trigger_count,
+                    memory_keep_recent=request.memory_keep_recent,
+                )
+            else:
+                stream = agent_service.stream_builtin_agent(
+                    agent_id=agent_id,
+                    message=request.message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    enable_memory=request.enable_memory,
+                    memory_trigger_count=request.memory_trigger_count,
+                    memory_keep_recent=request.memory_keep_recent,
+                )
+
+            async for event in stream:
                 yield {
                     "event": event.get("event", "message"),
                     "data": event.get("data", "{}"),

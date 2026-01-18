@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import ReactFlow, {
   type Node,
@@ -11,7 +11,7 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Send, Loader2, ArrowLeft } from 'lucide-react';
+import { Send, Loader2, ArrowLeft, Check, Wrench, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -29,6 +29,52 @@ import type { WorkflowInvokeResponse, DirectInvokeResponse, ProviderInfo, ModelI
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+// Tool call tracking for skill/tool badges
+interface ToolCallInfo {
+  tool_name: string;
+  tool_id: string;
+  arguments?: string;
+  result?: string;
+  isLoading?: boolean;
+}
+
+// Message with optional tool calls
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  toolCalls?: ToolCallInfo[];
+}
+
+// Helper component to render a tool call badge
+function ToolCallBadge({ toolCall }: { toolCall: ToolCallInfo }) {
+  const isSkillLoader = toolCall.tool_name.startsWith('load_') && toolCall.tool_name.endsWith('_skill');
+  const displayName = isSkillLoader
+    ? toolCall.tool_name.replace('load_', '').replace('_skill', '') + ' skill'
+    : toolCall.tool_name;
+
+  return (
+    <div className={cn(
+      'inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs',
+      isSkillLoader
+        ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+        : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+    )}>
+      {toolCall.isLoading ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Check className="h-3 w-3" />
+      )}
+      {isSkillLoader ? (
+        <Sparkles className="h-3 w-3" />
+      ) : (
+        <Wrench className="h-3 w-3" />
+      )}
+      <span>{displayName}</span>
+      {toolCall.isLoading && <span className="text-muted-foreground">loading...</span>}
+    </div>
+  );
+}
 
 const AGENT_PRESETS: Record<string, string[]> = {
   all: ['math_expert', 'weather_expert', 'research_expert', 'finance_expert'],
@@ -153,8 +199,13 @@ export function MultiAgentPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<WorkflowInvokeResponse | DirectInvokeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isReady, setIsReady] = useState(false); // Track if agent/workflow is ready
+
+  // Streaming state for tool call display
+  const [streamingContent, setStreamingContent] = useState('');
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCallInfo[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { provider, model, agentPreset, setAgentPreset, setProvider, setModel } = useSettingsStore();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -262,6 +313,11 @@ export function MultiAgentPage() {
     }
   }, [isSingleAgentMode, provider]);
 
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, streamingContent]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading || !isReady) return;
@@ -271,29 +327,75 @@ export function MultiAgentPage() {
     setInput('');
     setIsLoading(true);
     setError(null);
+    setStreamingContent('');
+    setStreamingToolCalls([]);
 
     try {
-      let result;
-      if (isCustomAgent && customAgentId) {
-        // Use direct invoke API for custom agents
-        result = await agentsApi.invokeAgentDirect(customAgentId, {
+      // For single-agent mode (built-in or custom), use streaming API to show tool calls
+      if (isSingleAgentMode) {
+        const agentId = isCustomAgent && customAgentId ? customAgentId : singleAgentName;
+        const toolCalls: ToolCallInfo[] = [];
+        let fullContent = '';
+
+        for await (const event of agentsApi.invokeAgentDirectStream(agentId, {
           message: userMessage,
           session_id: sessionId,
-        });
+        })) {
+          if (event.event === 'start' && event.session_id) {
+            setSessionId(event.session_id);
+          } else if (event.event === 'tool_call') {
+            // Add new tool call (loading state)
+            const newToolCall: ToolCallInfo = {
+              tool_name: event.tool_name || 'unknown',
+              tool_id: event.tool_id || '',
+              arguments: event.arguments,
+              isLoading: true,
+            };
+            toolCalls.push(newToolCall);
+            setStreamingToolCalls([...toolCalls]);
+          } else if (event.event === 'tool_result') {
+            // Update the tool call with result
+            const toolCall = toolCalls.find((tc) => tc.tool_id === event.tool_id);
+            if (toolCall) {
+              toolCall.result = event.result;
+              toolCall.isLoading = false;
+              setStreamingToolCalls([...toolCalls]);
+            }
+          } else if (event.event === 'token' && event.content) {
+            fullContent += event.content;
+            setStreamingContent(fullContent);
+          } else if (event.event === 'error') {
+            throw new Error(event.error || 'Streaming error');
+          }
+        }
+
+        // Add the final message with tool calls
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: fullContent,
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          },
+        ]);
+        setStreamingContent('');
+        setStreamingToolCalls([]);
       } else if (workflowId) {
-        // Use workflow API for built-in agents
-        result = await agentsApi.invokeWorkflow(workflowId, {
+        // Use non-streaming workflow API for multi-agent mode
+        const result = await agentsApi.invokeWorkflow(workflowId, {
           message: userMessage,
           session_id: sessionId,
         });
+        setResponse(result);
+        setSessionId(result.session_id);
+        setMessages((prev) => [...prev, { role: 'assistant', content: result.response }]);
       } else {
         throw new Error('No agent or workflow available');
       }
-      setResponse(result);
-      setSessionId(result.session_id);
-      setMessages((prev) => [...prev, { role: 'assistant', content: result.response }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Agent execution failed');
+      setStreamingContent('');
+      setStreamingToolCalls([]);
     } finally {
       setIsLoading(false);
     }
@@ -408,23 +510,33 @@ export function MultiAgentPage() {
                         {initials}
                       </div>
                     )}
-                    <div
-                      className={cn(
-                        'max-w-[80%] rounded-lg px-4 py-2',
-                        msg.role === 'user'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted'
-                      )}
-                    >
-                      {msg.role === 'assistant' ? (
-                        <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
-                          </ReactMarkdown>
+                    <div className="flex flex-col gap-2 max-w-[80%]">
+                      {/* Tool call badges for assistant messages */}
+                      {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.toolCalls.map((tc, tcIdx) => (
+                            <ToolCallBadge key={tcIdx} toolCall={tc} />
+                          ))}
                         </div>
-                      ) : (
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
                       )}
+                      <div
+                        className={cn(
+                          'rounded-lg px-4 py-2',
+                          msg.role === 'user'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted'
+                        )}
+                      >
+                        {msg.role === 'assistant' ? (
+                          <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -439,9 +551,30 @@ export function MultiAgentPage() {
                     >
                       {initials}
                     </div>
-                    <div className="flex items-center gap-2 rounded-lg bg-muted px-4 py-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Thinking...</span>
+                    <div className="flex flex-col gap-2 max-w-[80%]">
+                      {/* Show streaming tool calls */}
+                      {streamingToolCalls.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {streamingToolCalls.map((tc, idx) => (
+                            <ToolCallBadge key={idx} toolCall={tc} />
+                          ))}
+                        </div>
+                      )}
+                      {/* Show streaming content or thinking indicator */}
+                      <div className="rounded-lg bg-muted px-4 py-2">
+                        {streamingContent ? (
+                          <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {streamingContent}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>{streamingToolCalls.length > 0 ? 'Processing...' : 'Thinking...'}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -451,6 +584,7 @@ export function MultiAgentPage() {
                     {error}
                   </div>
                 )}
+                <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
 

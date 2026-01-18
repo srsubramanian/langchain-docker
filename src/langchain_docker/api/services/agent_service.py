@@ -1238,6 +1238,241 @@ Always use the tools to interact with the database.""")
             logger.error(f"[Stream Agent] Error: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
+    async def stream_builtin_agent(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: str = "default",
+        provider: str = "openai",
+        model: Optional[str] = None,
+        enable_memory: bool = True,
+        memory_trigger_count: Optional[int] = None,
+        memory_keep_recent: Optional[int] = None,
+    ):
+        """Stream responses from a built-in agent directly without supervisor.
+
+        Yields SSE events for tool calls, tool results, and tokens.
+
+        Args:
+            agent_id: Built-in agent ID (e.g., 'sql_expert', 'math_expert')
+            message: User message
+            session_id: Session ID for conversation continuity
+            user_id: User ID for session scoping
+            provider: Model provider
+            model: Model name (optional)
+            enable_memory: Whether to enable memory summarization
+            memory_trigger_count: Override for summarization trigger threshold
+            memory_keep_recent: Override for number of recent messages to keep
+
+        Yields:
+            Dict events: start, tool_call, tool_result, token, done, error
+
+        Raises:
+            ValueError: If agent not found
+        """
+        import json
+
+        all_builtin = self._get_all_builtin_agents()
+        if agent_id not in all_builtin:
+            yield {"event": "error", "data": json.dumps({"error": f"Built-in agent not found: {agent_id}"})}
+            return
+
+        agent_config = all_builtin[agent_id]
+
+        # Use session_id or create one based on agent_id and user_id
+        sess_key = session_id or f"{user_id}:builtin:{agent_id}"
+        memory_metadata = None
+
+        # Cache key for the compiled agent
+        cache_key = f"builtin:{agent_id}"
+
+        # Get or create compiled agent (cached for performance)
+        if cache_key not in self._direct_sessions:
+            llm = self.model_service.get_or_create(
+                provider=provider,
+                model=model,
+                temperature=0.7,
+            )
+
+            # Build agent from built-in config (same pattern as create_workflow)
+            use_middleware = agent_config.get("use_middleware", False)
+
+            # Get tools - from tool_ids (new style) or tools (dynamic agents)
+            if "tool_ids" in agent_config:
+                tools = [
+                    self._tool_registry.create_tool_instance(tid)
+                    for tid in agent_config["tool_ids"]
+                ]
+            else:
+                tools = agent_config["tools"]
+
+            if use_middleware:
+                # Create agent with skill middleware for skill-based agents
+                agent = self.create_middleware_enabled_agent(
+                    agent_name=agent_config["name"],
+                    llm=llm,
+                    tools=tools,
+                    system_prompt=agent_config["prompt"],
+                    use_skills=True,
+                )
+            else:
+                # Create standard agent without middleware but with checkpointing
+                agent = create_agent(
+                    model=llm,
+                    tools=tools,
+                    name=agent_config["name"],
+                    system_prompt=agent_config["prompt"],
+                    checkpointer=self._checkpointer,
+                )
+
+            compiled = agent.compile() if hasattr(agent, 'compile') else agent
+
+            self._direct_sessions[cache_key] = {
+                "app": compiled,
+                "agent_id": agent_id,
+            }
+
+        app = self._direct_sessions[cache_key]["app"]
+
+        # Emit start event
+        yield {"event": "start", "data": json.dumps({
+            "session_id": sess_key,
+            "agent_id": agent_id,
+            "provider": provider,
+            "model": model,
+        })}
+
+        # Get or create session and add user message
+        if self.session_service is not None:
+            session = self.session_service.get_or_create(
+                sess_key,
+                user_id=user_id,
+                metadata={"agent_id": agent_id, "session_type": "builtin_agent"},
+            )
+            if session.session_type == "chat":
+                session.session_type = "builtin_agent"
+
+            user_msg = HumanMessage(content=message)
+            session.messages.append(user_msg)
+
+            # Apply memory summarization if available
+            if enable_memory and self.memory_service is not None:
+                memory_request = self._create_memory_request(
+                    message, provider, model, enable_memory,
+                    memory_trigger_count, memory_keep_recent
+                )
+                context_messages, memory_metadata = self.memory_service.process_conversation(
+                    session, memory_request
+                )
+            else:
+                context_messages = session.messages
+        else:
+            # Fallback: Use simple message list
+            if sess_key not in self._direct_sessions:
+                self._direct_sessions[sess_key] = {"messages": []}
+            elif "messages" not in self._direct_sessions[sess_key]:
+                self._direct_sessions[sess_key]["messages"] = []
+
+            history = self._direct_sessions[sess_key]["messages"]
+            user_msg = HumanMessage(content=message)
+            history.append(user_msg)
+            context_messages = history
+
+        # Stream agent response with enhanced tracing
+        try:
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="stream_builtin_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_name": agent_config.get("name", agent_id),
+                    "provider": provider,
+                    "model": model,
+                    "message_count": len(context_messages),
+                },
+                tags=["agent", "builtin", "streaming", provider],
+            ):
+                final_messages = []
+                accumulated_content = ""
+
+                async for event in app.astream_events(
+                    {"messages": context_messages},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    data = event.get("data", {})
+
+                    # Tool call started
+                    if kind == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = data.get("input", {})
+                        yield {"event": "tool_call", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                        })}
+
+                    # Tool call completed
+                    elif kind == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = data.get("output", "")
+                        # Truncate long outputs
+                        output_str = str(output)[:500] if output else ""
+                        yield {"event": "tool_result", "data": json.dumps({
+                            "tool_name": tool_name,
+                            "tool_id": event.get("run_id", ""),
+                            "result": output_str,
+                        })}
+
+                    # Streaming tokens from LLM
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk and hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+
+                    # Chain/graph end - capture final messages
+                    elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                        output = data.get("output", {})
+                        if isinstance(output, dict) and "messages" in output:
+                            final_messages = output["messages"]
+
+                # Update session with final messages
+                if final_messages:
+                    if self.session_service is not None:
+                        session.messages = final_messages
+                        session.updated_at = datetime.utcnow()
+                    else:
+                        self._direct_sessions[sess_key]["messages"] = final_messages
+
+                # Extract final response
+                response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
+
+                # Emit done event
+                yield {"event": "done", "data": json.dumps({
+                    "session_id": sess_key,
+                    "agent_id": agent_id,
+                    "response": response_content,
+                    "message_count": len(final_messages) if final_messages else len(context_messages) + 1,
+                    "memory_metadata": {
+                        "summarized": memory_metadata.summarized if memory_metadata else False,
+                        "summary_triggered": memory_metadata.summary_triggered if memory_metadata else False,
+                        "total_messages": memory_metadata.total_messages if memory_metadata else 0,
+                    } if memory_metadata else None,
+                })}
+
+        except Exception as e:
+            logger.error(f"[Stream Builtin Agent] Error: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
     def create_workflow(
         self,
         workflow_id: str,

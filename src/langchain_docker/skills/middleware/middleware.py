@@ -158,27 +158,18 @@ class SkillMiddleware(AgentMiddleware[SkillAwareState]):
 
         return updates if updates else None
 
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """Wrap model calls to inject skill descriptions into system prompt.
+    def _prepare_messages_with_skills(self, messages: list) -> list:
+        """Prepare messages by injecting skill descriptions into system prompt.
 
-        This hook intercepts each model call and:
-        1. Checks if skill descriptions need to be injected
-        2. Modifies the system prompt to include available skills
-        3. Uses the loaded skills info from the last before_model call
+        This is shared logic used by both sync and async wrap_model_call.
 
         Args:
-            request: The model request containing messages and config
-            handler: The next handler in the middleware chain
+            messages: The original messages list
 
         Returns:
-            The model response from the handler
+            Modified messages list with skill descriptions injected
         """
-        # Get the current messages
-        messages = list(request.messages)
+        messages = list(messages)
 
         # Find or create the system message
         system_message_idx = None
@@ -211,11 +202,63 @@ class SkillMiddleware(AgentMiddleware[SkillAwareState]):
             # Prepend new system message
             messages.insert(0, SystemMessage(content=skill_section))
 
+        return messages
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Wrap model calls to inject skill descriptions into system prompt.
+
+        This hook intercepts each model call and:
+        1. Checks if skill descriptions need to be injected
+        2. Modifies the system prompt to include available skills
+        3. Uses the loaded skills info from the last before_model call
+
+        Args:
+            request: The model request containing messages and config
+            handler: The next handler in the middleware chain
+
+        Returns:
+            The model response from the handler
+        """
+        # Prepare messages with skill descriptions
+        modified_messages = self._prepare_messages_with_skills(request.messages)
+
         # Create modified request using the override() method
-        modified_request = request.override(messages=messages)
+        modified_request = request.override(messages=modified_messages)
 
         # Call the handler with modified request
         return handler(modified_request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Async version of wrap_model_call for use with astream() and ainvoke().
+
+        This hook intercepts each async model call and:
+        1. Checks if skill descriptions need to be injected
+        2. Modifies the system prompt to include available skills
+        3. Uses the loaded skills info from the last before_model call
+
+        Args:
+            request: The model request containing messages and config
+            handler: The next handler in the middleware chain (async)
+
+        Returns:
+            The model response from the handler
+        """
+        # Prepare messages with skill descriptions (same logic as sync version)
+        modified_messages = self._prepare_messages_with_skills(request.messages)
+
+        # Create modified request using the override() method
+        modified_request = request.override(messages=modified_messages)
+
+        # Call the async handler with modified request
+        return await handler(modified_request)
 
     def before_model(
         self,
