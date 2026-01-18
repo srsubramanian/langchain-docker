@@ -63,7 +63,11 @@ src/langchain_docker/
 │   │   ├── skill_registry.py     # Skills: built-in + custom, editable via API
 │   │   ├── redis_skill_store.py  # Redis-backed skill versioning
 │   │   ├── versioned_skill.py    # Skill version dataclasses
-│   │   ├── tool_registry.py      # Tool templates for agents (with HITL support)
+│   │   ├── tool_registry.py      # Tool registry (loads from providers)
+│   │   ├── tools/                # Tool providers by domain
+│   │   │   ├── base.py          # ToolProvider ABC, ToolTemplate, ToolParameter
+│   │   │   ├── sql_tools.py     # SQLToolProvider (5 database tools)
+│   │   │   └── jira_tools.py    # JiraToolProvider (11 project management tools)
 │   │   ├── memory_service.py     # Conversation summarization
 │   │   ├── model_service.py      # Model LRU cache
 │   │   └── scheduler_service.py  # APScheduler for agent scheduling
@@ -173,8 +177,8 @@ def get_checkpointer() -> BaseCheckpointSaver:
 ```
 
 **Gated tools require skill loading first:**
-- SQL: `sql_query`, `sql_list_tables`, `sql_get_samples`
-- Jira: `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`
+- SQL: `sql_query`, `sql_list_tables`, `sql_get_samples`, `sql_execute` (HITL)
+- Jira: `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`, `jira_get_changelog`, `jira_get_comments`, `jira_get_boards`, `jira_get_worklogs`, `jira_get_sprint_issues`, `jira_jql_reference`
 
 ### 5. Editable Built-in Skills (Redis Required)
 
@@ -295,6 +299,61 @@ ToolTemplate(
 
 **Built-in HITL tool:** `sql_execute` - Allows INSERT/UPDATE/DELETE with approval.
 
+### 9. Tool Provider Pattern
+
+Tools are organized by domain using the Tool Provider pattern for maintainability:
+
+```
+src/langchain_docker/api/services/
+├── tool_registry.py (172 lines)     # Core registry, loads providers
+└── tools/
+    ├── base.py (133 lines)          # ToolProvider ABC, ToolTemplate, ToolParameter
+    ├── sql_tools.py (195 lines)     # SQLToolProvider (5 tools)
+    └── jira_tools.py (443 lines)    # JiraToolProvider (11 tools)
+```
+
+**Adding a new tool provider:**
+
+```python
+# tools/github_tools.py
+from langchain_docker.api.services.tools.base import ToolProvider, ToolTemplate
+
+class GithubToolProvider(ToolProvider):
+    def get_skill_id(self) -> str:
+        return "github"
+
+    def get_templates(self) -> list[ToolTemplate]:
+        return [
+            ToolTemplate(
+                id="github_list_repos",
+                name="List GitHub Repos",
+                description="List repositories for a user or org",
+                category="version_control",
+                factory=self._create_list_repos_tool,
+            ),
+            # ... more tools
+        ]
+
+    def _create_list_repos_tool(self) -> Callable[[], str]:
+        skill = self.get_skill()
+        def list_repos() -> str:
+            return skill.list_repos()
+        return list_repos
+
+# Then register in tool_registry.py:
+self._providers = [
+    SQLToolProvider(skill_registry),
+    JiraToolProvider(skill_registry),
+    GithubToolProvider(skill_registry),  # Add here
+]
+```
+
+**Current tool providers:**
+| Provider | Category | Tools |
+|----------|----------|-------|
+| `SQLToolProvider` | database | `load_sql_skill`, `sql_query`, `sql_list_tables`, `sql_get_samples`, `sql_execute` |
+| `JiraToolProvider` | project_management | `load_jira_skill`, `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`, `jira_get_changelog`, `jira_get_comments`, `jira_get_boards`, `jira_get_worklogs`, `jira_get_sprint_issues`, `jira_jql_reference` |
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -389,6 +448,56 @@ workflow = create_supervisor(
 2. Add skill class to `skill_registry.py`
 3. Add gated tools to `skills/middleware/gated_domain_tools.py`
 4. Register in `SkillRegistry._register_builtin_skills()`
+
+### Adding New Tools to an Existing Provider
+
+1. Add backend method to the skill class in `skill_registry.py`:
+   ```python
+   def my_new_method(self, arg: str) -> str:
+       result = self._api_get(f"/rest/api/endpoint/{arg}")
+       return self._format_result(result)
+   ```
+
+2. Add `tool_configs` entry in `skills/{skill}/SKILL.md` frontmatter:
+   ```yaml
+   tool_configs:
+     - name: my_new_tool
+       description: "Does something useful"
+       method: my_new_method
+       args:
+         - name: arg
+           type: string
+           required: true
+   ```
+
+3. Add `ToolTemplate` in the provider (e.g., `tools/jira_tools.py`):
+   ```python
+   ToolTemplate(
+       id="my_new_tool",
+       name="My New Tool",
+       description="Does something useful",
+       category="my_category",
+       factory=self._create_my_new_tool,
+   )
+   ```
+
+4. Add factory method in the provider:
+   ```python
+   def _create_my_new_tool(self) -> Callable[[str], str]:
+       skill = self.get_skill()
+       def my_new_tool(arg: str) -> str:
+           return skill.my_new_method(arg)
+       return my_new_tool
+   ```
+
+### Adding a New Tool Provider
+
+1. Create `tools/my_tools.py` extending `ToolProvider`
+2. Implement `get_skill_id()` and `get_templates()`
+3. Add factory methods for each tool
+4. Register in `tool_registry.py._load_providers()`
+
+See "Tool Provider Pattern" section above for full example.
 
 ### Adding a New MCP Server
 
