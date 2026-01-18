@@ -14,6 +14,7 @@ import {
   BarChart3,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,9 +81,11 @@ export function SkillEditor() {
   // UI state
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('editor');
   const [isBuiltin, setIsBuiltin] = useState(false);
+  const [hasCustomContent, setHasCustomContent] = useState(false);
 
   // Version save dialog state
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -119,6 +122,7 @@ export function SkillEditor() {
       setToolConfigs(skill.tool_configs || []);
       setResourceConfigs(skill.resource_configs || []);
       setIsBuiltin(skill.is_builtin);
+      setHasCustomContent(skill.has_custom_content || false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skill');
     } finally {
@@ -153,6 +157,14 @@ export function SkillEditor() {
           scripts,
           change_summary: changeSummary || null,
         });
+        // For built-in skills, stay on page and update state
+        if (isBuiltin) {
+          setHasCustomContent(true);
+          setChangeSummary('');
+          // Reload to get fresh data
+          await loadSkill();
+          return;
+        }
       } else {
         await skillsApi.create({
           name,
@@ -171,6 +183,23 @@ export function SkillEditor() {
       setError(err instanceof Error ? err.message : 'Failed to save skill');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!skillId || !isBuiltin) return;
+
+    setIsResetting(true);
+    setError(null);
+    try {
+      await skillsApi.reset(skillId);
+      setHasCustomContent(false);
+      // Reload to get original file-based content
+      await loadSkill();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset skill');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -294,21 +323,38 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
               {isViewing ? 'View Skill' : isEditing ? 'Edit Skill' : 'Create Skill'}
             </h1>
             {isBuiltin && (
-              <Badge variant="outline" className="mt-1">
-                Built-in (Read Only)
+              <Badge variant={hasCustomContent ? 'default' : 'outline'} className="mt-1">
+                {hasCustomContent ? 'Built-in (Customized)' : 'Built-in'}
               </Badge>
             )}
           </div>
         </div>
 
         <div className="flex gap-2">
+          {/* Reset button for built-in skills with custom content */}
+          {isBuiltin && hasCustomContent && !isViewing && (
+            <Button
+              variant="outline"
+              onClick={handleReset}
+              disabled={isResetting}
+              className="gap-2"
+            >
+              {isResetting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="h-4 w-4" />
+              )}
+              Reset to Default
+            </Button>
+          )}
           {isEditing && !isBuiltin && (
             <Button variant="outline" onClick={handleExport} className="gap-2">
               <Download className="h-4 w-4" />
               Export
             </Button>
           )}
-          {!isBuiltin && !isViewing && (
+          {/* Save button - shown for both built-in and custom skills */}
+          {!isViewing && (
             <Button onClick={handleSaveClick} disabled={isSaving || !canSave} className="gap-2">
               {isSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -439,6 +485,12 @@ version: ${version}${author ? `\nauthor: ${author}` : ''}
                 <p className="text-sm text-muted-foreground">
                   Main skill instructions loaded when the skill is triggered. Use Markdown format.
                 </p>
+                {isBuiltin && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    <span className="text-primary font-medium">Note:</span> You can customize the instructions for this built-in skill.
+                    Dynamic content (database schema, etc.) is preserved. Use "Reset to Default" to restore original content.
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 <Textarea
@@ -457,7 +509,6 @@ When this skill is activated, follow these steps:
 - Explain your reasoning
 - Ask for clarification if needed`}
                   className="min-h-[300px] font-mono text-sm"
-                  disabled={isBuiltin}
                 />
                 <p className="mt-2 text-xs text-muted-foreground">
                   {coreContent.length} characters (minimum 10)

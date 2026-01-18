@@ -227,6 +227,21 @@ class SkillsApi {
     }
     return response.json();
   }
+
+  /**
+   * Reset a built-in skill to its original file-based content.
+   * Clears all Redis versions and custom content.
+   */
+  async reset(skillId: string): Promise<SkillInfo> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/reset`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || 'Failed to reset skill');
+    }
+    return response.json();
+  }
 }
 
 export const skillsApi = new SkillsApi();
