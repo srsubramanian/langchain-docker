@@ -15,15 +15,15 @@ A comprehensive LangChain orchestration platform with multi-provider LLM support
 uv sync
 cp .env.example .env  # Add API keys
 
-# Run API server (only CLI command)
-uv run langchain-docker serve
-
-# Run React UI (in another terminal)
-cd web_ui && npm install && npm run dev
-
-# Docker (includes Redis, Phoenix tracing)
+# Docker (preferred - includes Redis, Phoenix tracing)
 docker-compose up --build
+
+# Or run locally without Docker:
+# uv run langchain-docker serve  # API only (no Redis)
+# cd web_ui && npm install && npm run dev  # React UI
 ```
+
+**Development Note:** Always use `docker-compose up --build` for testing features that require Redis (skills versioning, session persistence, agent storage). Local `uv run` mode falls back to in-memory storage.
 
 **Service URLs:**
 - React Web UI: http://localhost:3000 (dev) / http://localhost:8001 (Docker)
@@ -57,7 +57,9 @@ src/langchain_docker/
 │   │   ├── chat_service.py       # Chat orchestration with MCP tools
 │   │   ├── mcp_server_manager.py # MCP subprocess lifecycle
 │   │   ├── mcp_tool_service.py   # MCP tool discovery/execution
-│   │   ├── skill_registry.py     # Legacy skills (progressive disclosure)
+│   │   ├── skill_registry.py     # Skills: built-in + custom, editable via API
+│   │   ├── redis_skill_store.py  # Redis-backed skill versioning
+│   │   ├── versioned_skill.py    # Skill version dataclasses
 │   │   ├── tool_registry.py      # Tool templates for agents
 │   │   ├── memory_service.py     # Conversation summarization
 │   │   ├── model_service.py      # Model LRU cache
@@ -108,15 +110,16 @@ web_ui/                         # React Web UI
 
 ## Key Features
 
-### 1. Redis Persistence (3 layers)
+### 1. Redis Persistence (4 layers)
 
 | Layer | Store | Purpose |
 |-------|-------|---------|
 | Sessions | `RedisSessionStore` | Chat history, survives restarts |
 | Custom Agents | `RedisAgentStore` | Agent configs with schedules |
 | Checkpoints | `RedisSaver` | LangGraph state persistence |
+| Skills | `RedisSkillStore` | Skill versions, custom content, usage metrics |
 
-All fall back to in-memory when `REDIS_URL` not set.
+All fall back to in-memory when `REDIS_URL` not set. Skills versioning requires Redis.
 
 ### 2. Custom Agents
 
@@ -169,7 +172,40 @@ def get_checkpointer() -> BaseCheckpointSaver:
 - SQL: `sql_query`, `sql_list_tables`, `sql_get_samples`
 - Jira: `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`
 
-### 5. Agent Scheduling
+### 5. Editable Built-in Skills (Redis Required)
+
+Built-in skills (SQL, Jira, XLSX) can be customized via the API while preserving dynamic content generation:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SKILL CONTENT FLOW                           │
+├─────────────────────────────────────────────────────────────────┤
+│  load_core() for SQLSkill:                                      │
+│  ├── Dynamic content (always fresh from database)              │
+│  │   └── Schema, tables, dialect, read-only status             │
+│  ├── Static content (editable)                                  │
+│  │   ├── Redis custom content (if edited via API)              │
+│  │   └── OR SKILL.md file content (default)                    │
+│  └── Combined: dynamic + static                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key components:**
+- `Skill._custom_content` - Redis-loaded content override
+- `Skill.has_custom_content()` - Check if skill has been customized
+- `Skill.get_file_content()` - Get original SKILL.md content
+- `SkillRegistry.update_builtin_skill()` - Update with versioning
+- `SkillRegistry.reset_builtin_skill()` - Revert to file defaults
+
+**API endpoints:**
+- `PUT /api/v1/skills/{id}` - Update skill (creates new version)
+- `POST /api/v1/skills/{id}/reset` - Reset to file defaults
+- `GET /api/v1/skills/{id}/versions` - List version history
+- `POST /api/v1/skills/{id}/versions/{num}/activate` - Rollback
+
+**Response includes `has_custom_content: bool` to indicate if skill has been edited.**
+
+### 6. Agent Scheduling
 
 ```python
 # ScheduleConfig
@@ -181,7 +217,7 @@ schedule = ScheduleConfig(
 )
 ```
 
-### 6. MCP Server Integration
+### 7. MCP Server Integration
 
 ```json
 // mcp_servers.json
@@ -207,6 +243,10 @@ Custom servers stored in: `~/.langchain-docker/custom_mcp_servers.json`
 | `GET /api/v1/mcp/servers` | List MCP servers |
 | `POST /api/v1/mcp/servers/{id}/start` | Start MCP server |
 | `GET /api/v1/skills` | List skills |
+| `GET /api/v1/skills/{id}` | Get skill with full content |
+| `PUT /api/v1/skills/{id}` | Update skill (built-in or custom) |
+| `POST /api/v1/skills/{id}/reset` | Reset built-in skill to file defaults |
+| `GET /api/v1/skills/{id}/versions` | List skill version history |
 | `GET /api/v1/models/providers` | List LLM providers |
 
 ## Environment Variables
@@ -346,10 +386,12 @@ KEYS checkpoint:*   # LangGraph state
 
 | File | Size | Purpose |
 |------|------|---------|
-| `skill_registry.py` | 49KB | Legacy skills, progressive disclosure |
+| `skill_registry.py` | 75KB | Skills system: built-in + custom, versioning, Redis persistence |
 | `agent_service.py` | 46KB | LangGraph orchestration, scheduling |
 | `tool_registry.py` | 24KB | Tool templates, factories |
 | `mcp_server_manager.py` | 22KB | MCP subprocess management |
+| `redis_skill_store.py` | 15KB | Redis-backed skill versioning and metrics |
+| `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
 
 ## What Was Removed
 
