@@ -208,7 +208,6 @@ class ToolRegistry:
             """
             # Add custom span for skill loading visibility in Phoenix
             tracer = get_tracer()
-            logger.info(f"[SQL Skill] get_tracer() returned: {tracer}")
             if tracer:
                 with tracer.start_as_current_span("skill.load_core") as span:
                     span.set_attribute("skill.id", "write_sql")
