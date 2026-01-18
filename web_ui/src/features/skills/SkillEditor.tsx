@@ -66,7 +66,8 @@ export function SkillEditor() {
   const { skillId } = useParams();
   const navigate = useNavigate();
   const isEditing = !!skillId && skillId !== 'new';
-  const isViewing = window.location.pathname.includes('/view');
+  // View mode: when editing an existing skill but not on the /edit route
+  const isViewing = isEditing && !window.location.pathname.endsWith('/edit');
 
   // Form state
   const [name, setName] = useState('');

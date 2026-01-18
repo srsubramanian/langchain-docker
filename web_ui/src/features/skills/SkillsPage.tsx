@@ -130,28 +130,28 @@ function SkillCard({
             >
               <Eye className="h-4 w-4" />
             </Button>
+            {/* Edit button - shown for all skills (built-in are now editable) */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onEdit}
+              title="Edit skill"
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+            {/* Delete button - only for custom skills */}
             {!skill.is_builtin && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onEdit}
-                  title="Edit skill"
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleDelete}
-                  className={cn(
-                    showDeleteConfirm && 'text-destructive hover:text-destructive'
-                  )}
-                  title={showDeleteConfirm ? 'Click again to confirm' : 'Delete skill'}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleDelete}
+                className={cn(
+                  showDeleteConfirm && 'text-destructive hover:text-destructive'
+                )}
+                title={showDeleteConfirm ? 'Click again to confirm' : 'Delete skill'}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             )}
           </div>
         </div>
