@@ -25,7 +25,8 @@ This document provides a comprehensive guide to the Skills system implementation
 8. [Adding a New Skill](#adding-a-new-skill)
 9. [API Integration](#api-integration)
 10. [Redis Versioning](#redis-versioning)
-11. [Built-in Skills Reference](#built-in-skills-reference)
+11. [Editable Built-in Skills](#editable-built-in-skills)
+12. [Built-in Skills Reference](#built-in-skills-reference)
 
 ---
 
@@ -46,6 +47,7 @@ The Skills system implements a three-level progressive disclosure pattern that k
 - **Gated Execution**: Tools fail gracefully if required skill not loaded
 - **Dynamic Content**: Database schema, API status injected at runtime
 - **Data-Driven Configuration**: Tools and resources defined in SKILL.md YAML frontmatter
+- **Editable Built-in Skills**: Customize built-in skill instructions via API with versioning (Redis required)
 
 ---
 
@@ -940,6 +942,196 @@ SkillVersion:
   created_at: datetime
   change_summary: Optional[str]
 ```
+
+---
+
+## Editable Built-in Skills
+
+Built-in skills (SQL, Jira, XLSX) can be customized via the API while preserving their dynamic content generation. This allows users to modify skill instructions without touching the source files.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     BUILT-IN SKILL CONTENT FLOW                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  load_core() for SQLSkill:                                                  │
+│  ├── Dynamic content (always fresh from database)                          │
+│  │   └── Schema, tables, dialect, read-only status                         │
+│  ├── Static content (EDITABLE via API)                                     │
+│  │   ├── Redis custom content (if edited via PUT /api/v1/skills/{id})     │
+│  │   └── OR SKILL.md file content (default)                                │
+│  └── Combined output: dynamic + static                                      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     STARTUP FLOW                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. Register built-in skill classes (SQLSkill, JiraSkill, XLSXSkill)        │
+│  2. For each built-in skill:                                                 │
+│     ├── Check Redis for existing versions                                   │
+│     ├── If Redis has versions → Load active version content                │
+│     └── If Redis empty → Use file-based content (default)                  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+**Base Skill class fields** (`skill_registry.py`):
+
+```python
+class Skill(ABC):
+    # Standard fields
+    id: str
+    name: str
+    description: str
+    category: str
+    is_builtin: bool = False
+
+    # Custom content fields (for editable built-in skills)
+    _custom_content: Optional[str] = None      # Redis-loaded content override
+    _custom_resources: Optional[list] = None   # Redis-loaded resources
+
+    def has_custom_content(self) -> bool:
+        """Check if skill has Redis-customized content."""
+        return self._custom_content is not None
+
+    def set_custom_content(self, content: str, resources: list = None):
+        """Set custom content from Redis (called on startup)."""
+        self._custom_content = content
+        self._custom_resources = resources or []
+
+    def clear_custom_content(self):
+        """Clear custom content, reverting to file-based defaults."""
+        self._custom_content = None
+        self._custom_resources = None
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill."""
+        return self._read_md_file("SKILL.md")
+```
+
+**Built-in skill load_core() pattern**:
+
+```python
+class SQLSkill(Skill):
+    def load_core(self) -> str:
+        """Level 2: Load database schema and SQL guidelines."""
+        db = self._get_db()
+
+        # Dynamic content (always generated fresh)
+        dynamic_content = f"""## SQL Skill Activated
+
+### Database Information
+- Dialect: {db.dialect}
+- Available Tables: {', '.join(db.get_usable_table_names())}
+
+### Database Schema
+{db.get_table_info()}
+"""
+
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content:
+            static_content = self._custom_content
+        else:
+            static_content = self.get_file_content()
+
+        return f"{dynamic_content}\n{static_content}"
+```
+
+### SkillRegistry Methods
+
+```python
+class SkillRegistry:
+    def update_builtin_skill(
+        self,
+        skill_id: str,
+        core_content: Optional[str] = None,
+        resources: Optional[list[dict]] = None,
+        change_summary: Optional[str] = None,
+    ) -> Skill:
+        """Update a built-in skill's content.
+
+        - Saves to Redis with versioning
+        - Updates in-memory skill instance
+        - Only core_content and resources are editable (not name/description)
+        - Requires Redis for persistence
+        """
+
+    def reset_builtin_skill(self, skill_id: str) -> Skill:
+        """Reset a built-in skill to its original file-based content.
+
+        - Clears all Redis versions for this skill
+        - Clears in-memory custom content
+        - Skill reverts to reading from SKILL.md file
+        """
+```
+
+### API Endpoints
+
+```bash
+# Update built-in skill (creates new version in Redis)
+PUT /api/v1/skills/{skill_id}
+Content-Type: application/json
+{
+  "core_content": "# Custom SQL Instructions\n\nMy custom guidelines...",
+  "change_summary": "Updated guidelines for our database"
+}
+
+# Reset built-in skill to file defaults
+POST /api/v1/skills/{skill_id}/reset
+
+# Get skill info (includes has_custom_content flag)
+GET /api/v1/skills/{skill_id}
+# Response includes: "has_custom_content": true/false
+
+# List versions (works for both built-in and custom skills)
+GET /api/v1/skills/{skill_id}/versions
+
+# Rollback to previous version
+POST /api/v1/skills/{skill_id}/versions/{version_number}/activate
+```
+
+### Example Workflow
+
+```bash
+# 1. Check current SQL skill (file-based)
+curl http://localhost:8000/api/v1/skills/write_sql
+# Response: { "has_custom_content": false, "core_content": "..." }
+
+# 2. Update with custom instructions
+curl -X PUT http://localhost:8000/api/v1/skills/write_sql \
+  -H "Content-Type: application/json" \
+  -d '{"core_content": "# My Custom SQL Guide\n\nAlways use CTEs..."}'
+
+# 3. Verify update
+curl http://localhost:8000/api/v1/skills/write_sql
+# Response: { "has_custom_content": true, "core_content": "# My Custom SQL Guide..." }
+
+# 4. Load skill to see combined output (dynamic + custom static)
+curl http://localhost:8000/api/v1/skills/write_sql/load
+# Response includes database schema + your custom instructions
+
+# 5. Reset to file defaults if needed
+curl -X POST http://localhost:8000/api/v1/skills/write_sql/reset
+# Response: { "has_custom_content": false, ... }
+```
+
+### Important Notes
+
+1. **Redis Required**: Editing built-in skills requires Redis. Without Redis, built-in skills are read-only from files.
+
+2. **Dynamic Content Preserved**: Database schema, Jira config status, etc. are always generated dynamically - only static instructions are editable.
+
+3. **Versioning**: Built-in skills get the same immutable version history as custom skills when edited.
+
+4. **Persistence**: Custom content survives server restarts (loaded from Redis on startup).
+
+5. **Rollback**: Use `/versions/{num}/activate` to rollback to any previous version.
 
 ---
 
