@@ -130,7 +130,7 @@ class OpenSearchStore:
                             "method": {
                                 "name": "hnsw",
                                 "space_type": "l2",
-                                "engine": "lucene",
+                                "engine": "nmslib",
                                 "parameters": {
                                     "ef_construction": 128,
                                     "m": 24,

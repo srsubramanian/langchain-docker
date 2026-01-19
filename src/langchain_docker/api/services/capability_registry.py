@@ -126,6 +126,9 @@ class CapabilityRegistry:
         # XLSX skill bundle
         self._register_xlsx_capability()
 
+        # Knowledge Base skill bundle
+        self._register_kb_capability()
+
     # =========================================================================
     # Math Capability
     # =========================================================================
@@ -940,6 +943,251 @@ INSERT, UPDATE, DELETE, and other write operations will be rejected.
                     "load_xlsx_skill": create_load_xlsx_skill,
                     "xlsx_get_examples": create_xlsx_get_examples,
                     "xlsx_get_formatting": create_xlsx_get_formatting,
+                },
+            )
+        )
+
+    # =========================================================================
+    # Knowledge Base Capability
+    # =========================================================================
+
+    def _register_kb_capability(self) -> None:
+        """Register Knowledge Base as a skill bundle capability for RAG operations."""
+        skill_dir = SKILLS_DIR / "knowledge_base"
+
+        # Lazy-loaded KB service
+        _kb_service = None
+
+        def get_kb_service():
+            nonlocal _kb_service
+            if _kb_service is None:
+                try:
+                    from langchain_docker.api.services.knowledge_base_service import (
+                        KnowledgeBaseService,
+                    )
+                    _kb_service = KnowledgeBaseService()
+                except Exception as e:
+                    logger.warning(f"Failed to initialize KnowledgeBaseService: {e}")
+            return _kb_service
+
+        def read_md_file(filename: str) -> str:
+            """Read content from a markdown file."""
+            file_path = skill_dir / filename
+            try:
+                if file_path.exists():
+                    content = file_path.read_text(encoding="utf-8")
+                    if content.startswith("---"):
+                        lines = content.split("\n")
+                        for i, line in enumerate(lines[1:], 1):
+                            if line.strip() == "---":
+                                content = "\n".join(lines[i + 1:]).strip()
+                                break
+                    return content
+                else:
+                    return f"Error: File {filename} not found"
+            except Exception as e:
+                return f"Error reading {filename}: {str(e)}"
+
+        def load_core() -> str:
+            """Level 2: Load KB skill instructions with dynamic status."""
+            tracer = get_tracer()
+
+            # Dynamic content: Check if knowledge base is available
+            kb_service = get_kb_service()
+            if kb_service and kb_service.is_available:
+                try:
+                    stats = kb_service.get_stats()
+                    status = f"""### Knowledge Base Status
+- **Available**: Yes
+- **Documents**: {stats.total_documents}
+- **Chunks**: {stats.total_chunks}
+- **Collections**: {stats.total_collections}
+- **Index Size**: {stats.index_size}
+"""
+                except Exception as e:
+                    logger.warning(f"Failed to get KB stats: {e}")
+                    status = "### Knowledge Base Status\n- **Available**: Yes (stats unavailable)\n"
+            else:
+                status = """### Knowledge Base Status
+**Warning**: Knowledge base is not available. OpenSearch may not be configured.
+
+To enable the knowledge base:
+1. Set `OPENSEARCH_URL` in your environment
+2. Ensure OpenSearch is running (docker-compose up opensearch)
+"""
+
+            static_content = read_md_file("SKILL.md")
+
+            content = f"## Knowledge Base Skill Activated\n{status}\n{static_content}"
+
+            if tracer:
+                with tracer.start_as_current_span("capability.kb.load_core") as span:
+                    span.set_attribute("content_length", len(content))
+
+            return content
+
+        def load_details(resource: str) -> str:
+            """Level 3: Load detailed resources."""
+            if resource == "search_tips":
+                return """## Search Tips
+- Use specific keywords related to your topic
+- Try different phrasings if initial search doesn't return good results
+- Use collection filters to narrow down results
+- Higher top_k values give more context but may include less relevant results
+"""
+            else:
+                return f"Unknown resource: {resource}. Available: 'search_tips'"
+
+        # Tool factories for Knowledge Base
+        def create_load_kb_skill():
+            def load_kb_skill() -> str:
+                """Load Knowledge Base skill with status and instructions.
+
+                Call this tool before searching the knowledge base to understand
+                its current status, available documents, and usage guidelines.
+                """
+                return load_core()
+            return load_kb_skill
+
+        def create_kb_search():
+            def kb_search(query: str, top_k: int = 5, collection: str | None = None) -> str:
+                """Search the knowledge base for relevant documents.
+
+                Uses semantic search to find documents matching the query.
+                Results are ranked by relevance score.
+
+                Args:
+                    query: The search query to find relevant documents
+                    top_k: Number of results to return (default 5)
+                    collection: Optional collection to filter results
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+                try:
+                    results = kb_service.search(
+                        query=query,
+                        top_k=top_k,
+                        collection=collection,
+                    )
+
+                    if not results:
+                        return f"No results found for query: '{query}'"
+
+                    output = [f"**Search Results for '{query}'** ({len(results)} results):\n"]
+                    for i, result in enumerate(results, 1):
+                        source = result.metadata.get("filename", "Unknown")
+                        score = f"{result.score:.2f}" if result.score else "N/A"
+                        content = result.content[:500] + "..." if len(result.content) > 500 else result.content
+                        output.append(f"\n**Result {i}** (Score: {score}, Source: {source})")
+                        output.append(f"```\n{content}\n```")
+
+                    return "\n".join(output)
+                except Exception as e:
+                    logger.error(f"Knowledge base search error: {e}")
+                    return f"Error searching knowledge base: {str(e)}"
+            return kb_search
+
+        def create_kb_list_documents():
+            def kb_list_documents(collection: str | None = None) -> str:
+                """List documents in the knowledge base.
+
+                Args:
+                    collection: Optional collection to filter documents
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available."
+
+                try:
+                    docs = kb_service.list_documents(collection=collection, limit=50)
+
+                    if not docs:
+                        return "No documents found in the knowledge base."
+
+                    output = [f"**Documents in Knowledge Base** ({len(docs)} documents):\n"]
+                    for doc in docs:
+                        collection_str = f" (Collection: {doc.collection})" if doc.collection else ""
+                        output.append(
+                            f"- **{doc.filename}** ({doc.chunk_count} chunks){collection_str}\n"
+                            f"  ID: {doc.id} | Type: {doc.content_type}"
+                        )
+
+                    return "\n".join(output)
+                except Exception as e:
+                    logger.error(f"List documents error: {e}")
+                    return f"Error listing documents: {str(e)}"
+            return kb_list_documents
+
+        def create_kb_list_collections():
+            def kb_list_collections() -> str:
+                """List all collections in the knowledge base."""
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available."
+
+                try:
+                    collections = kb_service.list_collections()
+
+                    if not collections:
+                        return "No collections found. Documents are in the default collection."
+
+                    output = ["**Collections in Knowledge Base:**\n"]
+                    for col in collections:
+                        output.append(f"- **{col.name}** ({col.document_count} documents)")
+
+                    return "\n".join(output)
+                except Exception as e:
+                    logger.error(f"List collections error: {e}")
+                    return f"Error listing collections: {str(e)}"
+            return kb_list_collections
+
+        def create_kb_get_stats():
+            def kb_get_stats() -> str:
+                """Get knowledge base statistics."""
+                kb_service = get_kb_service()
+                if not kb_service:
+                    return "Error: Knowledge base service not initialized."
+
+                try:
+                    stats = kb_service.get_stats()
+                    return f"""**Knowledge Base Statistics:**
+- Available: {stats.available}
+- Total Documents: {stats.total_documents}
+- Total Chunks: {stats.total_chunks}
+- Total Collections: {stats.total_collections}
+- Index Size: {stats.index_size}
+- Last Updated: {stats.last_updated}
+"""
+                except Exception as e:
+                    logger.error(f"Get stats error: {e}")
+                    return f"Error getting statistics: {str(e)}"
+            return kb_get_stats
+
+        self.register(
+            Capability(
+                id="knowledge_base",
+                name="Knowledge Base Search",
+                description="Search and retrieve information from the vector knowledge base (RAG)",
+                category="knowledge",
+                type="skill_bundle",
+                tools_provided=[
+                    "load_kb_skill",
+                    "kb_search",
+                    "kb_list_documents",
+                    "kb_list_collections",
+                    "kb_get_stats",
+                ],
+                content_path=skill_dir,
+                load_core=load_core,
+                load_details=load_details,
+                methods={
+                    "load_kb_skill": create_load_kb_skill,
+                    "kb_search": create_kb_search,
+                    "kb_list_documents": create_kb_list_documents,
+                    "kb_list_collections": create_kb_list_collections,
+                    "kb_get_stats": create_kb_get_stats,
                 },
             )
         )
