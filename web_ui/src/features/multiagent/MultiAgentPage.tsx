@@ -375,6 +375,9 @@ export function MultiAgentPage() {
           model,
           temperature,
         })) {
+          // Debug: log all events
+          console.log('[Agent Stream Event]', event.event, event);
+
           if (event.event === 'start' && event.session_id) {
             setSessionId(event.session_id);
           } else if (event.event === 'tool_call') {
