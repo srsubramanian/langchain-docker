@@ -2178,9 +2178,6 @@ Always use the tools to interact with the database.""")
                     kind = event.get("event", "")
                     data = event.get("data", {})
 
-                    # Debug: log all events from astream_events
-                    logger.info(f"[Stream Event] kind={kind}, name={event.get('name')}, data_keys={list(data.keys()) if isinstance(data, dict) else type(data)}")
-
                     # Tool call started
                     if kind == "on_tool_start":
                         tool_name = event.get("name", "unknown")
@@ -2247,9 +2244,6 @@ Always use the tools to interact with the database.""")
                         if isinstance(output, dict):
                             if "messages" in output:
                                 final_messages = output["messages"]
-                            # Log output structure for debugging
-                            elif not final_messages:
-                                logger.info(f"[Stream Event] on_chain_end output keys: {list(output.keys())}")
 
                     # Capture from on_chat_model_end as fallback (for non-streaming models like Bedrock)
                     # This handles models that don't emit on_chat_model_stream events
@@ -2284,11 +2278,6 @@ Always use the tools to interact with the database.""")
 
                 # Extract final response
                 response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
-
-                # Debug: log final content
-                logger.info(f"[Stream Agent Done] agent_id={agent_id}, final_messages_count={len(final_messages)}, accumulated_len={len(accumulated_content)}, response_len={len(response_content)}")
-                if not response_content:
-                    logger.warning(f"[Stream Agent] Empty response! final_messages={final_messages[:2] if final_messages else 'None'}")
 
                 # Emit done event
                 yield {"event": "done", "data": json.dumps({
