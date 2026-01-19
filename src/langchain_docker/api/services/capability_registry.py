@@ -129,6 +129,9 @@ class CapabilityRegistry:
         # Knowledge Base skill bundle
         self._register_kb_capability()
 
+        # Knowledge Base Ingestion skill bundle
+        self._register_kb_ingest_capability()
+
     # =========================================================================
     # Math Capability
     # =========================================================================
@@ -1188,6 +1191,304 @@ To enable the knowledge base:
                     "kb_list_documents": create_kb_list_documents,
                     "kb_list_collections": create_kb_list_collections,
                     "kb_get_stats": create_kb_get_stats,
+                },
+            )
+        )
+
+    def _register_kb_ingest_capability(self) -> None:
+        """Register Knowledge Base Ingestion as a skill bundle capability."""
+        skill_dir = SKILLS_DIR / "kb_ingest"
+
+        # Lazy-loaded KB service
+        _kb_service = None
+
+        def get_kb_service():
+            nonlocal _kb_service
+            if _kb_service is None:
+                try:
+                    from langchain_docker.api.services.knowledge_base_service import (
+                        KnowledgeBaseService,
+                    )
+                    _kb_service = KnowledgeBaseService()
+                except Exception as e:
+                    logger.warning(f"Failed to initialize KnowledgeBaseService: {e}")
+            return _kb_service
+
+        def read_md_file(filename: str) -> str:
+            """Read content from a markdown file."""
+            file_path = skill_dir / filename
+            try:
+                if file_path.exists():
+                    content = file_path.read_text(encoding="utf-8")
+                    if content.startswith("---"):
+                        lines = content.split("\n")
+                        for i, line in enumerate(lines[1:], 1):
+                            if line.strip() == "---":
+                                content = "\n".join(lines[i + 1:]).strip()
+                                break
+                    return content
+                else:
+                    return f"Error: File {filename} not found"
+            except Exception as e:
+                return f"Error reading {filename}: {str(e)}"
+
+        def load_core() -> str:
+            """Level 2: Load KB ingestion skill instructions with dynamic status."""
+            tracer = get_tracer()
+
+            # Dynamic content: Check if knowledge base is available
+            kb_service = get_kb_service()
+            if kb_service and kb_service.is_available:
+                try:
+                    stats = kb_service.get_stats()
+                    status = f"""### Knowledge Base Status
+- **Available**: Yes
+- **Documents**: {stats.total_documents}
+- **Chunks**: {stats.total_chunks}
+- **Collections**: {stats.total_collections}
+- **Index Size**: {stats.index_size}
+"""
+                except Exception as e:
+                    logger.warning(f"Failed to get KB stats: {e}")
+                    status = "### Knowledge Base Status\n- **Available**: Yes (stats unavailable)\n"
+            else:
+                status = """### Knowledge Base Status
+**Warning**: Knowledge base is not available. OpenSearch may not be configured.
+
+To enable the knowledge base:
+1. Set `OPENSEARCH_URL` in your environment
+2. Ensure OpenSearch is running (docker-compose up opensearch)
+"""
+
+            static_content = read_md_file("SKILL.md")
+
+            content = f"## Knowledge Base Ingestion Skill Activated\n{status}\n{static_content}"
+
+            if tracer:
+                with tracer.start_as_current_span("capability.kb_ingest.load_core") as span:
+                    span.set_attribute("content_length", len(content))
+
+            return content
+
+        def load_details(resource: str) -> str:
+            """Level 3: Load detailed resources."""
+            if resource == "ingestion_guidelines":
+                return """## Ingestion Guidelines
+
+### Text Content
+- Use descriptive titles that help identify the content
+- Organize related content into collections
+- Keep individual documents focused on a single topic
+- Larger documents are automatically chunked for better search
+
+### URL Content
+- Web pages are fetched and converted to plain text
+- JavaScript-heavy pages may not extract well
+- Consider using the text ingestion for better control
+
+### Collections
+- Use collections to organize documents by topic or source
+- Collection names should be lowercase with underscores
+- Examples: "company_policies", "technical_docs", "meeting_notes"
+"""
+            else:
+                return f"Unknown resource: {resource}. Available: 'ingestion_guidelines'"
+
+        # Tool factories for KB Ingestion
+        def create_load_kb_ingest_skill():
+            def load_kb_ingest_skill() -> str:
+                """Load Knowledge Base Ingestion skill with status and instructions.
+
+                Call this tool before ingesting content to understand
+                the current status and usage guidelines.
+                """
+                return load_core()
+            return load_kb_ingest_skill
+
+        def create_kb_ingest_text():
+            def kb_ingest_text(text: str, title: str, collection: str | None = None) -> str:
+                """Ingest plain text content into the knowledge base.
+
+                Args:
+                    text: The text content to ingest
+                    title: Title/name for the document
+                    collection: Optional collection to add the document to
+
+                Returns:
+                    Success message with document details or error message
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+                try:
+                    doc = kb_service.upload_text(
+                        text=text,
+                        title=title,
+                        collection=collection,
+                    )
+
+                    collection_str = f" in collection '{collection}'" if collection else ""
+                    return f"""**Document Ingested Successfully**
+- **Title**: {doc.filename}
+- **ID**: {doc.id}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+
+The content has been processed and indexed for semantic search.
+"""
+                except Exception as e:
+                    logger.error(f"Text ingestion error: {e}")
+                    return f"Error ingesting text: {str(e)}"
+            return kb_ingest_text
+
+        def create_kb_ingest_url():
+            def kb_ingest_url(url: str, collection: str | None = None) -> str:
+                """Fetch and ingest content from a URL into the knowledge base.
+
+                Args:
+                    url: The URL to fetch content from
+                    collection: Optional collection to add the document to
+
+                Returns:
+                    Success message with document details or error message
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+                try:
+                    import requests
+                    from bs4 import BeautifulSoup
+                except ImportError:
+                    return "Error: URL ingestion requires 'requests' and 'beautifulsoup4' packages."
+
+                try:
+                    # Fetch URL content
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (compatible; KnowledgeBot/1.0)"
+                    }
+                    response = requests.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()
+
+                    # Parse HTML and extract text
+                    soup = BeautifulSoup(response.text, "html.parser")
+
+                    # Remove script and style elements
+                    for element in soup(["script", "style", "nav", "footer", "header"]):
+                        element.decompose()
+
+                    # Get text content
+                    text = soup.get_text(separator="\n", strip=True)
+
+                    # Get title
+                    title = soup.title.string if soup.title else url
+                    title = title[:100] if title else url[:100]
+
+                    # Upload to knowledge base
+                    doc = kb_service.upload_text(
+                        text=text,
+                        title=title,
+                        collection=collection,
+                        metadata={"source_url": url},
+                    )
+
+                    collection_str = f" in collection '{collection}'" if collection else ""
+                    return f"""**URL Content Ingested Successfully**
+- **Title**: {doc.filename}
+- **Source**: {url}
+- **ID**: {doc.id}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+
+The web content has been processed and indexed for semantic search.
+"""
+                except Exception as e:
+                    logger.error(f"URL ingestion error: {e}")
+                    return f"Error ingesting URL content: {str(e)}"
+            return kb_ingest_url
+
+        def create_kb_delete_document():
+            def kb_delete_document(document_id: str) -> str:
+                """Delete a document from the knowledge base.
+
+                Args:
+                    document_id: The ID of the document to delete
+
+                Returns:
+                    Success or error message
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available."
+
+                try:
+                    deleted = kb_service.delete_document(document_id)
+                    if deleted:
+                        return f"**Document Deleted**\nDocument ID `{document_id}` has been removed from the knowledge base."
+                    else:
+                        return f"Document ID `{document_id}` not found in the knowledge base."
+                except Exception as e:
+                    logger.error(f"Delete document error: {e}")
+                    return f"Error deleting document: {str(e)}"
+            return kb_delete_document
+
+        def create_kb_get_document():
+            def kb_get_document(document_id: str) -> str:
+                """Get information about a specific document.
+
+                Args:
+                    document_id: The ID of the document to retrieve
+
+                Returns:
+                    Document details or error message
+                """
+                kb_service = get_kb_service()
+                if not kb_service or not kb_service.is_available:
+                    return "Error: Knowledge base is not available."
+
+                try:
+                    doc = kb_service.get_document(document_id)
+                    if doc:
+                        collection_str = f"\n- **Collection**: {doc.collection}" if doc.collection else ""
+                        return f"""**Document Details**
+- **Filename**: {doc.filename}
+- **ID**: {doc.id}
+- **Type**: {doc.content_type}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+- **Created**: {doc.created_at}
+"""
+                    else:
+                        return f"Document ID `{document_id}` not found in the knowledge base."
+                except Exception as e:
+                    logger.error(f"Get document error: {e}")
+                    return f"Error getting document: {str(e)}"
+            return kb_get_document
+
+        self.register(
+            Capability(
+                id="kb_ingest",
+                name="Knowledge Base Ingestion",
+                description="Ingest and manage documents in the vector knowledge base",
+                category="knowledge",
+                type="skill_bundle",
+                tools_provided=[
+                    "load_kb_ingest_skill",
+                    "kb_ingest_text",
+                    "kb_ingest_url",
+                    "kb_delete_document",
+                    "kb_get_document",
+                ],
+                content_path=skill_dir,
+                load_core=load_core,
+                load_details=load_details,
+                methods={
+                    "load_kb_ingest_skill": create_load_kb_ingest_skill,
+                    "kb_ingest_text": create_kb_ingest_text,
+                    "kb_ingest_url": create_kb_ingest_url,
+                    "kb_delete_document": create_kb_delete_document,
+                    "kb_get_document": create_kb_get_document,
                 },
             )
         )

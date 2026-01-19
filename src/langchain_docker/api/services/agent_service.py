@@ -922,17 +922,31 @@ Guidelines:
         # Sanitize name for OpenAI compatibility
         safe_name = self._sanitize_agent_name(custom.name)
 
-        if use_middleware and custom.skill_ids:
+        # Automatically use middleware when agent has skills
+        if custom.skill_ids:
             # Use middleware pattern: skills are loaded dynamically via load_skill tool
             # The middleware will:
             # 1. Inject skill descriptions into system prompt
             # 2. Track loaded skills in state
             # 3. Provide load_skill and list_loaded_skills tools
 
+            # Add domain tools from each skill's capability
+            for skill_id in custom.skill_ids:
+                try:
+                    skill_tools = self._capability_registry.get_tools_for_capability(
+                        skill_id, None
+                    )
+                    tools.extend(skill_tools)
+                    tool_names = [getattr(t, '__name__', str(t)) for t in skill_tools]
+                    logger.info(f"Added {len(skill_tools)} tools from skill {skill_id}: {tool_names}")
+                except Exception as e:
+                    logger.warning(f"Failed to get tools for skill {skill_id}: {e}")
+
             # Add hint about available skills to the prompt
             skill_names = ", ".join(custom.skill_ids)
             system_prompt += f"\n\n# Available Skills\nYou have access to the following skills: {skill_names}\nUse the load_skill tool to load a skill before using its domain tools."
 
+            logger.info(f"Creating agent {custom.name} with {len(tools)} total tools")
             return self.create_middleware_enabled_agent(
                 agent_name=safe_name,
                 llm=llm,

@@ -1686,6 +1686,367 @@ To enable the knowledge base:
             return f"Error getting statistics: {str(e)}"
 
 
+class KBIngestionSkill(Skill):
+    """Knowledge Base Ingestion skill for adding content to the vector store.
+
+    Provides tools for ingesting text content, URLs, and managing documents
+    in the knowledge base. Complements the KnowledgeBaseSkill for search.
+
+    Content is loaded from .md files in src/langchain_docker/skills/kb_ingest/
+    """
+
+    def __init__(self):
+        """Initialize KB Ingestion skill."""
+        self.id = "kb_ingest"
+        self.name = "Knowledge Base Ingestion"
+        self.description = (
+            "Ingest and manage documents in the vector knowledge base"
+        )
+        self.category = "knowledge"
+        self.is_builtin = True
+        self.version = "1.0.0"
+        self._skill_dir = SKILLS_DIR / "kb_ingest"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._kb_service = None
+        self._load_configs_from_frontmatter()
+
+    def _get_kb_service(self):
+        """Get the knowledge base service (lazy loaded).
+
+        Returns:
+            KnowledgeBaseService instance or None if not available
+        """
+        if self._kb_service is None:
+            try:
+                from langchain_docker.api.services.knowledge_base_service import (
+                    KnowledgeBaseService,
+                )
+                self._kb_service = KnowledgeBaseService()
+            except Exception as e:
+                logger.warning(f"Failed to initialize KnowledgeBaseService: {e}")
+                self._kb_service = None
+        return self._kb_service
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory.
+
+        Args:
+            filename: Name of the .md file to read
+
+        Returns:
+            File content or error message if file not found
+        """
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Extract frontmatter
+            lines = content.split("\n")
+            frontmatter_end = -1
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    frontmatter_end = i
+                    break
+
+            if frontmatter_end == -1:
+                return
+
+            import yaml
+            frontmatter_text = "\n".join(lines[1:frontmatter_end])
+            frontmatter = yaml.safe_load(frontmatter_text)
+
+            if frontmatter:
+                self._tool_configs = frontmatter.get("tool_configs", [])
+                self._resource_configs = frontmatter.get("resource_configs", [])
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Returns:
+            Original SKILL.md content (static guidelines only)
+        """
+        return self._read_md_file("SKILL.md")
+
+    def load_core(self) -> str:
+        """Level 2: Load KB ingestion skill instructions.
+
+        Combines dynamic status information with static content.
+
+        Returns:
+            Complete skill context for KB ingestion operations
+        """
+        # Dynamic content: Check if knowledge base is available
+        kb_service = self._get_kb_service()
+        if kb_service and kb_service.is_available:
+            try:
+                stats = kb_service.get_stats()
+                status = f"""
+### Knowledge Base Status
+- **Available**: Yes
+- **Documents**: {stats.total_documents}
+- **Chunks**: {stats.total_chunks}
+- **Collections**: {stats.total_collections}
+- **Index Size**: {stats.index_size}
+"""
+            except Exception as e:
+                logger.warning(f"Failed to get KB stats: {e}")
+                status = """
+### Knowledge Base Status
+- **Available**: Yes (stats unavailable)
+"""
+        else:
+            status = """
+### Knowledge Base Status
+**Warning**: Knowledge base is not available. OpenSearch may not be configured.
+
+To enable the knowledge base:
+1. Set `OPENSEARCH_URL` in your environment
+2. Ensure OpenSearch is running (docker-compose up opensearch)
+"""
+
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
+
+        return f"""## Knowledge Base Ingestion Skill Activated
+{status}
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources.
+
+        Args:
+            resource: "ingestion_guidelines" for ingestion guidance
+
+        Returns:
+            Detailed resource content
+        """
+        if resource == "ingestion_guidelines":
+            return """## Ingestion Guidelines
+
+### Text Content
+- Use descriptive titles that help identify the content
+- Organize related content into collections
+- Keep individual documents focused on a single topic
+- Larger documents are automatically chunked for better search
+
+### URL Content
+- Web pages are fetched and converted to plain text
+- JavaScript-heavy pages may not extract well
+- Consider using the text ingestion for better control
+
+### Collections
+- Use collections to organize documents by topic or source
+- Collection names should be lowercase with underscores
+- Examples: "company_policies", "technical_docs", "meeting_notes"
+"""
+        else:
+            return f"Unknown resource: {resource}. Available: 'ingestion_guidelines'"
+
+    def ingest_text(
+        self,
+        text: str,
+        title: str,
+        collection: Optional[str] = None,
+    ) -> str:
+        """Ingest plain text content into the knowledge base.
+
+        Args:
+            text: The text content to ingest
+            title: Title/name for the document
+            collection: Optional collection to add the document to
+
+        Returns:
+            Success message with document details or error message
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+        try:
+            doc = kb_service.upload_text(
+                text=text,
+                title=title,
+                collection=collection,
+            )
+
+            collection_str = f" in collection '{collection}'" if collection else ""
+            return f"""**Document Ingested Successfully**
+- **Title**: {doc.filename}
+- **ID**: {doc.id}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+
+The content has been processed and indexed for semantic search.
+"""
+        except Exception as e:
+            logger.error(f"Text ingestion error: {e}")
+            return f"Error ingesting text: {str(e)}"
+
+    def ingest_url(
+        self,
+        url: str,
+        collection: Optional[str] = None,
+    ) -> str:
+        """Fetch and ingest content from a URL into the knowledge base.
+
+        Args:
+            url: The URL to fetch content from
+            collection: Optional collection to add the document to
+
+        Returns:
+            Success message with document details or error message
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return "Error: URL ingestion requires 'requests' and 'beautifulsoup4' packages."
+
+        try:
+            # Fetch URL content
+            headers = {
+                "User-Agent": "Mozilla/5.0 (compatible; KnowledgeBot/1.0)"
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            # Parse HTML and extract text
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Remove script and style elements
+            for element in soup(["script", "style", "nav", "footer", "header"]):
+                element.decompose()
+
+            # Get text content
+            text = soup.get_text(separator="\n", strip=True)
+
+            # Get title
+            title = soup.title.string if soup.title else url
+            title = title[:100] if title else url[:100]
+
+            # Upload to knowledge base
+            doc = kb_service.upload_text(
+                text=text,
+                title=title,
+                collection=collection,
+                metadata={"source_url": url},
+            )
+
+            collection_str = f" in collection '{collection}'" if collection else ""
+            return f"""**URL Content Ingested Successfully**
+- **Title**: {doc.filename}
+- **Source**: {url}
+- **ID**: {doc.id}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+
+The web content has been processed and indexed for semantic search.
+"""
+        except requests.RequestException as e:
+            logger.error(f"URL fetch error: {e}")
+            return f"Error fetching URL: {str(e)}"
+        except Exception as e:
+            logger.error(f"URL ingestion error: {e}")
+            return f"Error ingesting URL content: {str(e)}"
+
+    def delete_document(self, document_id: str) -> str:
+        """Delete a document from the knowledge base.
+
+        Args:
+            document_id: The ID of the document to delete
+
+        Returns:
+            Success or error message
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available."
+
+        try:
+            deleted = kb_service.delete_document(document_id)
+            if deleted:
+                return f"**Document Deleted**\nDocument ID `{document_id}` has been removed from the knowledge base."
+            else:
+                return f"Document ID `{document_id}` not found in the knowledge base."
+        except Exception as e:
+            logger.error(f"Delete document error: {e}")
+            return f"Error deleting document: {str(e)}"
+
+    def get_document(self, document_id: str) -> str:
+        """Get information about a specific document.
+
+        Args:
+            document_id: The ID of the document to retrieve
+
+        Returns:
+            Document details or error message
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available."
+
+        try:
+            doc = kb_service.get_document(document_id)
+            if doc:
+                collection_str = f"\n- **Collection**: {doc.collection}" if doc.collection else ""
+                return f"""**Document Details**
+- **Filename**: {doc.filename}
+- **ID**: {doc.id}
+- **Type**: {doc.content_type}
+- **Chunks**: {doc.chunk_count}
+- **Size**: {doc.size} bytes{collection_str}
+- **Created**: {doc.created_at}
+"""
+            else:
+                return f"Document ID `{document_id}` not found in the knowledge base."
+        except Exception as e:
+            logger.error(f"Get document error: {e}")
+            return f"Error getting document: {str(e)}"
+
+
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
 
@@ -1986,6 +2347,7 @@ class SkillRegistry:
             XLSXSkill(),
             JiraSkill(),
             KnowledgeBaseSkill(),
+            KBIngestionSkill(),
         ]
 
         for skill in builtin_skills:
