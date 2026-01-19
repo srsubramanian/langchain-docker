@@ -11,7 +11,7 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Send, Loader2, ArrowLeft, Check, Wrench, Sparkles } from 'lucide-react';
+import { Send, Loader2, ArrowLeft, Check, Wrench, Sparkles, BookOpen, Cpu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { agentsApi } from '@/api';
+import { agentsApi, type UnifiedAgentInfo } from '@/api';
 import { useSettingsStore } from '@/stores';
 import { useMCPStore } from '@/stores/mcpStore';
 import { cn } from '@/lib/cn';
@@ -216,6 +216,7 @@ export function MultiAgentPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [showMCPPanel, setShowMCPPanel] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
+  const [agentDetails, setAgentDetails] = useState<UnifiedAgentInfo | null>(null);
 
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
@@ -234,7 +235,7 @@ export function MultiAgentPage() {
     clearImages,
   } = useImageUpload();
 
-  const { provider, agentPreset, setAgentPreset } = useSettingsStore();
+  const { provider, model, agentPreset, setAgentPreset } = useSettingsStore();
   // MCP store - getEnabledServers available for future MCP integration with agents
   useMCPStore();
 
@@ -269,6 +270,23 @@ export function MultiAgentPage() {
       setEdges(newEdges);
     }
   }, [agentPreset, selectedAgents, setNodes, setEdges, isSingleAgentMode]);
+
+  // Fetch agent details for single-agent mode (to get skills, provider, model info)
+  useEffect(() => {
+    if (isSingleAgentMode) {
+      const agentId = isCustomAgent && customAgentId ? customAgentId : singleAgentName;
+      if (agentId) {
+        agentsApi.getAgent(agentId)
+          .then(setAgentDetails)
+          .catch((err) => {
+            console.error('Failed to fetch agent details:', err);
+            setAgentDetails(null);
+          });
+      }
+    } else {
+      setAgentDetails(null);
+    }
+  }, [isSingleAgentMode, isCustomAgent, customAgentId, singleAgentName]);
 
   // Create workflow when agents change (only for built-in agents)
   useEffect(() => {
@@ -524,8 +542,42 @@ export function MultiAgentPage() {
                 {initials}
               </div>
               <div>
-                <h1 className="text-xl font-semibold">{agentDisplayName}</h1>
-                <p className="text-sm text-muted-foreground">Chat with this agent</p>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-semibold">{agentDisplayName}</h1>
+                  {agentDetails?.type === 'custom' && (
+                    <Badge variant="outline" className="text-xs">
+                      <Cpu className="h-3 w-3 mr-1" />
+                      Custom
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  {/* Skills badges */}
+                  {agentDetails?.skills && agentDetails.skills.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <BookOpen className="h-3 w-3 text-muted-foreground" />
+                      {agentDetails.skills.map((skill) => (
+                        <Badge key={skill} variant="secondary" className="text-xs bg-purple-500/20 text-purple-400 border-purple-500/30">
+                          {skill}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {/* Tools count if no skills */}
+                  {(!agentDetails?.skills || agentDetails.skills.length === 0) && agentDetails?.tools && agentDetails.tools.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      <Wrench className="h-3 w-3 mr-1" />
+                      {agentDetails.tools.length} tools
+                    </Badge>
+                  )}
+                  {/* Provider/Model info - shows current session settings */}
+                  {provider && (
+                    <Badge variant="outline" className="text-xs">
+                      {provider}
+                      {model && ` / ${model.split('/').pop()}`}
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
             {/* Settings bar (compact mode) */}

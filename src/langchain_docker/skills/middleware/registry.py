@@ -180,11 +180,12 @@ class SkillRegistry:
         """
         return list(self._skills.values())
 
-    def get_descriptions(self, format: str = "list") -> str:
-        """Get formatted descriptions of all skills for system prompt injection.
+    def get_descriptions(self, format: str = "list", skill_ids: Optional[list[str]] = None) -> str:
+        """Get formatted descriptions of skills for system prompt injection.
 
         Args:
             format: Output format - "list" for bullet points, "table" for markdown table
+            skill_ids: Optional list of skill IDs to include. If None, includes all skills.
 
         Returns:
             Formatted string of skill descriptions
@@ -192,15 +193,24 @@ class SkillRegistry:
         if not self._skills:
             return "No skills available."
 
+        # Filter skills if skill_ids provided
+        if skill_ids is not None:
+            skills_to_show = [s for s in self._skills.values() if s.id in skill_ids]
+        else:
+            skills_to_show = list(self._skills.values())
+
+        if not skills_to_show:
+            return "No skills available."
+
         if format == "table":
             lines = ["| Skill | Description |", "|-------|-------------|"]
-            for skill in self._skills.values():
+            for skill in skills_to_show:
                 lines.append(f"| {skill.id} | {skill.description} |")
             return "\n".join(lines)
 
         # Default: list format
         lines = []
-        for skill in self._skills.values():
+        for skill in skills_to_show:
             lines.append(f"- {skill.id}: {skill.name} - {skill.description}")
         return "\n".join(lines)
 

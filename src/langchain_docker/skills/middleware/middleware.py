@@ -83,6 +83,7 @@ class SkillMiddleware(AgentMiddleware[SkillAwareState]):
         prompt_template: str = DEFAULT_SKILL_PROMPT_TEMPLATE,
         description_format: str = "list",
         auto_refresh_skills: bool = False,
+        skill_filter: Optional[list[str]] = None,
     ):
         """Initialize the skill middleware.
 
@@ -93,11 +94,14 @@ class SkillMiddleware(AgentMiddleware[SkillAwareState]):
             description_format: Format for skill descriptions ("list" or "table")
             auto_refresh_skills: If True, refresh skill descriptions on each
                 model call (useful if skills can change during conversation)
+            skill_filter: Optional list of skill IDs to show. If None, shows all skills.
+                Use this to restrict which skills an agent can see.
         """
         self.registry = registry
         self.prompt_template = prompt_template
         self.description_format = description_format
         self.auto_refresh_skills = auto_refresh_skills
+        self.skill_filter = skill_filter
 
         # Cache skill descriptions (unless auto-refresh is enabled)
         self._cached_descriptions: Optional[str] = None
@@ -116,7 +120,8 @@ class SkillMiddleware(AgentMiddleware[SkillAwareState]):
         """
         if self._cached_descriptions is None or self.auto_refresh_skills:
             self._cached_descriptions = self.registry.get_descriptions(
-                format=self.description_format
+                format=self.description_format,
+                skill_ids=self.skill_filter,
             )
         return self._cached_descriptions
 

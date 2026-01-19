@@ -287,6 +287,7 @@ Guidelines:
         tools: list,
         system_prompt: str,
         use_skills: bool = True,
+        middleware=None,
     ):
         """Create an agent with SkillMiddleware enabled.
 
@@ -302,11 +303,15 @@ Guidelines:
             tools: List of tools for the agent
             system_prompt: System prompt for the agent
             use_skills: Whether to attach SkillMiddleware
+            middleware: Optional custom middleware to use. If None, uses default.
 
         Returns:
             Compiled agent graph with middleware and checkpointing
         """
         if use_skills:
+            # Use custom middleware if provided, otherwise use shared default
+            skill_middleware = middleware if middleware is not None else self._skill_middleware
+
             # Create agent with skill middleware and optional checkpointing
             # Middleware tools (load_skill, list_loaded_skills) are automatically added
             agent = create_agent(
@@ -314,7 +319,7 @@ Guidelines:
                 tools=tools,
                 name=agent_name,
                 system_prompt=system_prompt,
-                middleware=[self._skill_middleware],
+                middleware=[skill_middleware],
                 checkpointer=self._checkpointer,
             )
         else:
@@ -1053,13 +1058,24 @@ Guidelines:
             skill_names = ", ".join(custom.skill_ids)
             system_prompt += f"\n\n# Available Skills\nYou have access to the following skills: {skill_names}\nUse the load_skill tool to load a skill before using its domain tools."
 
-            logger.info(f"Creating agent {custom.name} with {len(tools)} total tools")
+            logger.info(f"Creating agent {custom.name} with {len(tools)} total tools, skills: {custom.skill_ids}")
+
+            # Create per-agent middleware with skill filter to only show assigned skills
+            from langchain_docker.skills.middleware import SkillMiddleware
+            agent_middleware = SkillMiddleware(
+                registry=self._middleware_skill_registry,
+                description_format="list",
+                auto_refresh_skills=False,
+                skill_filter=custom.skill_ids,  # Only show assigned skills
+            )
+
             return self.create_middleware_enabled_agent(
                 agent_name=safe_name,
                 llm=llm,
                 tools=tools,
                 system_prompt=system_prompt,
                 use_skills=True,
+                middleware=agent_middleware,  # Use filtered middleware
             )
         else:
             # Legacy pattern: Add skill tools and context
