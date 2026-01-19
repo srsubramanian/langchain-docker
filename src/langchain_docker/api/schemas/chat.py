@@ -91,6 +91,12 @@ class ChatRequest(BaseModel):
     rag_top_k: int = Field(5, ge=1, le=50, description="Number of documents to retrieve for RAG")
     rag_min_score: float = Field(0.0, ge=0.0, le=1.0, description="Minimum similarity score for RAG results")
     rag_collection: str | None = Field(None, description="Optional collection filter for RAG")
+    rag_use_graph: bool | None = Field(
+        None,
+        description="Use graph-aware retrieval for RAG (defaults to env GRAPH_RAG_ENABLED). "
+        "When enabled, combines entity-aware graph search with vector similarity for "
+        "improved results on relationship queries like 'How does X relate to Y?'"
+    )
 
 
 class ChatResponse(BaseModel):

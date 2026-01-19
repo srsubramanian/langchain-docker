@@ -58,6 +58,11 @@ class SearchRequest(BaseModel):
     top_k: int = Field(5, ge=1, le=50, description="Number of results to return")
     min_score: float = Field(0.0, ge=0.0, le=1.0, description="Minimum similarity score")
     collection: str | None = Field(None, description="Optional collection filter")
+    use_graph: bool | None = Field(
+        None,
+        description="Use graph-aware retrieval (defaults to env GRAPH_RAG_ENABLED). "
+        "Combines entity-aware graph search with vector similarity."
+    )
 
 
 class SearchResultItem(BaseModel):
@@ -101,3 +106,32 @@ class DeleteResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the operation succeeded")
     message: str = Field(..., description="Result message")
+
+
+class GraphStatsResponse(BaseModel):
+    """Response schema for knowledge graph statistics."""
+
+    available: bool = Field(..., description="Whether Graph RAG is available")
+    node_count: int = Field(0, description="Total number of nodes (entities)")
+    relationship_count: int = Field(0, description="Total number of relationships")
+    entity_types: dict[str, int] = Field(default_factory=dict, description="Entity type distribution")
+    neo4j_url: str | None = Field(None, description="Neo4j connection URL")
+    error: str | None = Field(None, description="Error message if unavailable")
+
+
+class EntityConnection(BaseModel):
+    """Schema for an entity connection in the graph."""
+
+    source: str = Field(..., description="Source entity name")
+    target: str = Field(..., description="Target entity name")
+    relationships: list[Any] = Field(default_factory=list, description="Relationships between entities")
+
+
+class EntityContextResponse(BaseModel):
+    """Response schema for entity context lookup."""
+
+    entity: str = Field(..., description="Queried entity name")
+    depth: int = Field(2, description="Traversal depth used")
+    connections: list[EntityConnection] = Field(default_factory=list, description="Connected entities")
+    total_nodes: int = Field(0, description="Total nodes found")
+    error: str | None = Field(None, description="Error message if failed")

@@ -40,6 +40,28 @@ services:
       retries: 5
       start_period: 30s
 
+  # Neo4j for Graph RAG (knowledge graph)
+  neo4j:
+    image: ${NEO4J_IMAGE:-neo4j:5.15-community}
+    container_name: langchain-neo4j
+    ports:
+      - "7474:7474"  # Browser UI
+      - "7687:7687"  # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j-data:/data
+    restart: unless-stopped
+    networks:
+      - langchain-network
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # Phoenix Tracing Server
   phoenix:
     image: ${PHOENIX_IMAGE:-arizephoenix/phoenix:latest}
@@ -86,6 +108,11 @@ services:
       # OpenSearch for vector knowledge base (RAG)
       - OPENSEARCH_URL=http://opensearch:9200
       - OPENSEARCH_INDEX=knowledge_base
+      # Neo4j for Graph RAG (optional, disabled by default)
+      - GRAPH_RAG_ENABLED=${GRAPH_RAG_ENABLED:-false}
+      - NEO4J_URL=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
     command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
     depends_on:
       redis:
@@ -93,6 +120,8 @@ services:
       phoenix:
         condition: service_healthy
       opensearch:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -132,4 +161,6 @@ volumes:
   phoenix-data:
     driver: local
   opensearch-data:
+    driver: local
+  neo4j-data:
     driver: local

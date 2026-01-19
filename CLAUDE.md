@@ -31,6 +31,7 @@ docker-compose up --build
 - Phoenix Tracing: http://localhost:6006
 - Redis: localhost:6379
 - OpenSearch: http://localhost:9200 (Knowledge Base)
+- Neo4j: http://localhost:7474 (Graph RAG - Browser UI)
 
 ## Project Structure
 
@@ -75,6 +76,7 @@ src/langchain_docker/
 │   │   ├── document_processor.py # PDF/MD/TXT parsing and chunking
 │   │   ├── docling_processor.py  # Docling-based PDF processor (langchain-docling)
 │   │   ├── knowledge_base_service.py # KB orchestration (upload, search, manage)
+│   │   ├── graph_rag_service.py  # LlamaIndex GraphRAG with Neo4j
 │   │   ├── memory_service.py     # Conversation summarization + RAG context
 │   │   ├── model_service.py      # Model LRU cache
 │   │   └── scheduler_service.py  # APScheduler for agent scheduling
@@ -117,11 +119,15 @@ web_ui/                         # React Web UI
 └─────────────┘     └──────┬──────┘     │ - Sessions  │     │  (Tracing)  │
                            │            │ - Agents    │     └─────────────┘
                            │            │ - Checkpts  │
-                           ▼            └─────────────┘
-                    ┌─────────────┐
-                    │ LLM APIs    │
-                    │ + MCP Srvrs │
-                    └─────────────┘
+                           │            └─────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+       ┌───────────┐ ┌───────────┐ ┌───────────┐
+       │ OpenSearch│ │   Neo4j   │ │ LLM APIs  │
+       │ (vectors) │ │  (graph)  │ │ + MCP     │
+       │ Port 9200 │ │ Port 7687 │ └───────────┘
+       └───────────┘ └───────────┘
 ```
 
 ## Key Features
@@ -468,6 +474,91 @@ opensearch:
 
 **React UI:** Navigate to `/knowledge-base` for document management dashboard.
 
+### 12. Graph RAG (LlamaIndex + Neo4j)
+
+Graph RAG provides entity-aware retrieval using LlamaIndex PropertyGraphIndex with Neo4j as the knowledge graph store. It enables relationship-based queries like "How does X relate to Y?".
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GRAPH RAG ARCHITECTURE                                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  INGESTION (parallel with vector RAG):                          │
+│  Document → Chunks → SchemaLLMPathExtractor → Neo4j (entities)  │
+│                      (LlamaIndex)             (relationships)   │
+│                                                                  │
+│  RETRIEVAL (hybrid):                                            │
+│  Query → PropertyGraphIndex → Graph Traversal ─┐                │
+│       → OpenSearch          → Vector Search  ──┼→ Merged Results│
+│                                               ─┘                │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Services:**
+- `GraphRAGService` - LlamaIndex PropertyGraphIndex with Neo4j backend
+- `SchemaLLMPathExtractor` - Entity/relationship extraction with schema guidance
+- `KnowledgeBaseService` - Orchestrates both vector and graph stores
+
+**When to Use:**
+| Query Type | Best Approach |
+|------------|---------------|
+| "What is X?" | Vector RAG (similarity search) |
+| "How does X relate to Y?" | Graph RAG (relationship traversal) |
+| "Who works on project Z?" | Graph RAG (entity connections) |
+| General Q&A | Hybrid (both combined) |
+
+**Configuration:**
+```bash
+# Enable Graph RAG (default: false)
+GRAPH_RAG_ENABLED=true
+
+# Neo4j Connection
+NEO4J_URL=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your-password
+
+# Entity types for extraction
+GRAPH_RAG_ENTITIES=Person,Organization,Project,Technology,Concept,Document
+
+# Relationship types for extraction
+GRAPH_RAG_RELATIONS=works_on,leads,member_of,uses,related_to,part_of,contains
+```
+
+**API Usage:**
+```python
+# Search with graph-aware retrieval
+POST /api/v1/kb/search
+{
+    "query": "How does John relate to the AI project?",
+    "use_graph": true,  # Enable graph search
+    "top_k": 5
+}
+
+# Get entity context
+GET /api/v1/kb/graph/entity/John?depth=2
+
+# Get graph statistics
+GET /api/v1/kb/graph/stats
+```
+
+**ChatRequest Integration:**
+```python
+# Enable graph-aware RAG in chat
+{
+    "message": "How do these teams collaborate?",
+    "enable_rag": true,
+    "rag_use_graph": true  # Use graph-aware retrieval
+}
+```
+
+**Cost Considerations:**
+- Ingestion: ~1 LLM call per chunk for entity extraction
+- Storage: Neo4j community edition (free)
+- Query: Same as vector RAG (1 LLM call for response)
+
+For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -491,9 +582,11 @@ opensearch:
 | `GET /api/v1/kb/documents` | List documents in knowledge base |
 | `GET /api/v1/kb/documents/{id}` | Get document metadata |
 | `DELETE /api/v1/kb/documents/{id}` | Delete document |
-| `POST /api/v1/kb/search` | Semantic search knowledge base |
+| `POST /api/v1/kb/search` | Semantic search (with optional `use_graph`) |
 | `GET /api/v1/kb/collections` | List collections |
 | `GET /api/v1/kb/stats` | Get knowledge base statistics |
+| `GET /api/v1/kb/graph/stats` | Get knowledge graph statistics |
+| `GET /api/v1/kb/graph/entity/{entity}` | Get entity context and connections |
 
 ## Environment Variables
 
@@ -529,6 +622,14 @@ opensearch:
 - `DOCLING_TOKENIZER` - Tokenizer for chunking (default: `sentence-transformers/all-MiniLM-L6-v2`)
 - `DOCLING_ENABLE_OCR` - Enable OCR for scanned PDFs (default: `false`)
 - `DOCLING_ENABLE_TABLES` - Enable table extraction (default: `true`)
+
+**Graph RAG (LlamaIndex + Neo4j):**
+- `GRAPH_RAG_ENABLED` - Enable graph-aware retrieval (default: `false`)
+- `NEO4J_URL` - Neo4j Bolt URL (e.g., `bolt://localhost:7687`)
+- `NEO4J_USERNAME` - Neo4j username (default: `neo4j`)
+- `NEO4J_PASSWORD` - Neo4j password (required if enabled)
+- `GRAPH_RAG_ENTITIES` - Entity types for extraction (comma-separated)
+- `GRAPH_RAG_RELATIONS` - Relationship types for extraction (comma-separated)
 
 ## Key Patterns
 
@@ -694,6 +795,7 @@ KEYS checkpoint:*   # LangGraph state
 | `redis` | 6379 | Persistence (sessions, agents, checkpoints) |
 | `phoenix` | 6006 | Tracing UI |
 | `opensearch` | 9200 | Vector store for knowledge base (RAG) |
+| `neo4j` | 7474, 7687 | Knowledge graph for Graph RAG (optional) |
 
 ## Major Files by Size
 
@@ -707,7 +809,8 @@ KEYS checkpoint:*   # LangGraph state
 | `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
 | `approval_service.py` | 12KB | HITL approval request management |
 | `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL + RAG |
-| `knowledge_base_service.py` | 12KB | KB orchestration (upload, search, manage) |
+| `knowledge_base_service.py` | 12KB | KB orchestration (upload, search, manage, graph) |
+| `graph_rag_service.py` | 15KB | LlamaIndex GraphRAG with Neo4j |
 | `opensearch_store.py` | 10KB | OpenSearch vector store with k-NN search |
 
 ## Provider-Specific Streaming Behavior

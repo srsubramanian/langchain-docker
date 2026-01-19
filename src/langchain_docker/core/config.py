@@ -40,6 +40,10 @@ class Config:
         rag_chunk_size: Chunk size for document splitting
         rag_chunk_overlap: Overlap between chunks
         rag_default_top_k: Default number of documents to retrieve
+        graph_rag_enabled: Enable Graph RAG with Neo4j (default: false)
+        neo4j_url: Neo4j Bolt URL for graph storage
+        neo4j_username: Neo4j username
+        neo4j_password: Neo4j password
     """
 
     default_provider: str = "openai"
@@ -64,6 +68,11 @@ class Config:
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 50
     rag_default_top_k: int = 5
+    # Graph RAG settings
+    graph_rag_enabled: bool = False
+    neo4j_url: str | None = None
+    neo4j_username: str = "neo4j"
+    neo4j_password: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -94,6 +103,10 @@ class Config:
             rag_chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "500")),
             rag_chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "50")),
             rag_default_top_k=int(os.getenv("RAG_DEFAULT_TOP_K", "5")),
+            graph_rag_enabled=os.getenv("GRAPH_RAG_ENABLED", "false").lower() == "true",
+            neo4j_url=os.getenv("NEO4J_URL") or None,
+            neo4j_username=os.getenv("NEO4J_USERNAME", "neo4j"),
+            neo4j_password=os.getenv("NEO4J_PASSWORD") or None,
         )
 
 
@@ -435,3 +448,82 @@ def is_docling_table_extraction_enabled() -> bool:
         True if table extraction is enabled (default: true)
     """
     return os.getenv("DOCLING_ENABLE_TABLES", "true").lower() == "true"
+
+
+# ============================================================
+# Graph RAG Configuration (LlamaIndex + Neo4j)
+# ============================================================
+
+
+def is_graph_rag_enabled() -> bool:
+    """Check if Graph RAG is enabled.
+
+    Graph RAG provides entity-aware retrieval using LlamaIndex
+    PropertyGraphIndex and Neo4j for knowledge graph storage.
+
+    Returns:
+        True if GRAPH_RAG_ENABLED is set to "true"
+    """
+    return os.getenv("GRAPH_RAG_ENABLED", "false").lower() == "true"
+
+
+def get_neo4j_url() -> str | None:
+    """Get Neo4j Bolt URL.
+
+    Returns:
+        Neo4j Bolt URL if configured (e.g., bolt://localhost:7687)
+    """
+    return os.getenv("NEO4J_URL") or None
+
+
+def get_neo4j_username() -> str:
+    """Get Neo4j username.
+
+    Returns:
+        Neo4j username (default: neo4j)
+    """
+    return os.getenv("NEO4J_USERNAME", "neo4j")
+
+
+def get_neo4j_password() -> str | None:
+    """Get Neo4j password.
+
+    Returns:
+        Neo4j password if configured
+    """
+    return os.getenv("NEO4J_PASSWORD") or None
+
+
+def get_graph_rag_entities() -> list[str]:
+    """Get entity types for knowledge graph extraction.
+
+    These entity types are used by LlamaIndex SchemaLLMPathExtractor
+    to guide entity extraction from documents.
+
+    Returns:
+        List of entity type names
+    """
+    default = "Person,Organization,Project,Technology,Concept,Document"
+    return [e.strip() for e in os.getenv("GRAPH_RAG_ENTITIES", default).split(",")]
+
+
+def get_graph_rag_relations() -> list[str]:
+    """Get relationship types for knowledge graph extraction.
+
+    These relationship types are used by LlamaIndex SchemaLLMPathExtractor
+    to guide relationship extraction between entities.
+
+    Returns:
+        List of relationship type names
+    """
+    default = "works_on,leads,member_of,uses,related_to,part_of,contains"
+    return [r.strip() for r in os.getenv("GRAPH_RAG_RELATIONS", default).split(",")]
+
+
+def is_neo4j_configured() -> bool:
+    """Check if Neo4j is fully configured.
+
+    Returns:
+        True if NEO4J_URL and NEO4J_PASSWORD are set
+    """
+    return bool(get_neo4j_url() and get_neo4j_password())

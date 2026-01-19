@@ -20,7 +20,14 @@ from langchain_docker.api.services.opensearch_store import OpenSearchStore
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.skill_registry import SkillRegistry
-from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours, is_opensearch_configured
+from langchain_docker.core.config import (
+    Config,
+    get_redis_url,
+    get_session_ttl_hours,
+    is_graph_rag_enabled,
+    is_neo4j_configured,
+    is_opensearch_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +360,56 @@ def get_opensearch_store(
     return _opensearch_store
 
 
+# Singleton for Graph RAG service
+_graph_rag_service = None  # Type: GraphRAGService | None
+
+
+def get_graph_rag_service():
+    """Get singleton GraphRAG service instance.
+
+    The GraphRAGService provides entity-aware retrieval using
+    LlamaIndex PropertyGraphIndex with Neo4j as the graph store.
+
+    Only initialized if GRAPH_RAG_ENABLED=true and Neo4j is configured.
+
+    Returns:
+        GraphRAGService instance or None if not configured
+    """
+    global _graph_rag_service
+
+    # Only initialize once
+    if _graph_rag_service is not None:
+        return _graph_rag_service
+
+    # Check if GraphRAG should be enabled
+    if not is_graph_rag_enabled():
+        logger.info("GraphRAG disabled (GRAPH_RAG_ENABLED=false)")
+        return None
+
+    if not is_neo4j_configured():
+        logger.warning("GraphRAG enabled but Neo4j not configured (missing NEO4J_URL or NEO4J_PASSWORD)")
+        return None
+
+    try:
+        from langchain_docker.api.services.graph_rag_service import GraphRAGService
+
+        _graph_rag_service = GraphRAGService()
+        if _graph_rag_service.is_available:
+            logger.info("GraphRAGService initialized successfully")
+        else:
+            logger.warning(
+                f"GraphRAGService initialization failed: {_graph_rag_service.initialization_error}"
+            )
+        return _graph_rag_service
+
+    except ImportError as e:
+        logger.error(f"Failed to import GraphRAGService (missing dependencies?): {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to initialize GraphRAGService: {e}")
+        return None
+
+
 # Singleton for knowledge base service
 _knowledge_base_service: KnowledgeBaseService | None = None
 
@@ -362,18 +419,29 @@ def get_knowledge_base_service() -> KnowledgeBaseService:
 
     The KnowledgeBaseService provides high-level operations for
     document ingestion, search, and management. It orchestrates
-    the document processor, embedding service, and vector store.
+    the document processor, embedding service, vector store, and
+    optional GraphRAG service for entity-aware retrieval.
 
     Returns:
         KnowledgeBaseService instance (or None if not configured)
     """
     global _knowledge_base_service
     if _knowledge_base_service is None:
+        # Get optional GraphRAG service
+        graph_rag = get_graph_rag_service()
+
         if is_opensearch_configured():
-            _knowledge_base_service = KnowledgeBaseService()
-            logger.info("KnowledgeBaseService initialized")
+            _knowledge_base_service = KnowledgeBaseService(
+                graph_rag_service=graph_rag,
+            )
+            logger.info(
+                f"KnowledgeBaseService initialized "
+                f"(graph_rag={'enabled' if graph_rag and graph_rag.is_available else 'disabled'})"
+            )
         else:
             logger.warning("OpenSearch not configured, knowledge base disabled")
             # Return a service instance anyway - it will report not available
-            _knowledge_base_service = KnowledgeBaseService()
+            _knowledge_base_service = KnowledgeBaseService(
+                graph_rag_service=graph_rag,
+            )
     return _knowledge_base_service

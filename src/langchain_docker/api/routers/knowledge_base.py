@@ -13,7 +13,9 @@ from langchain_docker.api.schemas.knowledge_base import (
     DocumentListResponse,
     DocumentResponse,
     DocumentUploadRequest,
+    EntityContextResponse,
     FileUploadResponse,
+    GraphStatsResponse,
     KBStatsResponse,
     SearchRequest,
     SearchResponse,
@@ -226,6 +228,10 @@ async def search(
     """Search the knowledge base using semantic search.
 
     Returns the most relevant document chunks for the query.
+
+    When use_graph is enabled (or GRAPH_RAG_ENABLED=true), performs
+    hybrid search combining vector similarity with graph-aware retrieval
+    for improved results on relationship queries.
     """
     _check_available(kb_service)
 
@@ -234,6 +240,7 @@ async def search(
         top_k=request.top_k,
         min_score=request.min_score,
         collection=request.collection,
+        use_graph=request.use_graph,
     )
 
     return SearchResponse(
@@ -302,3 +309,74 @@ async def get_context(
         "context": context,
         "has_context": bool(context),
     }
+
+
+# ============================================================
+# Graph RAG Endpoints
+# ============================================================
+
+
+@router.get("/graph/stats", response_model=GraphStatsResponse)
+async def get_graph_stats(
+    kb_service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+) -> GraphStatsResponse:
+    """Get knowledge graph statistics.
+
+    Returns node count, relationship count, and entity type distribution.
+    Only available when GRAPH_RAG_ENABLED=true and Neo4j is configured.
+    """
+    stats = kb_service.get_graph_stats()
+
+    return GraphStatsResponse(
+        available=stats.get("available", False),
+        node_count=stats.get("node_count", 0),
+        relationship_count=stats.get("relationship_count", 0),
+        entity_types=stats.get("entity_types", {}),
+        neo4j_url=stats.get("neo4j_url"),
+        error=stats.get("error") or stats.get("message"),
+    )
+
+
+@router.get("/graph/entity/{entity}", response_model=EntityContextResponse)
+async def get_entity_context(
+    entity: str,
+    depth: int = 2,
+    kb_service: KnowledgeBaseService = Depends(get_knowledge_base_service),
+) -> EntityContextResponse:
+    """Get context around a specific entity in the knowledge graph.
+
+    Traverses the graph to find related entities and relationships
+    within the specified depth from the target entity.
+
+    Args:
+        entity: Entity name to explore
+        depth: Maximum traversal depth (hops), defaults to 2
+
+    Returns:
+        Entity context with connections and related nodes
+    """
+    context = kb_service.get_entity_context(entity, depth)
+
+    if "error" in context:
+        return EntityContextResponse(
+            entity=entity,
+            depth=depth,
+            error=context["error"],
+        )
+
+    # Convert connections to schema format
+    connections = []
+    for conn in context.get("connections", []):
+        if isinstance(conn, dict):
+            connections.append({
+                "source": conn.get("source", ""),
+                "target": conn.get("target", ""),
+                "relationships": conn.get("relationships", []),
+            })
+
+    return EntityContextResponse(
+        entity=context.get("entity", entity),
+        depth=context.get("depth", depth),
+        connections=connections,
+        total_nodes=context.get("total_nodes", 0),
+    )
