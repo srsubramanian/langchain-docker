@@ -421,6 +421,12 @@ export function MultiAgentPage() {
               },
             };
             setPendingApprovals((prev) => [...prev, approvalRequest]);
+          } else if (event.event === 'done') {
+            // Use response from done event as fallback if no tokens were streamed
+            if (!fullContent && event.response) {
+              fullContent = event.response;
+              setStreamingContent(fullContent);
+            }
           } else if (event.event === 'error') {
             throw new Error(event.error || 'Streaming error');
           }
@@ -481,6 +487,12 @@ export function MultiAgentPage() {
           } else if (event.event === 'token' && event.content) {
             fullContent += event.content;
             setStreamingContent(fullContent);
+          } else if (event.event === 'done') {
+            // Use response from done event as fallback if no tokens were streamed
+            if (!fullContent && event.response) {
+              fullContent = event.response;
+              setStreamingContent(fullContent);
+            }
           } else if (event.event === 'error') {
             throw new Error(event.error || 'Streaming error');
           }

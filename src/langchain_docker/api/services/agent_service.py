@@ -2064,44 +2064,49 @@ Always use the tools to interact with the database.""")
         cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}"
 
         # Get or create compiled agent
-        if cache_key not in self._direct_sessions:
-            llm = self.model_service.get_or_create(
-                provider=agent_provider,
-                model=agent_model,
-                temperature=agent_temp,
-            )
+        try:
+            if cache_key not in self._direct_sessions:
+                llm = self.model_service.get_or_create(
+                    provider=agent_provider,
+                    model=agent_model,
+                    temperature=agent_temp,
+                )
 
-            if agent_type == "custom":
-                agent = self._build_agent_from_custom(agent_id, llm)
-            else:
-                # Build from builtin config, with HITL wrapping if needed
-                use_middleware = config.get("use_middleware", False)
-                if "tool_ids" in config:
-                    tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
+                if agent_type == "custom":
+                    agent = self._build_agent_from_custom(agent_id, llm)
                 else:
-                    tools = config.get("tools", [])
+                    # Build from builtin config, with HITL wrapping if needed
+                    use_middleware = config.get("use_middleware", False)
+                    if "tool_ids" in config:
+                        tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
+                    else:
+                        tools = config.get("tools", [])
 
-                if use_middleware:
-                    agent = self.create_middleware_enabled_agent(
-                        agent_name=config["name"],
-                        llm=llm,
-                        tools=tools,
-                        system_prompt=config["prompt"],
-                        use_skills=True,
-                    )
-                else:
-                    agent = create_agent(
-                        model=llm,
-                        tools=tools,
-                        name=config["name"],
-                        system_prompt=config["prompt"],
-                        checkpointer=self._checkpointer,
-                    )
+                    if use_middleware:
+                        agent = self.create_middleware_enabled_agent(
+                            agent_name=config["name"],
+                            llm=llm,
+                            tools=tools,
+                            system_prompt=config["prompt"],
+                            use_skills=True,
+                        )
+                    else:
+                        agent = create_agent(
+                            model=llm,
+                            tools=tools,
+                            name=config["name"],
+                            system_prompt=config["prompt"],
+                            checkpointer=self._checkpointer,
+                        )
 
-            compiled = agent.compile() if hasattr(agent, 'compile') else agent
-            self._direct_sessions[cache_key] = {"app": compiled, "agent_id": agent_id}
+                compiled = agent.compile() if hasattr(agent, 'compile') else agent
+                self._direct_sessions[cache_key] = {"app": compiled, "agent_id": agent_id}
 
-        app = self._direct_sessions[cache_key]["app"]
+            app = self._direct_sessions[cache_key]["app"]
+        except Exception as e:
+            logger.error(f"[Stream Agent] Failed to create agent {agent_id} with provider {agent_provider}: {e}")
+            yield {"event": "error", "data": json.dumps({"error": f"Failed to initialize {agent_provider} model: {str(e)}"})}
+            return
 
         # Emit start event
         yield {"event": "start", "data": json.dumps({
