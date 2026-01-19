@@ -2252,13 +2252,17 @@ Always use the tools to interact with the database.""")
                                 logger.info(f"[Stream Event] on_chain_end output keys: {list(output.keys())}")
 
                     # Capture from on_chat_model_end as fallback (for non-streaming models like Bedrock)
-                    elif kind == "on_chat_model_end" and not accumulated_content:
+                    # This handles models that don't emit on_chat_model_stream events
+                    elif kind == "on_chat_model_end":
                         output = data.get("output")
                         if output and hasattr(output, 'content'):
                             content = output.content
                             if isinstance(content, str) and content:
-                                accumulated_content = content
-                                yield {"event": "token", "data": json.dumps({"content": content})}
+                                # Only yield if this content wasn't already streamed
+                                # Check if this is new content (not already in accumulated_content)
+                                if content not in accumulated_content:
+                                    accumulated_content += content
+                                    yield {"event": "token", "data": json.dumps({"content": content})}
                             elif isinstance(content, list):
                                 # Handle list content (e.g., from Claude/Bedrock models)
                                 text_content = "".join(
@@ -2266,8 +2270,8 @@ Always use the tools to interact with the database.""")
                                     for block in content
                                     if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
                                 )
-                                if text_content:
-                                    accumulated_content = text_content
+                                if text_content and text_content not in accumulated_content:
+                                    accumulated_content += text_content
                                     yield {"event": "token", "data": json.dumps({"content": text_content})}
 
                 # Update session with final messages
