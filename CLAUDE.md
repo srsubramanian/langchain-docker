@@ -463,6 +463,7 @@ opensearch:
 
 **AWS Bedrock:**
 - `AWS_PROFILE`, `AWS_DEFAULT_REGION`, `BEDROCK_MODEL_ARNS`
+- See `/docs/BEDROCK.md` for detailed Bedrock configuration and troubleshooting
 
 **Skills:**
 - `DATABASE_URL` - SQL skill (default: `sqlite:///demo.db`)
@@ -655,6 +656,37 @@ KEYS checkpoint:*   # LangGraph state
 | `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL + RAG |
 | `knowledge_base_service.py` | 12KB | KB orchestration (upload, search, manage) |
 | `opensearch_store.py` | 10KB | OpenSearch vector store with k-NN search |
+
+## Provider-Specific Streaming Behavior
+
+When debugging empty responses or streaming issues, note these critical differences between LLM providers:
+
+| Provider | Streaming Events | Fallback Event |
+|----------|-----------------|----------------|
+| OpenAI | `on_chat_model_stream` (multiple tokens) | `on_chat_model_end` |
+| Anthropic | `on_chat_model_stream` (multiple tokens) | `on_chat_model_end` |
+| Google | `on_chat_model_stream` (multiple tokens) | `on_chat_model_end` |
+| **Bedrock** | **Does NOT emit** | **`on_chat_model_end` (required)** |
+
+**Key insight:** AWS Bedrock's `ChatBedrockConverse` does not emit `on_chat_model_stream` events during streaming. The complete response only arrives via `on_chat_model_end`.
+
+**Implementation in `agent_service.py`:**
+1. **Primary path**: Capture streaming tokens from `on_chat_model_stream` events (works for OpenAI, Anthropic, Google)
+2. **Fallback path**: Capture complete response from `on_chat_model_end` events (required for Bedrock)
+
+**Tool calling flows** generate multiple LLM calls:
+1. First call: LLM decides to use tools (e.g., "Let me load the SQL skill...")
+2. Tool execution: Tools run and return results
+3. Second call: LLM processes tool results and generates final response
+
+Each LLM call triggers separate `on_chat_model_end` events - all must be captured for complete responses.
+
+**Debugging checklist:**
+- Phoenix traces show valid response but UI empty? → Check `on_chat_model_end` fallback
+- Only first part of response shows? → Check multi-call handling for tool flows
+- `on_chain_end` not triggering? → Check event name matches agent name, not just "LangGraph"
+
+See `/docs/BEDROCK.md` for comprehensive Bedrock documentation.
 
 ## What Was Removed
 
