@@ -1,5 +1,9 @@
+# Configurable base images
+ARG NODE_IMAGE=node:20-alpine
+ARG NGINX_IMAGE=nginx:alpine
+
 # Build stage
-FROM node:20-alpine AS builder
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -12,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM ${NGINX_IMAGE}
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html

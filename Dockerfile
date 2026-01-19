@@ -1,6 +1,10 @@
 # Multi-stage Dockerfile for LangChain Docker application
 
-FROM python:3.13-slim AS base
+# Configurable Python base image
+# Override via: docker build --build-arg PYTHON_IMAGE=your-registry/python:3.13-slim .
+ARG PYTHON_IMAGE=python:3.13-slim
+
+FROM ${PYTHON_IMAGE} AS base
 
 # Set working directory
 WORKDIR /app
