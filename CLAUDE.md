@@ -467,7 +467,7 @@ opensearch:
 
 **Skills:**
 - `DATABASE_URL` - SQL skill (default: `sqlite:///demo.db`)
-- `JIRA_URL`, `JIRA_BEARER_TOKEN` - Jira skill
+- `JIRA_URL`, `JIRA_BEARER_TOKEN` - Jira skill (see `/docs/JIRA_TOOLS.md` for tools reference)
 
 **Knowledge Base (RAG):**
 - `OPENSEARCH_URL` - OpenSearch URL (e.g., `http://localhost:9200`)
