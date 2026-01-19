@@ -167,6 +167,65 @@ class CustomAgentCreateResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
+class CustomAgentUpdateRequest(BaseModel):
+    """Request to update a custom agent. All fields are optional for partial updates."""
+
+    name: Optional[str] = Field(
+        None,
+        description="Agent name",
+        min_length=1,
+        max_length=50,
+    )
+    system_prompt: Optional[str] = Field(
+        None,
+        description="System prompt defining the agent's behavior and personality",
+        min_length=10,
+    )
+    tools: Optional[list[ToolConfigRequest]] = Field(
+        None,
+        description="Tools to equip the agent with",
+    )
+    skills: Optional[list[str]] = Field(
+        None,
+        description="Skill IDs to include",
+    )
+    schedule: Optional[ScheduleConfig] = Field(
+        None,
+        description="Schedule configuration for automated execution",
+    )
+    metadata: Optional[dict] = Field(
+        None,
+        description="Optional metadata for the agent",
+    )
+    provider: Optional[str] = Field(
+        None,
+        description="Model provider to use (openai, anthropic, google, bedrock)",
+    )
+    model: Optional[str] = Field(
+        None,
+        description="Model name (uses provider default if not specified)",
+    )
+    temperature: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=2.0,
+        description="Temperature for model responses (0.0-2.0)",
+    )
+
+
+class CustomAgentUpdateResponse(BaseModel):
+    """Response after updating a custom agent."""
+
+    agent_id: str = Field(..., description="Updated agent ID")
+    name: str = Field(..., description="Agent name")
+    tools: list[str] = Field(..., description="Tool IDs")
+    skills: list[str] = Field(default_factory=list, description="Skill IDs")
+    provider: str = Field(..., description="Model provider")
+    model: Optional[str] = Field(None, description="Model name")
+    temperature: float = Field(..., description="Temperature setting")
+    message: str = Field(..., description="Status message")
+
+
 class CustomAgentDeleteResponse(BaseModel):
     """Response after deleting a custom agent."""
 

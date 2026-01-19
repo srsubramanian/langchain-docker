@@ -32,6 +32,8 @@ from langchain_docker.api.schemas.agents import (
     CustomAgentCreateResponse,
     CustomAgentDeleteResponse,
     CustomAgentInfo,
+    CustomAgentUpdateRequest,
+    CustomAgentUpdateResponse,
     DirectInvokeRequest,
     DirectInvokeResponse,
     ScheduleInfo,
@@ -265,6 +267,81 @@ def create_agent(
         tools=[t.tool_id for t in request.tools],
         schedule_enabled=request.schedule.enabled if request.schedule else False,
         message=f"Custom agent '{request.name}' created with {' and '.join(message_parts) if message_parts else 'default config'}",
+    )
+
+
+@router.put("/{agent_id}", response_model=CustomAgentUpdateResponse)
+def update_agent(
+    agent_id: str,
+    request: CustomAgentUpdateRequest,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Update a custom agent.
+
+    Only provided fields are updated; others remain unchanged.
+    This can be used to change the provider, model, temperature,
+    tools, skills, or any other configuration.
+
+    Note: Built-in agents cannot be updated.
+
+    Args:
+        agent_id: Agent ID to update
+        request: Fields to update (all optional)
+
+    Returns:
+        Updated agent information
+    """
+    # Check if it's a built-in agent
+    all_builtin = agent_service._get_all_builtin_agents()
+    if agent_id in all_builtin:
+        raise HTTPException(status_code=400, detail="Cannot update built-in agents")
+
+    try:
+        # Convert tool configs if provided
+        tool_configs = None
+        if request.tools is not None:
+            tool_configs = [
+                {"tool_id": t.tool_id, "config": t.config}
+                for t in request.tools
+            ]
+
+        # Convert schedule config if provided
+        schedule_config = None
+        if request.schedule is not None:
+            schedule_config = {
+                "enabled": request.schedule.enabled,
+                "cron_expression": request.schedule.cron_expression,
+                "trigger_prompt": request.schedule.trigger_prompt,
+                "timezone": request.schedule.timezone,
+            }
+
+        agent = agent_service.update_custom_agent(
+            agent_id=agent_id,
+            name=request.name,
+            system_prompt=request.system_prompt,
+            tool_configs=tool_configs,
+            skill_ids=request.skills,
+            schedule_config=schedule_config,
+            metadata=request.metadata,
+            provider=request.provider,
+            model=request.model,
+            temperature=request.temperature,
+        )
+
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return CustomAgentUpdateResponse(
+        agent_id=agent.id,
+        name=agent.name,
+        tools=[tc["tool_id"] for tc in agent.tool_configs],
+        skills=agent.skill_ids or [],
+        provider=agent.provider,
+        model=agent.model,
+        temperature=agent.temperature,
+        message=f"Custom agent '{agent.name}' updated successfully",
     )
 
 

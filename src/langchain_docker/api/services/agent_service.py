@@ -842,6 +842,113 @@ Guidelines:
             result.append(agent_dict)
         return result
 
+    def update_custom_agent(
+        self,
+        agent_id: str,
+        name: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        tool_configs: Optional[list[dict]] = None,
+        skill_ids: Optional[list[str]] = None,
+        schedule_config: Optional[dict] = None,
+        metadata: Optional[dict] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> CustomAgent:
+        """Update an existing custom agent.
+
+        Only provided fields are updated; others remain unchanged.
+        Updating the agent clears any cached compiled agent so the
+        next invocation uses the new configuration.
+
+        Args:
+            agent_id: ID of the agent to update
+            name: New agent name
+            system_prompt: New system prompt
+            tool_configs: New tool configurations [{"tool_id": str, "config": dict}]
+            skill_ids: New skill IDs to include
+            schedule_config: New schedule configuration
+            metadata: New metadata
+            provider: New model provider (openai, anthropic, google, bedrock)
+            model: New model name
+            temperature: New temperature (0.0-2.0)
+
+        Returns:
+            Updated CustomAgent
+
+        Raises:
+            ValueError: If agent not found or invalid tool_id/skill_id
+        """
+        if agent_id not in self._custom_agents:
+            raise ValueError(f"Custom agent not found: {agent_id}")
+
+        agent = self._custom_agents[agent_id]
+
+        # Validate and update tool configs if provided
+        if tool_configs is not None:
+            for tc in tool_configs:
+                tool_id = tc.get("tool_id")
+                if not self._tool_registry.get_tool(tool_id):
+                    available = [t.id for t in self._tool_registry.list_tools()]
+                    raise ValueError(f"Unknown tool: {tool_id}. Available: {available}")
+            agent.tool_configs = tool_configs
+
+        # Validate and update skill_ids if provided
+        if skill_ids is not None:
+            for skill_id in skill_ids:
+                if not self._skill_registry.get_skill(skill_id):
+                    available = [s['id'] for s in self._skill_registry.list_skills()]
+                    raise ValueError(f"Unknown skill: {skill_id}. Available: {available}")
+            agent.skill_ids = skill_ids
+
+        # Update simple fields if provided
+        if name is not None:
+            agent.name = name
+        if system_prompt is not None:
+            agent.system_prompt = system_prompt
+        if metadata is not None:
+            agent.metadata = metadata
+        if provider is not None:
+            agent.provider = provider
+        if model is not None:
+            agent.model = model
+        if temperature is not None:
+            agent.temperature = temperature
+
+        # Handle schedule update
+        if schedule_config is not None:
+            # Remove old schedule first
+            self._scheduler_service.remove_schedule(agent_id)
+
+            if schedule_config:
+                agent.schedule = ScheduleConfig(
+                    enabled=schedule_config.get("enabled", False),
+                    cron_expression=schedule_config["cron_expression"],
+                    trigger_prompt=schedule_config["trigger_prompt"],
+                    timezone=schedule_config.get("timezone", "UTC"),
+                )
+                # Register new schedule
+                self._scheduler_service.add_schedule(
+                    agent_id=agent_id,
+                    cron_expression=agent.schedule.cron_expression,
+                    trigger_prompt=agent.schedule.trigger_prompt,
+                    timezone=agent.schedule.timezone,
+                    enabled=agent.schedule.enabled,
+                )
+            else:
+                agent.schedule = None
+
+        # Clear cached compiled agent to force rebuild with new config
+        cache_key = f"unified:{agent_id}"
+        if cache_key in self._direct_sessions:
+            del self._direct_sessions[cache_key]
+
+        # Persist to Redis if configured
+        self._save_agent_to_redis(agent)
+
+        logger.info(f"Updated custom agent: {agent_id} ({agent.name})")
+        return agent
+
     def delete_custom_agent(self, agent_id: str) -> bool:
         """Delete a custom agent.
 
