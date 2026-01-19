@@ -213,3 +213,248 @@ class KBToolProvider(ToolProvider):
             return kb_skill.get_stats()
 
         return kb_get_stats
+
+
+class KBIngestToolProvider(ToolProvider):
+    """Tool provider for Knowledge Base ingestion operations.
+
+    Provides tools for:
+    - Loading KB ingestion skill (progressive disclosure)
+    - Ingesting text content
+    - Ingesting URL content
+    - Deleting documents
+    - Getting document details
+    """
+
+    def get_skill_id(self) -> str:
+        """Return the KB Ingestion skill ID."""
+        return "kb_ingest"
+
+    def get_templates(self) -> list[ToolTemplate]:
+        """Return all KB Ingestion tool templates."""
+        return [
+            ToolTemplate(
+                id="load_kb_ingest_skill",
+                name="Load KB Ingestion Skill",
+                description="Load Knowledge Base Ingestion skill with status and instructions",
+                category="knowledge",
+                parameters=[],
+                factory=self._create_load_kb_ingest_skill_tool,
+            ),
+            ToolTemplate(
+                id="kb_ingest_text",
+                name="Ingest Text to KB",
+                description="Ingest plain text content into the knowledge base",
+                category="knowledge",
+                parameters=[
+                    ToolParameter(
+                        name="text",
+                        type="string",
+                        description="The text content to ingest",
+                        required=True,
+                    ),
+                    ToolParameter(
+                        name="title",
+                        type="string",
+                        description="Title/name for the document",
+                        required=True,
+                    ),
+                    ToolParameter(
+                        name="collection",
+                        type="string",
+                        description="Optional collection to organize the document",
+                        required=False,
+                    ),
+                ],
+                factory=self._create_kb_ingest_text_tool,
+            ),
+            ToolTemplate(
+                id="kb_ingest_url",
+                name="Ingest URL to KB",
+                description="Fetch and ingest content from a URL into the knowledge base",
+                category="knowledge",
+                parameters=[
+                    ToolParameter(
+                        name="url",
+                        type="string",
+                        description="The URL to fetch content from",
+                        required=True,
+                    ),
+                    ToolParameter(
+                        name="collection",
+                        type="string",
+                        description="Optional collection to organize the document",
+                        required=False,
+                    ),
+                ],
+                factory=self._create_kb_ingest_url_tool,
+            ),
+            ToolTemplate(
+                id="kb_delete_document",
+                name="Delete KB Document",
+                description="Delete a document from the knowledge base",
+                category="knowledge",
+                parameters=[
+                    ToolParameter(
+                        name="document_id",
+                        type="string",
+                        description="The ID of the document to delete",
+                        required=True,
+                    ),
+                ],
+                factory=self._create_kb_delete_document_tool,
+            ),
+            ToolTemplate(
+                id="kb_get_document",
+                name="Get KB Document",
+                description="Get information about a specific document in the knowledge base",
+                category="knowledge",
+                parameters=[
+                    ToolParameter(
+                        name="document_id",
+                        type="string",
+                        description="The ID of the document to retrieve",
+                        required=True,
+                    ),
+                ],
+                factory=self._create_kb_get_document_tool,
+            ),
+        ]
+
+    def _create_load_kb_ingest_skill_tool(self) -> Callable[[], str]:
+        """Create load KB ingest skill tool for progressive disclosure."""
+        kb_ingest_skill = self.get_skill()
+
+        def load_kb_ingest_skill() -> str:
+            """Load the Knowledge Base Ingestion skill with status and instructions.
+
+            Call this tool before ingesting content to understand the KB status
+            and ingestion guidelines.
+
+            Returns:
+                Knowledge base status, ingestion capabilities, and guidelines
+            """
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("skill.load_core") as span:
+                    span.set_attribute("skill.id", "kb_ingest")
+                    span.set_attribute("skill.name", kb_ingest_skill.name)
+                    content = kb_ingest_skill.load_core()
+                    span.set_attribute("content_length", len(content))
+                    return content
+            return kb_ingest_skill.load_core()
+
+        return load_kb_ingest_skill
+
+    def _create_kb_ingest_text_tool(self) -> Callable[[str, str, Optional[str]], str]:
+        """Create KB ingest text tool."""
+        kb_ingest_skill = self.get_skill()
+
+        def kb_ingest_text(
+            text: str,
+            title: str,
+            collection: Optional[str] = None,
+        ) -> str:
+            """Ingest plain text content into the knowledge base.
+
+            The text is automatically chunked and embedded for semantic search.
+
+            Args:
+                text: The text content to ingest
+                title: Title/name for the document
+                collection: Optional collection to organize the document
+
+            Returns:
+                Success message with document details or error message
+            """
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("kb.ingest_text") as span:
+                    span.set_attribute("title", title)
+                    span.set_attribute("text_length", len(text))
+                    if collection:
+                        span.set_attribute("collection", collection)
+                    result = kb_ingest_skill.ingest_text(text, title, collection)
+                    return result
+            return kb_ingest_skill.ingest_text(text, title, collection)
+
+        return kb_ingest_text
+
+    def _create_kb_ingest_url_tool(self) -> Callable[[str, Optional[str]], str]:
+        """Create KB ingest URL tool."""
+        kb_ingest_skill = self.get_skill()
+
+        def kb_ingest_url(
+            url: str,
+            collection: Optional[str] = None,
+        ) -> str:
+            """Fetch and ingest content from a URL into the knowledge base.
+
+            The web page is fetched, converted to text, and stored for semantic search.
+
+            Args:
+                url: The URL to fetch content from
+                collection: Optional collection to organize the document
+
+            Returns:
+                Success message with document details or error message
+            """
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("kb.ingest_url") as span:
+                    span.set_attribute("url", url)
+                    if collection:
+                        span.set_attribute("collection", collection)
+                    result = kb_ingest_skill.ingest_url(url, collection)
+                    return result
+            return kb_ingest_skill.ingest_url(url, collection)
+
+        return kb_ingest_url
+
+    def _create_kb_delete_document_tool(self) -> Callable[[str], str]:
+        """Create KB delete document tool."""
+        kb_ingest_skill = self.get_skill()
+
+        def kb_delete_document(document_id: str) -> str:
+            """Delete a document from the knowledge base.
+
+            Warning: This action cannot be undone.
+
+            Args:
+                document_id: The ID of the document to delete
+
+            Returns:
+                Success or error message
+            """
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("kb.delete_document") as span:
+                    span.set_attribute("document_id", document_id)
+                    result = kb_ingest_skill.delete_document(document_id)
+                    return result
+            return kb_ingest_skill.delete_document(document_id)
+
+        return kb_delete_document
+
+    def _create_kb_get_document_tool(self) -> Callable[[str], str]:
+        """Create KB get document tool."""
+        kb_ingest_skill = self.get_skill()
+
+        def kb_get_document(document_id: str) -> str:
+            """Get information about a specific document.
+
+            Args:
+                document_id: The ID of the document to retrieve
+
+            Returns:
+                Document details or error message
+            """
+            tracer = get_tracer()
+            if tracer:
+                with tracer.start_as_current_span("kb.get_document") as span:
+                    span.set_attribute("document_id", document_id)
+                    result = kb_ingest_skill.get_document(document_id)
+                    return result
+            return kb_ingest_skill.get_document(document_id)
+
+        return kb_get_document

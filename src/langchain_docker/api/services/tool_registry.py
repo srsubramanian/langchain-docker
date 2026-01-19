@@ -13,7 +13,7 @@ from langchain_docker.api.services.tools.base import (
     ToolTemplate,
 )
 from langchain_docker.api.services.tools.jira_tools import JiraToolProvider
-from langchain_docker.api.services.tools.kb_tools import KBToolProvider
+from langchain_docker.api.services.tools.kb_tools import KBToolProvider, KBIngestToolProvider
 from langchain_docker.api.services.tools.sql_tools import SQLToolProvider
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ class ToolRegistry:
             SQLToolProvider(skill_registry),
             JiraToolProvider(skill_registry),
             KBToolProvider(skill_registry),
+            KBIngestToolProvider(skill_registry),
             # Add new providers here as they are created:
             # GithubToolProvider(skill_registry),
             # SlackToolProvider(skill_registry),
