@@ -73,6 +73,7 @@ src/langchain_docker/
 │   │   ├── embedding_service.py  # OpenAI embeddings for knowledge base
 │   │   ├── opensearch_store.py   # OpenSearch vector store
 │   │   ├── document_processor.py # PDF/MD/TXT parsing and chunking
+│   │   ├── docling_processor.py  # Docling-based PDF processor (langchain-docling)
 │   │   ├── knowledge_base_service.py # KB orchestration (upload, search, manage)
 │   │   ├── memory_service.py     # Conversation summarization + RAG context
 │   │   ├── model_service.py      # Model LRU cache
@@ -373,8 +374,8 @@ The knowledge base provides Retrieval-Augmented Generation (RAG) capabilities us
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  INGESTION:                                                      │
-│  Upload → DocumentProcessor → Chunking → Embeddings → OpenSearch │
-│         (PDF/MD/TXT)        (500 chars)  (OpenAI)     (k-NN)    │
+│  Upload → DocumentProcessor → Docling/Chunking → Embeddings → OS│
+│         (PDF/MD/TXT)         (structure-aware)   (OpenAI)  (k-NN)│
 │                                                                  │
 │  RETRIEVAL:                                                      │
 │  Query → Embeddings → Vector Search → Context → MemoryService   │
@@ -385,9 +386,55 @@ The knowledge base provides Retrieval-Augmented Generation (RAG) capabilities us
 
 **Key Services:**
 - `EmbeddingService` - OpenAI text-embedding-3-small (1536 dims)
-- `DocumentProcessor` - PDF, Markdown, Text parsing with RecursiveCharacterTextSplitter
+- `DocumentProcessor` - PDF (via Docling), Markdown, Text parsing
+- `DoclingProcessor` - Structure-aware PDF extraction via `langchain-docling`
 - `OpenSearchStore` - Vector store with k-NN search (HNSW algorithm, L2 space)
 - `KnowledgeBaseService` - High-level orchestration (upload, search, manage)
+
+### 11. Docling PDF Processing
+
+PDFs are processed using [Docling](https://github.com/DS4SD/docling) via the `langchain-docling` integration for structure-aware extraction.
+
+**Features:**
+- Preserves document hierarchy (headings, sections)
+- Extracts tables as markdown
+- Provides rich metadata per chunk (page number, bounding box, element type)
+- Uses `HybridChunker` for tokenizer-aligned chunking
+
+**Chunk Metadata:**
+```python
+{
+    "headings": ["3. Configuration", "3.1 Environment Variables"],
+    "page": 2,
+    "element_type": "text",  # or "table", "paragraph", etc.
+    "heading_context": "3. Configuration > 3.1 Environment Variables",
+    "processor": "docling",  # "text" for non-PDFs
+}
+```
+
+**Configuration (Environment Variables):**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCLING_MAX_TOKENS` | `512` | Max tokens per chunk |
+| `DOCLING_TOKENIZER` | `sentence-transformers/all-MiniLM-L6-v2` | Tokenizer for chunking |
+| `DOCLING_ENABLE_OCR` | `false` | Enable OCR for scanned PDFs |
+| `DOCLING_ENABLE_TABLES` | `true` | Enable table structure extraction |
+
+**System Dependencies:**
+
+Docling requires OpenGL libraries for image processing. These are handled automatically in Docker but may need manual installation on Linux:
+
+| Platform | Required? | Installation |
+|----------|-----------|--------------|
+| **macOS** | No | Built into macOS |
+| **Windows** | No | Provided by graphics drivers |
+| **Linux** | Yes | `sudo apt install libgl1 libglib2.0-0` |
+| **Docker** | Yes | Already in Dockerfile |
+
+For RHEL/CentOS Linux:
+```bash
+sudo yum install mesa-libGL glib2
+```
 
 **Two Integration Modes:**
 
@@ -473,9 +520,15 @@ opensearch:
 - `OPENSEARCH_URL` - OpenSearch URL (e.g., `http://localhost:9200`)
 - `OPENSEARCH_INDEX` - Index name (default: `knowledge_base`)
 - `EMBEDDING_MODEL` - OpenAI embedding model (default: `text-embedding-3-small`)
-- `RAG_CHUNK_SIZE` - Document chunk size (default: `500`)
-- `RAG_CHUNK_OVERLAP` - Chunk overlap (default: `50`)
+- `RAG_CHUNK_SIZE` - Document chunk size for text/md (default: `500`)
+- `RAG_CHUNK_OVERLAP` - Chunk overlap for text/md (default: `50`)
 - `RAG_DEFAULT_TOP_K` - Default search results (default: `5`)
+
+**Docling (PDF Processing):**
+- `DOCLING_MAX_TOKENS` - Max tokens per PDF chunk (default: `512`)
+- `DOCLING_TOKENIZER` - Tokenizer for chunking (default: `sentence-transformers/all-MiniLM-L6-v2`)
+- `DOCLING_ENABLE_OCR` - Enable OCR for scanned PDFs (default: `false`)
+- `DOCLING_ENABLE_TABLES` - Enable table extraction (default: `true`)
 
 ## Key Patterns
 
