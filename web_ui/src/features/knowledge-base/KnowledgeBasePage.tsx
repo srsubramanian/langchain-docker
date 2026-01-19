@@ -236,7 +236,7 @@ export function KnowledgeBasePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {searchResults.map((result, index) => (
+            {searchResults.map((result) => (
               <div
                 key={result.chunk_id}
                 className="p-3 rounded-lg border bg-muted/50"
