@@ -84,7 +84,7 @@ class JiraToolProvider(ToolProvider):
             ToolTemplate(
                 id="jira_get_changelog",
                 name="Get Jira Changelog",
-                description="Get the change history for a Jira issue",
+                description="Get field change history (status, assignee, priority changes) - NOT for user comments",
                 category="project_management",
                 parameters=[],
                 factory=self._create_jira_get_changelog_tool,
@@ -92,7 +92,7 @@ class JiraToolProvider(ToolProvider):
             ToolTemplate(
                 id="jira_get_comments",
                 name="Get Jira Comments",
-                description="Get comments on a Jira issue",
+                description="Get user comments and discussion threads on a Jira issue - use this for reading comments",
                 category="project_management",
                 parameters=[
                     ToolParameter(
