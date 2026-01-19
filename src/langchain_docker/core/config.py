@@ -391,3 +391,47 @@ def is_opensearch_configured() -> bool:
         True if OPENSEARCH_URL is set
     """
     return bool(get_opensearch_url())
+
+
+# Docling Configuration Functions
+
+
+def get_docling_max_tokens() -> int:
+    """Get max tokens per chunk for Docling HybridChunker.
+
+    Returns:
+        Max tokens per chunk (default: 512)
+    """
+    return int(os.getenv("DOCLING_MAX_TOKENS", "512"))
+
+
+def is_docling_ocr_enabled() -> bool:
+    """Check if OCR should be enabled for scanned PDFs.
+
+    Note: OCR requires tesseract-ocr system dependency.
+
+    Returns:
+        True if OCR is enabled (default: false)
+    """
+    return os.getenv("DOCLING_ENABLE_OCR", "false").lower() == "true"
+
+
+def get_docling_tokenizer() -> str:
+    """Get tokenizer for Docling HybridChunker.
+
+    The tokenizer should approximate the embedding model's tokenization
+    for optimal chunk sizing.
+
+    Returns:
+        Tokenizer name (default: sentence-transformers/all-MiniLM-L6-v2)
+    """
+    return os.getenv("DOCLING_TOKENIZER", "sentence-transformers/all-MiniLM-L6-v2")
+
+
+def is_docling_table_extraction_enabled() -> bool:
+    """Check if table extraction should be enabled.
+
+    Returns:
+        True if table extraction is enabled (default: true)
+    """
+    return os.getenv("DOCLING_ENABLE_TABLES", "true").lower() == "true"

@@ -10,9 +10,12 @@ FROM ${PYTHON_IMAGE} AS base
 WORKDIR /app
 
 # Install system dependencies
+# libgl1 and libglib2.0-0 are required for Docling PDF processing (OpenCV dependency)
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster dependency management

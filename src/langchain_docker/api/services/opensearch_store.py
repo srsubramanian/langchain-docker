@@ -143,6 +143,12 @@ class OpenSearchStore:
                         "content_type": {"type": "keyword"},
                         "collection": {"type": "keyword"},
                         "created_at": {"type": "date"},
+                        # Docling fields for structure-aware search
+                        "headings": {"type": "keyword"},  # Array of heading strings
+                        "heading_context": {"type": "text"},  # "Section > Subsection" string
+                        "element_type": {"type": "keyword"},  # "text", "table", "paragraph", etc.
+                        "processor": {"type": "keyword"},  # "docling" for PDFs, "text" for text/md
+                        "page": {"type": "integer"},  # Page number
                     }
                 },
             }
@@ -193,6 +199,12 @@ class OpenSearchStore:
                 "content_type": chunk.metadata.get("content_type", ""),
                 "collection": chunk.metadata.get("collection", ""),
                 "created_at": chunk.metadata.get("created_at", datetime.utcnow().isoformat()),
+                # Docling-specific fields (populated for PDFs, may be None for text/md)
+                "headings": chunk.metadata.get("headings", []),
+                "heading_context": chunk.metadata.get("heading_context"),
+                "element_type": chunk.metadata.get("element_type"),
+                "processor": chunk.metadata.get("processor", "unknown"),
+                "page": chunk.metadata.get("page"),
             }
 
             self._client.index(
@@ -417,6 +429,7 @@ class OpenSearchStore:
                                     "collection",
                                     "created_at",
                                     "metadata",
+                                    "processor",
                                 ],
                             }
                         },
@@ -445,6 +458,7 @@ class OpenSearchStore:
                         "chunk_count": bucket.get("chunk_count", {}).get("value", 0),
                         "created_at": source.get("created_at", ""),
                         "metadata": source.get("metadata", {}),
+                        "processor": source.get("processor", "unknown"),
                     }
                 )
 

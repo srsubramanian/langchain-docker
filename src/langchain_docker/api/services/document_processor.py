@@ -1,17 +1,25 @@
 """Document processor for parsing and chunking documents."""
 
 import logging
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from io import BytesIO
 from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from langchain_docker.api.services.embedding_service import EmbeddingService
 from langchain_docker.api.services.opensearch_store import DocumentChunk
-from langchain_docker.core.config import get_rag_chunk_overlap, get_rag_chunk_size
+from langchain_docker.core.config import (
+    get_rag_chunk_overlap,
+    get_rag_chunk_size,
+    get_docling_max_tokens,
+    is_docling_ocr_enabled,
+    get_docling_tokenizer,
+    is_docling_table_extraction_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +44,13 @@ class ProcessedDocument:
 class DocumentProcessor:
     """Processor for parsing and chunking documents.
 
-    Supports PDF, Markdown, and plain text files. Splits documents
+    Supports PDF (via Docling), Markdown, and plain text files. Splits documents
     into chunks and generates embeddings for vector search.
+
+    For PDFs, uses Docling for structure-aware extraction that preserves:
+    - Document hierarchy (headings, sections)
+    - Tables as markdown
+    - Page numbers and rich metadata
     """
 
     SUPPORTED_TYPES = {
@@ -67,6 +80,7 @@ class DocumentProcessor:
         self._chunk_size = chunk_size or get_rag_chunk_size()
         self._chunk_overlap = chunk_overlap or get_rag_chunk_overlap()
 
+        # Text splitter for markdown/text files
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=self._chunk_size,
             chunk_overlap=self._chunk_overlap,
@@ -74,10 +88,33 @@ class DocumentProcessor:
             separators=["\n\n", "\n", ". ", " ", ""],
         )
 
+        # Initialize Docling processor for PDFs
+        self._docling_processor = self._init_docling()
+
         logger.info(
             f"DocumentProcessor initialized: chunk_size={self._chunk_size}, "
-            f"chunk_overlap={self._chunk_overlap}"
+            f"chunk_overlap={self._chunk_overlap}, docling=True"
         )
+
+    def _init_docling(self):
+        """Initialize Docling for PDF processing.
+
+        Returns:
+            DoclingProcessor instance
+
+        Raises:
+            ImportError: If Docling is not installed
+        """
+        from langchain_docker.api.services.docling_processor import DoclingProcessor
+
+        processor = DoclingProcessor(
+            tokenizer=get_docling_tokenizer(),
+            max_tokens=get_docling_max_tokens(),
+            enable_ocr=is_docling_ocr_enabled(),
+            enable_table_extraction=is_docling_table_extraction_enabled(),
+        )
+        logger.info("Docling initialized for PDF processing")
+        return processor
 
     def detect_content_type(self, filename: str, content_type: str | None = None) -> str:
         """Detect the content type from filename or MIME type.
@@ -106,99 +143,92 @@ class DocumentProcessor:
             f"Supported: PDF, Markdown (.md), Text (.txt)"
         )
 
-    def parse_content(
+    def _process_pdf(
         self,
-        content: bytes | str,
-        content_type: str,
-    ) -> str:
-        """Parse document content to plain text.
-
-        Args:
-            content: Raw document content (bytes for PDF, str for text)
-            content_type: Normalized content type
-
-        Returns:
-            Extracted plain text content
-        """
-        if content_type == "pdf":
-            return self._parse_pdf(content)
-        elif content_type in ("markdown", "text"):
-            if isinstance(content, bytes):
-                return content.decode("utf-8")
-            return content
-        else:
-            raise ValueError(f"Unsupported content type: {content_type}")
-
-    def _parse_pdf(self, content: bytes | str) -> str:
-        """Parse PDF content to plain text.
+        content: bytes,
+        doc_id: str,
+        doc_metadata: dict[str, Any],
+    ) -> tuple[list[DocumentChunk], str]:
+        """Process PDF using Docling with structure-aware chunking.
 
         Args:
             content: PDF file content as bytes
+            doc_id: Document ID
+            doc_metadata: Base document metadata
 
         Returns:
-            Extracted text from PDF
+            Tuple of (list of DocumentChunk objects, full text content)
+
+        Raises:
+            ValueError: If PDF processing fails
         """
+        # Save to temp file for Docling (it needs file path)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
         try:
-            from pypdf import PdfReader
+            # Process with Docling
+            docling_chunks = self._docling_processor.process_pdf(tmp_path)
 
-            if isinstance(content, str):
-                content = content.encode("utf-8")
+            # Generate embeddings for all chunks
+            chunk_texts = [c.content for c in docling_chunks]
+            logger.info(f"Generating embeddings for {len(chunk_texts)} Docling chunks")
+            embeddings = self._embedding_service.embed_documents(chunk_texts)
 
-            reader = PdfReader(BytesIO(content))
-            text_parts = []
+            # Create DocumentChunk objects with rich metadata
+            chunks = []
+            for i, (docling_chunk, embedding) in enumerate(zip(docling_chunks, embeddings)):
+                # Merge base metadata with Docling metadata
+                chunk_metadata = {
+                    **doc_metadata,
+                    **docling_chunk.metadata,
+                    "processor": "docling",
+                }
 
-            for page_num, page in enumerate(reader.pages):
-                text = page.extract_text()
-                if text:
-                    text_parts.append(f"[Page {page_num + 1}]\n{text}")
+                chunk = DocumentChunk(
+                    id=f"{doc_id}_chunk_{i}",
+                    document_id=doc_id,
+                    content=docling_chunk.content,
+                    embedding=embedding,
+                    metadata=chunk_metadata,
+                    chunk_index=i,
+                )
+                chunks.append(chunk)
 
-            return "\n\n".join(text_parts)
+            # Get full text for original_content
+            full_text = self._docling_processor.get_full_text(tmp_path)
 
-        except Exception as e:
-            logger.error(f"Failed to parse PDF: {e}")
-            raise ValueError(f"Failed to parse PDF: {e}")
+            return chunks, full_text
 
-    def process(
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _process_text(
         self,
-        content: bytes | str,
-        filename: str,
-        content_type: str | None = None,
-        collection: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> ProcessedDocument:
-        """Process a document into chunks with embeddings.
+        content: str,
+        doc_id: str,
+        doc_metadata: dict[str, Any],
+    ) -> list[DocumentChunk]:
+        """Process text/markdown content with standard chunking.
 
         Args:
-            content: Document content (bytes or string)
-            filename: Original filename
-            content_type: MIME type (optional, detected from filename)
-            collection: Optional collection name
-            metadata: Additional metadata
+            content: Text content
+            doc_id: Document ID
+            doc_metadata: Base document metadata
 
         Returns:
-            ProcessedDocument with chunks and embeddings
+            List of DocumentChunk objects
         """
-        # Detect content type
-        doc_type = self.detect_content_type(filename, content_type)
-
-        # Parse content to text
-        text_content = self.parse_content(content, doc_type)
-
-        # Generate document ID
-        doc_id = str(uuid.uuid4())
-
         # Split into chunks
-        text_chunks = self._splitter.split_text(text_content)
+        text_chunks = self._splitter.split_text(content)
 
-        # Build metadata
-        doc_metadata = {
-            "filename": filename,
-            "content_type": doc_type,
-            "collection": collection or "",
-            "created_at": datetime.utcnow().isoformat(),
-            "original_size": len(content) if isinstance(content, bytes) else len(content.encode()),
-            **(metadata or {}),
-        }
+        # Add processor info to metadata
+        chunk_metadata = {**doc_metadata, "processor": "text"}
 
         # Generate embeddings for all chunks
         logger.info(f"Generating embeddings for {len(text_chunks)} chunks")
@@ -212,19 +242,89 @@ class DocumentProcessor:
                 document_id=doc_id,
                 content=text,
                 embedding=embedding,
-                metadata=doc_metadata,
+                metadata=chunk_metadata,
                 chunk_index=i,
             )
             chunks.append(chunk)
 
-        return ProcessedDocument(
-            id=doc_id,
-            filename=filename,
-            content_type=doc_type,
-            original_content=text_content,
-            chunks=chunks,
-            metadata=doc_metadata,
-        )
+        return chunks
+
+    def process(
+        self,
+        content: bytes | str,
+        filename: str,
+        content_type: str | None = None,
+        collection: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProcessedDocument:
+        """Process a document into chunks with embeddings.
+
+        For PDFs, uses Docling for structure-aware processing.
+        For text/markdown, uses RecursiveCharacterTextSplitter.
+
+        Args:
+            content: Document content (bytes or string)
+            filename: Original filename
+            content_type: MIME type (optional, detected from filename)
+            collection: Optional collection name
+            metadata: Additional metadata
+
+        Returns:
+            ProcessedDocument with chunks and embeddings
+
+        Raises:
+            ValueError: If document type is not supported or processing fails
+        """
+        # Detect content type
+        doc_type = self.detect_content_type(filename, content_type)
+
+        # Generate document ID
+        doc_id = str(uuid.uuid4())
+
+        # Build base metadata
+        doc_metadata = {
+            "filename": filename,
+            "content_type": doc_type,
+            "collection": collection or "",
+            "created_at": datetime.utcnow().isoformat(),
+            "original_size": len(content) if isinstance(content, bytes) else len(content.encode()),
+            **(metadata or {}),
+        }
+
+        if doc_type == "pdf":
+            # Ensure content is bytes
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+
+            logger.info(f"Processing PDF with Docling: {filename}")
+            chunks, text_content = self._process_pdf(content, doc_id, doc_metadata)
+
+            return ProcessedDocument(
+                id=doc_id,
+                filename=filename,
+                content_type=doc_type,
+                original_content=text_content,
+                chunks=chunks,
+                metadata={**doc_metadata, "processor": "docling"},
+            )
+        else:
+            # Text or markdown
+            if isinstance(content, bytes):
+                text_content = content.decode("utf-8")
+            else:
+                text_content = content
+
+            logger.info(f"Processing text file: {filename}")
+            chunks = self._process_text(text_content, doc_id, doc_metadata)
+
+            return ProcessedDocument(
+                id=doc_id,
+                filename=filename,
+                content_type=doc_type,
+                original_content=text_content,
+                chunks=chunks,
+                metadata={**doc_metadata, "processor": "text"},
+            )
 
     def process_text(
         self,
