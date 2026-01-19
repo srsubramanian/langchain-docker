@@ -352,6 +352,21 @@ class DirectInvokeRequest(BaseModel):
         None,
         description="Session ID for conversation continuity",
     )
+    # Provider/model override - allows UI to override agent defaults
+    provider: Optional[str] = Field(
+        None,
+        description="Override model provider (openai, anthropic, google, bedrock)",
+    )
+    model: Optional[str] = Field(
+        None,
+        description="Override model name",
+    )
+    temperature: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=2.0,
+        description="Override temperature for model responses (0.0-2.0)",
+    )
     # Memory options for unified conversation management
     enable_memory: bool = Field(
         True,

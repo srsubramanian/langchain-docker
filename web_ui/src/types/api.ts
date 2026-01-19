@@ -247,6 +247,10 @@ export interface DirectInvokeRequest {
   message: string;
   images?: string[];  // Base64 data URIs for images
   session_id?: string | null;
+  // Provider/model override - allows UI to override agent defaults
+  provider?: string | null;
+  model?: string | null;
+  temperature?: number | null;
   // Memory options for unified conversation management
   enable_memory?: boolean;
   memory_trigger_count?: number | null;

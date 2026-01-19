@@ -2013,8 +2013,9 @@ Always use the tools to interact with the database.""")
         images: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         user_id: str = "default",
-        provider: str = "openai",
+        provider: Optional[str] = None,
         model: Optional[str] = None,
+        temperature: Optional[float] = None,
         enable_memory: bool = True,
         memory_trigger_count: Optional[int] = None,
         memory_keep_recent: Optional[int] = None,
@@ -2031,8 +2032,9 @@ Always use the tools to interact with the database.""")
             images: Optional list of base64 data URIs for images
             session_id: Session ID for conversation continuity
             user_id: User ID for session scoping
-            provider: Model provider (overridden by agent config if set)
-            model: Model name (overridden by agent config if set)
+            provider: Override model provider (None = use agent default)
+            model: Override model name (None = use agent default)
+            temperature: Override temperature (None = use agent default)
             enable_memory: Whether to enable memory summarization
             memory_trigger_count: Override for summarization trigger threshold
             memory_keep_recent: Override for number of recent messages to keep
@@ -2048,17 +2050,18 @@ Always use the tools to interact with the database.""")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
             return
 
-        # Determine provider/model - agent config takes precedence
-        agent_provider = config.get("provider", provider)
-        agent_model = config.get("model", model)
-        agent_temp = config.get("temperature", 0.7)
+        # Determine provider/model - request override takes precedence over agent config
+        # If neither provided, default to openai
+        agent_provider = provider or config.get("provider") or "openai"
+        agent_model = model or config.get("model")
+        agent_temp = temperature if temperature is not None else config.get("temperature", 0.7)
 
         # Build session key
         sess_key = session_id or f"{user_id}:agent:{agent_id}"
         memory_metadata = None
 
-        # Cache key for compiled agent
-        cache_key = f"unified:{agent_id}"
+        # Cache key for compiled agent - includes provider/model so switching works
+        cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}"
 
         # Get or create compiled agent
         if cache_key not in self._direct_sessions:

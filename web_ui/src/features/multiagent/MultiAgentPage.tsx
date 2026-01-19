@@ -235,7 +235,7 @@ export function MultiAgentPage() {
     clearImages,
   } = useImageUpload();
 
-  const { provider, model, agentPreset, setAgentPreset } = useSettingsStore();
+  const { provider, model, temperature, agentPreset, setAgentPreset } = useSettingsStore();
   // MCP store - getEnabledServers available for future MCP integration with agents
   useMCPStore();
 
@@ -371,6 +371,9 @@ export function MultiAgentPage() {
           message: userMessage,
           images: userImages,
           session_id: sessionId,
+          provider,
+          model,
+          temperature,
         })) {
           if (event.event === 'start' && event.session_id) {
             setSessionId(event.session_id);
