@@ -2241,10 +2241,34 @@ Always use the tools to interact with the database.""")
                                 yield {"event": "token", "data": json.dumps({"content": content})}
 
                     # Chain/graph end - capture final messages
-                    elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    # Check for agent name (e.g., "sql_expert") or "LangGraph"
+                    elif kind == "on_chain_end" and event.get("name") in (config.get("name"), agent_id, "LangGraph"):
                         output = data.get("output", {})
-                        if isinstance(output, dict) and "messages" in output:
-                            final_messages = output["messages"]
+                        if isinstance(output, dict):
+                            if "messages" in output:
+                                final_messages = output["messages"]
+                            # Log output structure for debugging
+                            elif not final_messages:
+                                logger.info(f"[Stream Event] on_chain_end output keys: {list(output.keys())}")
+
+                    # Capture from on_chat_model_end as fallback (for non-streaming models like Bedrock)
+                    elif kind == "on_chat_model_end" and not accumulated_content:
+                        output = data.get("output")
+                        if output and hasattr(output, 'content'):
+                            content = output.content
+                            if isinstance(content, str) and content:
+                                accumulated_content = content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+                            elif isinstance(content, list):
+                                # Handle list content (e.g., from Claude/Bedrock models)
+                                text_content = "".join(
+                                    block.get("text", "") if isinstance(block, dict) else str(block)
+                                    for block in content
+                                    if isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
+                                )
+                                if text_content:
+                                    accumulated_content = text_content
+                                    yield {"event": "token", "data": json.dumps({"content": text_content})}
 
                 # Update session with final messages
                 if final_messages:

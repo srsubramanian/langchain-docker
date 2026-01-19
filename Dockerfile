@@ -9,6 +9,12 @@ FROM ${PYTHON_IMAGE} AS base
 # Set working directory
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv for faster dependency management
 RUN pip install --no-cache-dir uv
 
@@ -34,9 +40,9 @@ COPY .env.example .env.example
 # Expose port for FastAPI backend
 EXPOSE 8000
 
-# Health check for FastAPI backend (using Python instead of curl)
+# Health check for FastAPI backend
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Default command (can be overridden in docker-compose)
 CMD ["uv", "run", "langchain-docker", "serve", "--host", "0.0.0.0", "--port", "8000"]

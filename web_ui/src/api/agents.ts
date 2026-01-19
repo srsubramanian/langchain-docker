@@ -130,19 +130,14 @@ export const agentsApi = {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        // Debug: log raw SSE lines
-        console.log('[SSE Raw]', trimmed);
-
         if (trimmed.startsWith('event: ')) {
           currentEvent = trimmed.slice(7);
         } else if (trimmed.startsWith('data: ')) {
           try {
             const data = JSON.parse(trimmed.slice(6));
-            console.log('[SSE Parsed]', currentEvent, data);
             yield { event: currentEvent as StreamEvent['event'], ...data };
-          } catch (e) {
-            // Log parse errors
-            console.error('[SSE Parse Error]', e, trimmed);
+          } catch {
+            // Skip malformed JSON
           }
         }
       }
