@@ -539,3 +539,85 @@ export interface CapabilityListResponse {
   capabilities: Capability[];
   total: number;
 }
+
+// Knowledge Base / RAG types
+export interface KBDocument {
+  id: string;
+  filename: string;
+  content_type: 'pdf' | 'markdown' | 'text';
+  chunk_count: number;
+  size: number;
+  collection: string | null;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface KBCollection {
+  id: string;
+  name: string;
+  document_count: number;
+  color?: string | null;
+}
+
+export interface KBSearchResult {
+  document_id: string;
+  chunk_id: string;
+  content: string;
+  score: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface KBStats {
+  total_documents: number;
+  total_chunks: number;
+  total_collections: number;
+  index_size: string;
+  last_updated: string;
+  available: boolean;
+}
+
+export interface KBDocumentListResponse {
+  documents: KBDocument[];
+  total: number;
+}
+
+export interface KBCollectionListResponse {
+  collections: KBCollection[];
+  total: number;
+}
+
+export interface KBSearchRequest {
+  query: string;
+  top_k?: number;
+  min_score?: number;
+  collection?: string | null;
+}
+
+export interface KBSearchResponse {
+  query: string;
+  results: KBSearchResult[];
+  total: number;
+}
+
+export interface KBDocumentUploadRequest {
+  content: string;
+  filename: string;
+  collection?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface KBFileUploadResponse {
+  document: KBDocument;
+  message: string;
+}
+
+export interface KBDeleteResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface KBContextResponse {
+  query: string;
+  context: string;
+  has_context: boolean;
+}

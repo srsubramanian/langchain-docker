@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from langchain_docker.api.schemas.chat import ChatRequest, ChatResponse, MessageSchema
 from langchain_docker.api.services.approval_service import ApprovalService, ApprovalConfig
+from langchain_docker.api.services.knowledge_base_service import KnowledgeBaseService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.model_service import ModelService
@@ -31,6 +32,7 @@ class ChatService:
         memory_service: MemoryService,
         mcp_tool_service: MCPToolService | None = None,
         approval_service: ApprovalService | None = None,
+        kb_service: KnowledgeBaseService | None = None,
     ):
         """Initialize chat service.
 
@@ -40,12 +42,14 @@ class ChatService:
             memory_service: Memory management service
             mcp_tool_service: Optional MCP tool service for tool integration
             approval_service: Optional approval service for HITL tools
+            kb_service: Optional knowledge base service for RAG
         """
         self.session_service = session_service
         self.model_service = model_service
         self.memory_service = memory_service
         self.mcp_tool_service = mcp_tool_service
         self.approval_service = approval_service
+        self.kb_service = kb_service
         # Map of tool names to their HITL configs
         self._hitl_tools: dict[str, ApprovalConfig] = {}
 
@@ -77,6 +81,36 @@ class ChatService:
             True if the tool requires approval
         """
         return tool_name in self._hitl_tools
+
+    def _get_rag_context(self, request: ChatRequest) -> str | None:
+        """Get RAG context from knowledge base if enabled.
+
+        Args:
+            request: Chat request with RAG settings
+
+        Returns:
+            RAG context string or None if RAG is disabled or unavailable
+        """
+        if not request.enable_rag:
+            return None
+
+        if not self.kb_service or not self.kb_service.is_available:
+            logger.warning("RAG enabled but knowledge base is not available")
+            return None
+
+        try:
+            context = self.kb_service.get_context_for_query(
+                query=request.message,
+                top_k=request.rag_top_k,
+                min_score=request.rag_min_score,
+                collection=request.rag_collection,
+            )
+            if context:
+                logger.info(f"RAG: Retrieved context for query (top_k={request.rag_top_k})")
+            return context if context else None
+        except Exception as e:
+            logger.error(f"Failed to get RAG context: {e}")
+            return None
 
     def _parse_data_uri(self, uri: str) -> tuple[str, str]:
         """Parse data URI into mime type and base64 data.
@@ -151,9 +185,12 @@ class ChatService:
         )
         session.messages.append(user_message)
 
-        # Process conversation memory (NEW)
+        # Get RAG context if enabled
+        rag_context = self._get_rag_context(request)
+
+        # Process conversation memory (with optional RAG context)
         context_messages, memory_metadata = self.memory_service.process_conversation(
-            session, request
+            session, request, rag_context=rag_context
         )
 
         # Get model from cache
@@ -219,9 +256,12 @@ class ChatService:
         )
         session.messages.append(user_message)
 
-        # Process conversation memory (NEW)
+        # Get RAG context if enabled
+        rag_context = self._get_rag_context(request)
+
+        # Process conversation memory (with optional RAG context)
         context_messages, memory_metadata = self.memory_service.process_conversation(
-            session, request
+            session, request, rag_context=rag_context
         )
 
         # Get model from cache

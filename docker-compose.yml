@@ -18,6 +18,28 @@ services:
       retries: 3
       start_period: 5s
 
+  # OpenSearch for vector knowledge base (RAG)
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: langchain-opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    restart: unless-stopped
+    networks:
+      - langchain-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # Phoenix Tracing Server
   phoenix:
     image: arizephoenix/phoenix:latest
@@ -57,11 +79,16 @@ services:
       # Redis for persistent session storage
       - REDIS_URL=redis://redis:6379/0
       - SESSION_TTL_HOURS=24
+      # OpenSearch for vector knowledge base (RAG)
+      - OPENSEARCH_URL=http://opensearch:9200
+      - OPENSEARCH_INDEX=knowledge_base
     command: uv run langchain-docker serve --host 0.0.0.0 --port 8000
     depends_on:
       redis:
         condition: service_healthy
       phoenix:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -96,4 +123,6 @@ volumes:
   redis-data:
     driver: local
   phoenix-data:
+    driver: local
+  opensearch-data:
     driver: local

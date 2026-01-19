@@ -10,14 +10,17 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain_docker.api.services.agent_service import AgentService
 from langchain_docker.api.services.approval_service import ApprovalService
 from langchain_docker.api.services.chat_service import ChatService
+from langchain_docker.api.services.embedding_service import EmbeddingService
+from langchain_docker.api.services.knowledge_base_service import KnowledgeBaseService
 from langchain_docker.api.services.mcp_server_manager import MCPServerManager
 from langchain_docker.api.services.mcp_tool_service import MCPToolService
 from langchain_docker.api.services.memory_service import MemoryService
 from langchain_docker.api.services.model_service import ModelService
+from langchain_docker.api.services.opensearch_store import OpenSearchStore
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.skill_registry import SkillRegistry
-from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours
+from langchain_docker.core.config import Config, get_redis_url, get_session_ttl_hours, is_opensearch_configured
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +192,16 @@ def get_chat_service(
     Returns:
         ChatService instance
     """
+    # Get knowledge base service for RAG (optional)
+    kb_service = get_knowledge_base_service()
+
     return ChatService(
         session_service,
         model_service,
         memory_service,
         mcp_tool_service,
         approval_service,
+        kb_service,
     )
 
 
@@ -301,3 +308,72 @@ def get_current_user_id(
         User ID string, defaults to "default" if not provided
     """
     return x_user_id or DEFAULT_USER_ID
+
+
+# Singleton for embedding service
+_embedding_service: EmbeddingService | None = None
+
+
+def get_embedding_service() -> EmbeddingService:
+    """Get singleton embedding service instance.
+
+    The EmbeddingService generates vector embeddings for documents
+    and queries using OpenAI's text-embedding-3-small model.
+
+    Returns:
+        EmbeddingService instance
+    """
+    global _embedding_service
+    if _embedding_service is None:
+        _embedding_service = EmbeddingService()
+    return _embedding_service
+
+
+# Singleton for opensearch store
+_opensearch_store: OpenSearchStore | None = None
+
+
+def get_opensearch_store(
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+) -> OpenSearchStore:
+    """Get singleton OpenSearch store instance.
+
+    The OpenSearchStore provides vector similarity search for
+    the knowledge base using OpenSearch's k-NN plugin.
+
+    Args:
+        embedding_service: Embedding service (injected)
+
+    Returns:
+        OpenSearchStore instance
+    """
+    global _opensearch_store
+    if _opensearch_store is None:
+        _opensearch_store = OpenSearchStore(embedding_service)
+    return _opensearch_store
+
+
+# Singleton for knowledge base service
+_knowledge_base_service: KnowledgeBaseService | None = None
+
+
+def get_knowledge_base_service() -> KnowledgeBaseService:
+    """Get singleton knowledge base service instance.
+
+    The KnowledgeBaseService provides high-level operations for
+    document ingestion, search, and management. It orchestrates
+    the document processor, embedding service, and vector store.
+
+    Returns:
+        KnowledgeBaseService instance (or None if not configured)
+    """
+    global _knowledge_base_service
+    if _knowledge_base_service is None:
+        if is_opensearch_configured():
+            _knowledge_base_service = KnowledgeBaseService()
+            logger.info("KnowledgeBaseService initialized")
+        else:
+            logger.warning("OpenSearch not configured, knowledge base disabled")
+            # Return a service instance anyway - it will report not available
+            _knowledge_base_service = KnowledgeBaseService()
+    return _knowledge_base_service

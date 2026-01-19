@@ -1352,6 +1352,340 @@ class JiraSkill(Skill):
         return "\n".join(output)
 
 
+class KnowledgeBaseSkill(Skill):
+    """Knowledge Base skill for RAG (Retrieval-Augmented Generation).
+
+    Provides semantic search over the vector knowledge base containing
+    uploaded documents. Enables agents to retrieve relevant context
+    for answering questions.
+
+    Content is loaded from .md files in src/langchain_docker/skills/knowledge_base/
+    """
+
+    def __init__(self):
+        """Initialize Knowledge Base skill."""
+        self.id = "knowledge_base"
+        self.name = "Knowledge Base Search"
+        self.description = (
+            "Search and retrieve information from the vector knowledge base (RAG)"
+        )
+        self.category = "knowledge"
+        self.is_builtin = True
+        self.version = "1.0.0"
+        self._skill_dir = SKILLS_DIR / "knowledge_base"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._kb_service = None
+        self._load_configs_from_frontmatter()
+
+    def _get_kb_service(self):
+        """Get the knowledge base service (lazy loaded).
+
+        Returns:
+            KnowledgeBaseService instance or None if not available
+        """
+        if self._kb_service is None:
+            try:
+                from langchain_docker.api.services.knowledge_base_service import (
+                    KnowledgeBaseService,
+                )
+                self._kb_service = KnowledgeBaseService()
+            except Exception as e:
+                logger.warning(f"Failed to initialize KnowledgeBaseService: {e}")
+                self._kb_service = None
+        return self._kb_service
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory.
+
+        Args:
+            filename: Name of the .md file to read
+
+        Returns:
+            File content or error message if file not found
+        """
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Parse YAML frontmatter
+            lines = content.split("\n")
+            end_idx = None
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    end_idx = i
+                    break
+
+            if end_idx:
+                import yaml
+                frontmatter = "\n".join(lines[1:end_idx])
+                metadata = yaml.safe_load(frontmatter) or {}
+
+                # Load tool configs
+                tool_configs = metadata.get("tool_configs", [])
+                self._tool_configs = [
+                    {
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "method": t.get("method", ""),
+                        "args": t.get("args", []),
+                        "requires_skill_loaded": t.get("requires_skill_loaded", True),
+                    }
+                    for t in tool_configs
+                ] if tool_configs else []
+
+                # Load resource configs
+                resource_configs = metadata.get("resource_configs", [])
+                self._resource_configs = [
+                    {
+                        "name": r.get("name", ""),
+                        "description": r.get("description", ""),
+                        "file": r.get("file"),
+                        "content": r.get("content"),
+                        "dynamic": r.get("dynamic", False),
+                        "method": r.get("method"),
+                    }
+                    for r in resource_configs
+                ] if resource_configs else []
+
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Returns:
+            Original SKILL.md content (static guidelines only)
+        """
+        return self._read_md_file("SKILL.md")
+
+    def load_core(self) -> str:
+        """Level 2: Load knowledge base skill instructions.
+
+        Combines dynamic status information with static content.
+        Static content uses Redis custom content if available, otherwise SKILL.md.
+
+        Returns:
+            Complete skill context for knowledge base operations
+        """
+        # Dynamic content: Check if knowledge base is available
+        kb_service = self._get_kb_service()
+        if kb_service and kb_service.is_available:
+            try:
+                stats = kb_service.get_stats()
+                status = f"""
+### Knowledge Base Status
+- **Available**: Yes
+- **Documents**: {stats.total_documents}
+- **Chunks**: {stats.total_chunks}
+- **Collections**: {stats.total_collections}
+- **Index Size**: {stats.index_size}
+"""
+            except Exception as e:
+                logger.warning(f"Failed to get KB stats: {e}")
+                status = """
+### Knowledge Base Status
+- **Available**: Yes (stats unavailable)
+"""
+        else:
+            status = """
+### Knowledge Base Status
+**Warning**: Knowledge base is not available. OpenSearch may not be configured.
+
+To enable the knowledge base:
+1. Set `OPENSEARCH_URL` in your environment
+2. Ensure OpenSearch is running (docker-compose up opensearch)
+"""
+
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
+
+        return f"""## Knowledge Base Skill Activated
+{status}
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources.
+
+        Args:
+            resource: "search_tips" for search guidance
+
+        Returns:
+            Detailed resource content
+        """
+        if resource == "search_tips":
+            # Return inline search tips
+            return """## Search Tips
+- Use specific keywords related to your topic
+- Try different phrasings if initial search doesn't return good results
+- Use collection filters to narrow down results
+- Higher top_k values give more context but may include less relevant results
+"""
+        else:
+            return f"Unknown resource: {resource}. Available: 'search_tips'"
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        collection: Optional[str] = None,
+    ) -> str:
+        """Search the knowledge base.
+
+        Args:
+            query: Search query
+            top_k: Number of results to return
+            collection: Optional collection filter
+
+        Returns:
+            Formatted search results or error message
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available. Ensure OpenSearch is configured."
+
+        try:
+            results = kb_service.search(
+                query=query,
+                top_k=top_k,
+                collection=collection,
+            )
+
+            if not results:
+                return f"No results found for query: '{query}'"
+
+            output = [f"**Search Results for '{query}'** ({len(results)} results):\n"]
+            for i, result in enumerate(results, 1):
+                source = result.metadata.get("filename", "Unknown")
+                score = f"{result.score:.2f}" if result.score else "N/A"
+                content = result.content[:500] + "..." if len(result.content) > 500 else result.content
+
+                output.append(f"\n**Result {i}** (Score: {score}, Source: {source})")
+                output.append(f"```\n{content}\n```")
+
+            return "\n".join(output)
+        except Exception as e:
+            logger.error(f"Knowledge base search error: {e}")
+            return f"Error searching knowledge base: {str(e)}"
+
+    def list_documents(self, collection: Optional[str] = None) -> str:
+        """List documents in the knowledge base.
+
+        Args:
+            collection: Optional collection filter
+
+        Returns:
+            Formatted list of documents
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available."
+
+        try:
+            docs = kb_service.list_documents(collection=collection, limit=50)
+
+            if not docs:
+                return "No documents found in the knowledge base."
+
+            output = [f"**Documents in Knowledge Base** ({len(docs)} documents):\n"]
+            for doc in docs:
+                collection_str = f" (Collection: {doc.collection})" if doc.collection else ""
+                output.append(
+                    f"- **{doc.filename}** ({doc.chunk_count} chunks){collection_str}\n"
+                    f"  ID: {doc.id} | Type: {doc.content_type}"
+                )
+
+            return "\n".join(output)
+        except Exception as e:
+            logger.error(f"List documents error: {e}")
+            return f"Error listing documents: {str(e)}"
+
+    def list_collections(self) -> str:
+        """List all collections in the knowledge base.
+
+        Returns:
+            Formatted list of collections
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service or not kb_service.is_available:
+            return "Error: Knowledge base is not available."
+
+        try:
+            collections = kb_service.list_collections()
+
+            if not collections:
+                return "No collections found. Documents are in the default collection."
+
+            output = ["**Collections in Knowledge Base:**\n"]
+            for col in collections:
+                output.append(f"- **{col.name}** ({col.document_count} documents)")
+
+            return "\n".join(output)
+        except Exception as e:
+            logger.error(f"List collections error: {e}")
+            return f"Error listing collections: {str(e)}"
+
+    def get_stats(self) -> str:
+        """Get knowledge base statistics.
+
+        Returns:
+            Formatted statistics
+        """
+        kb_service = self._get_kb_service()
+        if not kb_service:
+            return "Error: Knowledge base service not initialized."
+
+        try:
+            stats = kb_service.get_stats()
+            return f"""**Knowledge Base Statistics:**
+- Available: {stats.available}
+- Total Documents: {stats.total_documents}
+- Total Chunks: {stats.total_chunks}
+- Total Collections: {stats.total_collections}
+- Index Size: {stats.index_size}
+- Last Updated: {stats.last_updated}
+"""
+        except Exception as e:
+            logger.error(f"Get stats error: {e}")
+            return f"Error getting statistics: {str(e)}"
+
+
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
 
@@ -1651,6 +1985,7 @@ class SkillRegistry:
             SQLSkill(),
             XLSXSkill(),
             JiraSkill(),
+            KnowledgeBaseSkill(),
         ]
 
         for skill in builtin_skills:

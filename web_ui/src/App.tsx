@@ -5,6 +5,7 @@ import { MultiAgentPage } from '@/features/multiagent/MultiAgentPage';
 import { BuilderPage } from '@/features/builder/BuilderPage';
 import { AgentsPage } from '@/features/agents/AgentsPage';
 import { SkillsPage, SkillEditor } from '@/features/skills';
+import { KnowledgeBasePage } from '@/features/knowledge-base';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="skills/new" element={<SkillEditor />} />
           <Route path="skills/:skillId" element={<SkillEditor />} />
           <Route path="skills/:skillId/edit" element={<SkillEditor />} />
+          <Route path="knowledge-base" element={<KnowledgeBasePage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -30,6 +30,7 @@ docker-compose up --build
 - FastAPI API: http://localhost:8000/docs
 - Phoenix Tracing: http://localhost:6006
 - Redis: localhost:6379
+- OpenSearch: http://localhost:9200 (Knowledge Base)
 
 ## Project Structure
 
@@ -67,8 +68,13 @@ src/langchain_docker/
 │   │   ├── tools/                # Tool providers by domain
 │   │   │   ├── base.py          # ToolProvider ABC, ToolTemplate, ToolParameter
 │   │   │   ├── sql_tools.py     # SQLToolProvider (5 database tools)
-│   │   │   └── jira_tools.py    # JiraToolProvider (11 project management tools)
-│   │   ├── memory_service.py     # Conversation summarization
+│   │   │   ├── jira_tools.py    # JiraToolProvider (11 project management tools)
+│   │   │   └── kb_tools.py      # KBToolProvider (5 knowledge base tools)
+│   │   ├── embedding_service.py  # OpenAI embeddings for knowledge base
+│   │   ├── opensearch_store.py   # OpenSearch vector store
+│   │   ├── document_processor.py # PDF/MD/TXT parsing and chunking
+│   │   ├── knowledge_base_service.py # KB orchestration (upload, search, manage)
+│   │   ├── memory_service.py     # Conversation summarization + RAG context
 │   │   ├── model_service.py      # Model LRU cache
 │   │   └── scheduler_service.py  # APScheduler for agent scheduling
 │   └── mcp_servers.json       # MCP server configuration
@@ -80,6 +86,7 @@ src/langchain_docker/
 │   ├── sql/                   # SQL skill (SKILL.md, examples.md)
 │   ├── xlsx/                  # XLSX skill
 │   ├── jira/                  # Jira skill (read-only)
+│   ├── knowledge_base/        # Knowledge Base skill (RAG)
 │   └── middleware/            # Middleware-based skills system
 │       ├── registry.py        # SkillRegistry, SkillDefinition
 │       ├── middleware.py      # SkillMiddleware for LangChain
@@ -95,7 +102,8 @@ web_ui/                         # React Web UI
 │   │   ├── multiagent/       # MultiAgentPage - React Flow
 │   │   ├── agents/           # AgentsPage - custom agent management
 │   │   ├── builder/          # BuilderPage - agent wizard
-│   │   └── skills/           # SkillsPage
+│   │   ├── skills/           # SkillsPage
+│   │   └── knowledge-base/   # KnowledgeBasePage - RAG document management
 │   └── stores/                # Zustand (session, settings, user, mcp)
 ```
 
@@ -353,6 +361,65 @@ self._providers = [
 |----------|----------|-------|
 | `SQLToolProvider` | database | `load_sql_skill`, `sql_query`, `sql_list_tables`, `sql_get_samples`, `sql_execute` |
 | `JiraToolProvider` | project_management | `load_jira_skill`, `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`, `jira_get_changelog`, `jira_get_comments`, `jira_get_boards`, `jira_get_worklogs`, `jira_get_sprint_issues`, `jira_jql_reference` |
+| `KBToolProvider` | knowledge | `load_kb_skill`, `kb_search`, `kb_list_documents`, `kb_list_collections`, `kb_get_stats` |
+
+### 10. Knowledge Base / RAG
+
+The knowledge base provides Retrieval-Augmented Generation (RAG) capabilities using OpenSearch as a vector store.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  KNOWLEDGE BASE ARCHITECTURE                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  INGESTION:                                                      │
+│  Upload → DocumentProcessor → Chunking → Embeddings → OpenSearch │
+│         (PDF/MD/TXT)        (500 chars)  (OpenAI)     (k-NN)    │
+│                                                                  │
+│  RETRIEVAL:                                                      │
+│  Query → Embeddings → Vector Search → Context → MemoryService   │
+│                       (top-k)         (chunks)  (RAG injection) │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Services:**
+- `EmbeddingService` - OpenAI text-embedding-3-small (1536 dims)
+- `DocumentProcessor` - PDF, Markdown, Text parsing with RecursiveCharacterTextSplitter
+- `OpenSearchStore` - Vector store with k-NN search (HNSW algorithm, L2 space)
+- `KnowledgeBaseService` - High-level orchestration (upload, search, manage)
+
+**Two Integration Modes:**
+
+1. **Automatic RAG in Chat** - Add `enable_rag: true` to ChatRequest:
+   ```python
+   # ChatRequest fields for RAG
+   enable_rag: bool = False      # Enable automatic context injection
+   rag_top_k: int = 5           # Documents to retrieve
+   rag_min_score: float = 0.0   # Minimum similarity score
+   rag_collection: str | None   # Optional collection filter
+   ```
+
+2. **Agent-Controlled via Skill** - Use KB tools for explicit control:
+   - `load_kb_skill` - Load skill with status and instructions
+   - `kb_search` - Semantic search with query
+   - `kb_list_documents` - List uploaded documents
+   - `kb_list_collections` - List document collections
+   - `kb_get_stats` - Get KB statistics
+
+**Docker Setup:**
+```yaml
+# docker-compose.yml includes:
+opensearch:
+  image: opensearchproject/opensearch:2.11.0
+  ports:
+    - "9200:9200"
+  environment:
+    - discovery.type=single-node
+    - DISABLE_SECURITY_PLUGIN=true
+```
+
+**React UI:** Navigate to `/knowledge-base` for document management dashboard.
 
 ## API Endpoints
 
@@ -373,6 +440,13 @@ self._providers = [
 | `POST /api/v1/approvals/{id}/approve` | Approve pending action |
 | `POST /api/v1/approvals/{id}/reject` | Reject pending action |
 | `GET /api/v1/models/providers` | List LLM providers |
+| `POST /api/v1/kb/documents` | Upload document to knowledge base |
+| `GET /api/v1/kb/documents` | List documents in knowledge base |
+| `GET /api/v1/kb/documents/{id}` | Get document metadata |
+| `DELETE /api/v1/kb/documents/{id}` | Delete document |
+| `POST /api/v1/kb/search` | Semantic search knowledge base |
+| `GET /api/v1/kb/collections` | List collections |
+| `GET /api/v1/kb/stats` | Get knowledge base statistics |
 
 ## Environment Variables
 
@@ -393,6 +467,14 @@ self._providers = [
 **Skills:**
 - `DATABASE_URL` - SQL skill (default: `sqlite:///demo.db`)
 - `JIRA_URL`, `JIRA_BEARER_TOKEN` - Jira skill
+
+**Knowledge Base (RAG):**
+- `OPENSEARCH_URL` - OpenSearch URL (e.g., `http://localhost:9200`)
+- `OPENSEARCH_INDEX` - Index name (default: `knowledge_base`)
+- `EMBEDDING_MODEL` - OpenAI embedding model (default: `text-embedding-3-small`)
+- `RAG_CHUNK_SIZE` - Document chunk size (default: `500`)
+- `RAG_CHUNK_OVERLAP` - Chunk overlap (default: `50`)
+- `RAG_DEFAULT_TOP_K` - Default search results (default: `5`)
 
 ## Key Patterns
 
@@ -547,6 +629,7 @@ KEYS checkpoint:*   # LangGraph state
 - `/multiagent` - Multi-agent workflow with React Flow
 - `/builder` - Agent builder wizard
 - `/skills` - Skills management
+- `/knowledge-base` - Knowledge base document management (RAG)
 
 ## Docker Compose Services
 
@@ -556,6 +639,7 @@ KEYS checkpoint:*   # LangGraph state
 | `react-ui` | 8001 | React Web UI |
 | `redis` | 6379 | Persistence (sessions, agents, checkpoints) |
 | `phoenix` | 6006 | Tracing UI |
+| `opensearch` | 9200 | Vector store for knowledge base (RAG) |
 
 ## Major Files by Size
 
@@ -568,7 +652,9 @@ KEYS checkpoint:*   # LangGraph state
 | `redis_skill_store.py` | 15KB | Redis-backed skill versioning and metrics |
 | `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
 | `approval_service.py` | 12KB | HITL approval request management |
-| `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL events |
+| `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL + RAG |
+| `knowledge_base_service.py` | 12KB | KB orchestration (upload, search, manage) |
+| `opensearch_store.py` | 10KB | OpenSearch vector store with k-NN search |
 
 ## What Was Removed
 

@@ -86,6 +86,11 @@ class ChatRequest(BaseModel):
         None,
         description="List of MCP server IDs to enable for this request"
     )
+    # RAG / Knowledge Base fields
+    enable_rag: bool = Field(False, description="Enable automatic RAG from knowledge base")
+    rag_top_k: int = Field(5, ge=1, le=50, description="Number of documents to retrieve for RAG")
+    rag_min_score: float = Field(0.0, ge=0.0, le=1.0, description="Minimum similarity score for RAG results")
+    rag_collection: str | None = Field(None, description="Optional collection filter for RAG")
 
 
 class ChatResponse(BaseModel):

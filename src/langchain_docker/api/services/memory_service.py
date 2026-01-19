@@ -52,13 +52,14 @@ class MemoryService:
         self._lock = threading.Lock()
 
     def process_conversation(
-        self, session: Session, request: ChatRequest
+        self, session: Session, request: ChatRequest, rag_context: str | None = None
     ) -> tuple[list[BaseMessage], MemoryMetadata]:
         """Process conversation and return optimized message list.
 
         Args:
             session: Current conversation session
             request: Chat request with optional memory overrides
+            rag_context: Optional RAG context to inject into the conversation
 
         Returns:
             Tuple of (context_messages, memory_metadata)
@@ -131,8 +132,8 @@ class MemoryService:
                             metadata.summarized = True
                             metadata.summarized_message_count = len(messages_to_summarize)
 
-            # Build final context window
-            context_messages = self._build_context_window(session, request)
+            # Build final context window (with optional RAG context)
+            context_messages = self._build_context_window(session, request, rag_context)
 
             # Update metadata with actual recent count
             real_context = [m for m in context_messages if not isinstance(m, SystemMessage)]
@@ -275,13 +276,14 @@ class MemoryService:
         return summary_response.content
 
     def _build_context_window(
-        self, session: Session, request: ChatRequest
+        self, session: Session, request: ChatRequest, rag_context: str | None = None
     ) -> list[BaseMessage]:
-        """Build context window: [SystemMessage(summary)] + recent_messages.
+        """Build context window: [SystemMessage(summary)] + [SystemMessage(rag)] + recent_messages.
 
         Args:
             session: Current session
             request: Chat request
+            rag_context: Optional RAG context to inject
 
         Returns:
             List of messages to send to model
@@ -294,6 +296,13 @@ class MemoryService:
                 content=f"Conversation Summary (covering {session.summary_message_count} earlier messages):\n\n{session.conversation_summary}"
             )
             context.append(summary_message)
+
+        # Add RAG context if provided
+        if rag_context:
+            rag_message = SystemMessage(
+                content=f"Relevant context from knowledge base:\n\n{rag_context}\n\n---\nUse the above context to help answer the user's question if relevant."
+            )
+            context.append(rag_message)
 
         # Get recent message count
         keep_recent = request.memory_keep_recent or self.config.memory_keep_recent_count

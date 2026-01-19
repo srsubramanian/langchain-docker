@@ -33,6 +33,13 @@ class Config:
         tracing_provider: Tracing platform (langsmith, phoenix, or none)
         database_url: Database connection string for SQL skill
         sql_read_only: Enforce read-only mode for SQL queries
+        opensearch_url: OpenSearch URL for vector knowledge base
+        opensearch_index: OpenSearch index name for knowledge base
+        embedding_provider: Provider for embeddings (openai, etc.)
+        embedding_model: Model name for embeddings
+        rag_chunk_size: Chunk size for document splitting
+        rag_chunk_overlap: Overlap between chunks
+        rag_default_top_k: Default number of documents to retrieve
     """
 
     default_provider: str = "openai"
@@ -49,6 +56,14 @@ class Config:
     sql_read_only: bool = True
     redis_url: str | None = None
     session_ttl_hours: int = 24
+    # Knowledge Base / RAG settings
+    opensearch_url: str | None = None
+    opensearch_index: str = "knowledge_base"
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    rag_chunk_size: int = 500
+    rag_chunk_overlap: int = 50
+    rag_default_top_k: int = 5
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -72,6 +87,13 @@ class Config:
             sql_read_only=os.getenv("SQL_READ_ONLY", "true").lower() == "true",
             redis_url=os.getenv("REDIS_URL") or None,
             session_ttl_hours=int(os.getenv("SESSION_TTL_HOURS", "24")),
+            opensearch_url=os.getenv("OPENSEARCH_URL") or None,
+            opensearch_index=os.getenv("OPENSEARCH_INDEX", "knowledge_base"),
+            embedding_provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
+            embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+            rag_chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "500")),
+            rag_chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "50")),
+            rag_default_top_k=int(os.getenv("RAG_DEFAULT_TOP_K", "5")),
         )
 
 
@@ -294,3 +316,78 @@ def get_session_ttl_hours() -> int:
         Session TTL hours (defaults to 24)
     """
     return int(os.getenv("SESSION_TTL_HOURS", "24"))
+
+
+# Knowledge Base / RAG Configuration Functions
+
+
+def get_opensearch_url() -> str | None:
+    """Get OpenSearch URL from environment.
+
+    Returns:
+        OpenSearch URL if configured, None otherwise
+    """
+    return os.getenv("OPENSEARCH_URL") or None
+
+
+def get_opensearch_index() -> str:
+    """Get OpenSearch index name.
+
+    Returns:
+        Index name (defaults to knowledge_base)
+    """
+    return os.getenv("OPENSEARCH_INDEX", "knowledge_base")
+
+
+def get_embedding_provider() -> str:
+    """Get embedding provider name.
+
+    Returns:
+        Provider name (defaults to openai)
+    """
+    return os.getenv("EMBEDDING_PROVIDER", "openai")
+
+
+def get_embedding_model() -> str:
+    """Get embedding model name.
+
+    Returns:
+        Model name (defaults to text-embedding-3-small)
+    """
+    return os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+
+
+def get_rag_chunk_size() -> int:
+    """Get chunk size for document splitting.
+
+    Returns:
+        Chunk size in characters (defaults to 500)
+    """
+    return int(os.getenv("RAG_CHUNK_SIZE", "500"))
+
+
+def get_rag_chunk_overlap() -> int:
+    """Get chunk overlap for document splitting.
+
+    Returns:
+        Overlap in characters (defaults to 50)
+    """
+    return int(os.getenv("RAG_CHUNK_OVERLAP", "50"))
+
+
+def get_rag_default_top_k() -> int:
+    """Get default number of documents to retrieve.
+
+    Returns:
+        Top K value (defaults to 5)
+    """
+    return int(os.getenv("RAG_DEFAULT_TOP_K", "5"))
+
+
+def is_opensearch_configured() -> bool:
+    """Check if OpenSearch is configured.
+
+    Returns:
+        True if OPENSEARCH_URL is set
+    """
+    return bool(get_opensearch_url())

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { MessageSquare, Users, Wrench, Sun, Moon, Bot, Sparkles, ChevronDown, Plus, Check } from 'lucide-react';
+import { MessageSquare, Users, Wrench, Sun, Moon, Bot, Sparkles, ChevronDown, Plus, Check, BookOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useSettingsStore } from '@/stores';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn';
 const navigation = [
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Skills', href: '/skills', icon: Sparkles },
+  { name: 'Knowledge', href: '/knowledge-base', icon: BookOpen },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Multi-Agent', href: '/multi-agent', icon: Users },
   { name: 'Builder', href: '/builder', icon: Wrench },
