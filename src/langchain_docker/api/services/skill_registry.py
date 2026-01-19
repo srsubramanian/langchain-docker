@@ -743,7 +743,6 @@ class JiraSkill(Skill):
             bearer_token: Jira Bearer token (defaults to JIRA_BEARER_TOKEN env var)
             api_version: API version "2" or "3" (defaults to JIRA_API_VERSION env var)
         """
-        logger.info("[Jira Debug] JiraSkill.__init__() called")
         self.id = "jira"
         self.name = "Jira Query Expert"
         self.description = "Query Jira issues, sprints, projects, and users (read-only)"
@@ -751,19 +750,12 @@ class JiraSkill(Skill):
         self.is_builtin = True
         self.version = "1.0.0"
 
-        # Load config values and log them
+        # Load config values
         self.url = url or get_jira_url()
         self.bearer_token = bearer_token or get_jira_bearer_token()
         self.api_version = api_version or get_jira_api_version()
 
-        logger.info(f"[Jira Debug] JiraSkill initialized:")
-        logger.info(f"[Jira Debug]   URL: {self.url}")
-        logger.info(f"[Jira Debug]   Bearer token configured: {bool(self.bearer_token)}")
-        if self.bearer_token:
-            token_preview = self.bearer_token[:20] + "..." if len(self.bearer_token) > 20 else "[short token]"
-            logger.info(f"[Jira Debug]   Token preview: {token_preview}")
-        logger.info(f"[Jira Debug]   API version: {self.api_version}")
-        logger.info(f"[Jira Debug]   is_jira_configured(): {is_jira_configured()}")
+        logger.info(f"[Jira] Initialized: url={self.url}, api_version={self.api_version}, token_configured={bool(self.bearer_token)}")
 
         self._skill_dir = SKILLS_DIR / "jira"
         self._session = None
@@ -779,29 +771,19 @@ class JiraSkill(Skill):
         Returns:
             Configured requests session or None if not configured
         """
-        logger.info(f"[Jira Debug] _get_session() called")
-        logger.info(f"[Jira Debug] URL configured: {bool(self.url)}")
-        logger.info(f"[Jira Debug] URL value: {self.url}")
-        logger.info(f"[Jira Debug] Bearer token configured: {bool(self.bearer_token)}")
-        if self.bearer_token:
-            token_preview = self.bearer_token[:20] + "..." if len(self.bearer_token) > 20 else self.bearer_token
-            logger.info(f"[Jira Debug] Token prefix: {token_preview}")
-
         if not self.url or not self.bearer_token:
-            logger.warning("[Jira Debug] Missing URL or bearer token - returning None")
+            logger.warning("[Jira] Not configured - missing URL or bearer token")
             return None
 
         if self._session is None:
             import requests
-
-            logger.info("[Jira Debug] Creating new requests session")
             self._session = requests.Session()
             self._session.headers.update({
                 "Authorization": f"Bearer {self.bearer_token}",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             })
-            logger.info("[Jira Debug] Session headers configured")
+            logger.info("[Jira] Session created with Bearer token auth")
 
         return self._session
 
@@ -901,36 +883,49 @@ class JiraSkill(Skill):
         Returns:
             JSON response as dictionary or error dict
         """
-        logger.info(f"[Jira Debug] _api_get() called")
-        logger.info(f"[Jira Debug] Endpoint: {endpoint}")
-        logger.info(f"[Jira Debug] Params: {params}")
-
         session = self._get_session()
         if not session:
-            logger.error("[Jira Debug] No session - Jira not configured")
+            logger.error("[Jira API] Not configured - missing JIRA_URL or JIRA_BEARER_TOKEN")
             return {"error": "Jira not configured. Set JIRA_URL and JIRA_BEARER_TOKEN environment variables."}
 
         url = f"{self.url.rstrip('/')}{endpoint}"
-        logger.info(f"[Jira Debug] Full URL: {url}")
+        logger.info(f"[Jira API] GET {url} params={params}")
 
         try:
-            logger.info("[Jira Debug] Making GET request...")
             response = session.get(url, params=params, timeout=30)
-            logger.info(f"[Jira Debug] Response status code: {response.status_code}")
-            logger.info(f"[Jira Debug] Response headers: {dict(response.headers)}")
+            logger.info(f"[Jira API] Response: {response.status_code}")
+
+            # Handle auth errors with clear messaging
+            if response.status_code == 401:
+                logger.error(f"[Jira API] AUTH ERROR 401: Token expired or invalid. Please refresh your OAuth token.")
+                logger.error(f"[Jira API] Response: {response.text[:500]}")
+                return {"error": "Jira authentication failed (401). Your OAuth token may be expired. Please refresh it."}
+
+            if response.status_code == 403:
+                logger.error(f"[Jira API] AUTH ERROR 403: Forbidden. Token may lack required scopes.")
+                logger.error(f"[Jira API] Response: {response.text[:500]}")
+                return {"error": "Jira forbidden (403). Your token may lack required scopes (read:jira-work, read:jira-user)."}
 
             if response.status_code >= 400:
-                logger.error(f"[Jira Debug] Error response body: {response.text[:500]}")
+                # Try to extract Jira error message
+                error_detail = response.text[:500]
+                try:
+                    error_json = response.json()
+                    if "errorMessages" in error_json:
+                        error_detail = "; ".join(error_json["errorMessages"])
+                    elif "message" in error_json:
+                        error_detail = error_json["message"]
+                except Exception:
+                    pass
+                logger.error(f"[Jira API] ERROR {response.status_code}: {error_detail}")
+                return {"error": f"Jira API error ({response.status_code}): {error_detail}"}
 
             response.raise_for_status()
             result = response.json()
-            logger.info(f"[Jira Debug] Response JSON keys: {list(result.keys()) if isinstance(result, dict) else 'list'}")
+            logger.info(f"[Jira API] Success - response keys: {list(result.keys()) if isinstance(result, dict) else 'list'}")
             return result
         except Exception as e:
-            logger.error(f"[Jira Debug] Exception type: {type(e).__name__}")
-            logger.error(f"[Jira Debug] Exception message: {str(e)}")
-            import traceback
-            logger.error(f"[Jira Debug] Traceback:\n{traceback.format_exc()}")
+            logger.error(f"[Jira API] Exception: {type(e).__name__}: {str(e)}")
             return {"error": f"Jira API error: {str(e)}"}
 
     def get_file_content(self) -> str:

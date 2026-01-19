@@ -1176,6 +1176,15 @@ uv run langchain-docker stream
    export AWS_SECRET_ACCESS_KEY=your-secret
    ```
 
+   **Tip: Auto-refresh SSO credentials** (if your session expires every 60 minutes):
+   ```bash
+   # Run 8 times (covers ~7 hours), logs to file
+   for i in {1..8}; do echo "AWS login $i/8 at $(date)"; aws sso login --profile your-profile; sleep 3300; done >> /tmp/aws-refresh.log 2>&1 &
+
+   # Check status anytime
+   tail -f /tmp/aws-refresh.log
+   ```
+
 2. **Enable Bedrock models**:
    - Visit https://console.aws.amazon.com/bedrock/
    - Navigate to "Model access"
