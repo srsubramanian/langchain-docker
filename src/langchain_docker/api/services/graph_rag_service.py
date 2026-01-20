@@ -7,8 +7,11 @@ PropertyGraphIndex with Neo4j as the graph store. It enables:
 - Hybrid search combining graph and vector approaches
 """
 
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from langchain_docker.core.config import (
@@ -119,6 +122,11 @@ class GraphRAGService:
         self._initialized = False
         self._initialization_error: str | None = None
 
+        # Thread pool for running LlamaIndex operations that use asyncio.run()
+        # This is needed because LlamaIndex's entity extraction uses asyncio.run()
+        # which doesn't work inside FastAPI's existing event loop
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="graph_rag_")
+
         # Attempt initialization if configuration is present
         if self._neo4j_url and self._neo4j_password:
             self._initialize()
@@ -204,6 +212,10 @@ class GraphRAGService:
         Uses LlamaIndex SchemaLLMPathExtractor to identify entities and
         relationships in the document chunks, then stores them in Neo4j.
 
+        Note: Entity extraction is run in a separate thread because LlamaIndex
+        uses asyncio.run() internally, which doesn't work inside FastAPI's
+        existing event loop.
+
         Args:
             document_id: Source document ID for tracking
             chunks: List of chunk dicts with 'content' and optional 'metadata'
@@ -233,6 +245,37 @@ class GraphRAGService:
                 error="GraphRAG service not available",
             )
 
+        try:
+            # Run extraction in a separate thread to avoid event loop conflicts
+            # LlamaIndex's SchemaLLMPathExtractor uses asyncio.run() internally
+            future = self._executor.submit(
+                self._extract_and_store_sync,
+                document_id,
+                chunks,
+                metadata,
+            )
+            return future.result(timeout=120)  # 2 minute timeout for extraction
+
+        except Exception as e:
+            logger.error(f"Entity extraction failed for document '{document_id}': {e}")
+            return ExtractionResult(
+                document_id=document_id,
+                chunks_processed=0,
+                status="failed",
+                error=str(e),
+            )
+
+    def _extract_and_store_sync(
+        self,
+        document_id: str,
+        chunks: list[dict[str, Any]],
+        metadata: dict[str, Any] | None,
+    ) -> ExtractionResult:
+        """Synchronous extraction implementation (runs in thread pool).
+
+        This method runs in a separate thread to avoid conflicts with
+        FastAPI's event loop when LlamaIndex calls asyncio.run().
+        """
         try:
             from llama_index.core import Document, Settings
             from llama_index.core.indices.property_graph import SchemaLLMPathExtractor
@@ -283,7 +326,7 @@ class GraphRAGService:
             )
 
         except Exception as e:
-            logger.error(f"Entity extraction failed for document '{document_id}': {e}")
+            logger.error(f"Entity extraction (sync) failed for document '{document_id}': {e}")
             return ExtractionResult(
                 document_id=document_id,
                 chunks_processed=0,
