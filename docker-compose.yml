@@ -42,7 +42,7 @@ services:
 
   # Neo4j for Graph RAG (knowledge graph)
   neo4j:
-    image: ${NEO4J_IMAGE:-neo4j:5.15-community}
+    image: ${NEO4J_IMAGE:-neo4j:5.26-community}
     container_name: langchain-neo4j
     ports:
       - "7474:7474"  # Browser UI
