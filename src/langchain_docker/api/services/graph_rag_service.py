@@ -15,7 +15,12 @@ from functools import partial
 from typing import Any
 
 from langchain_docker.core.config import (
+    get_graph_rag_aws_region,
+    get_graph_rag_embed_model,
+    get_graph_rag_embed_provider,
     get_graph_rag_entities,
+    get_graph_rag_llm_model,
+    get_graph_rag_llm_provider,
     get_graph_rag_relations,
     get_neo4j_password,
     get_neo4j_url,
@@ -99,8 +104,11 @@ class GraphRAGService:
         neo4j_url: str | None = None,
         neo4j_username: str | None = None,
         neo4j_password: str | None = None,
-        llm_model: str = "gpt-4o-mini",
-        embed_model: str = "text-embedding-3-small",
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+        embed_provider: str | None = None,
+        embed_model: str | None = None,
+        aws_region: str | None = None,
     ):
         """Initialize GraphRAG service.
 
@@ -108,14 +116,26 @@ class GraphRAGService:
             neo4j_url: Neo4j Bolt URL (defaults to env NEO4J_URL)
             neo4j_username: Neo4j username (defaults to env NEO4J_USERNAME)
             neo4j_password: Neo4j password (defaults to env NEO4J_PASSWORD)
-            llm_model: OpenAI model for entity extraction
-            embed_model: OpenAI model for embeddings
+            llm_provider: LLM provider - "openai" or "bedrock" (defaults to env)
+            llm_model: LLM model for entity extraction (defaults to env)
+            embed_provider: Embedding provider - "openai" or "bedrock" (defaults to env)
+            embed_model: Embedding model (defaults to env)
+            aws_region: AWS region for Bedrock (defaults to env)
         """
         self._neo4j_url = neo4j_url or get_neo4j_url()
         self._neo4j_username = neo4j_username or get_neo4j_username()
         self._neo4j_password = neo4j_password or get_neo4j_password()
-        self._llm_model = llm_model
-        self._embed_model = embed_model
+
+        # LLM configuration
+        self._llm_provider = llm_provider or get_graph_rag_llm_provider()
+        self._llm_model = llm_model or get_graph_rag_llm_model()
+
+        # Embedding configuration
+        self._embed_provider = embed_provider or get_graph_rag_embed_provider()
+        self._embed_model = embed_model or get_graph_rag_embed_model()
+
+        # AWS configuration for Bedrock
+        self._aws_region = aws_region or get_graph_rag_aws_region()
 
         self._graph_store = None
         self._index = None
@@ -140,19 +160,20 @@ class GraphRAGService:
         """Initialize LlamaIndex components.
 
         Sets up:
-        - LlamaIndex Settings with OpenAI LLM and embeddings
+        - LlamaIndex Settings with configurable LLM (OpenAI or Bedrock)
+        - LlamaIndex Settings with configurable embeddings (OpenAI or Bedrock)
         - Neo4jPropertyGraphStore connection
         - PropertyGraphIndex for entity-aware retrieval
         """
         try:
             from llama_index.core import PropertyGraphIndex, Settings
-            from llama_index.embeddings.openai import OpenAIEmbedding
             from llama_index.graph_stores.neo4j import Neo4jPropertyGraphStore
-            from llama_index.llms.openai import OpenAI
 
-            # Configure LlamaIndex global settings
-            Settings.llm = OpenAI(model=self._llm_model, temperature=0)
-            Settings.embed_model = OpenAIEmbedding(model=self._embed_model)
+            # Configure LLM based on provider
+            Settings.llm = self._create_llm()
+
+            # Configure embeddings based on provider
+            Settings.embed_model = self._create_embed_model()
 
             # Connect to Neo4j
             self._graph_store = Neo4jPropertyGraphStore(
@@ -170,7 +191,9 @@ class GraphRAGService:
             self._initialized = True
             logger.info(
                 f"GraphRAGService initialized successfully: "
-                f"neo4j_url={self._neo4j_url}, llm={self._llm_model}"
+                f"neo4j_url={self._neo4j_url}, "
+                f"llm_provider={self._llm_provider}, llm_model={self._llm_model}, "
+                f"embed_provider={self._embed_provider}, embed_model={self._embed_model}"
             )
 
         except ImportError as e:
@@ -182,6 +205,83 @@ class GraphRAGService:
             self._initialization_error = str(e)
             logger.error(f"GraphRAGService initialization failed: {e}")
             self._initialized = False
+
+    def _create_llm(self):
+        """Create LLM instance based on configured provider.
+
+        Returns:
+            LlamaIndex LLM instance (OpenAI or BedrockConverse)
+
+        Raises:
+            ImportError: If required LlamaIndex package is not installed
+            ValueError: If unsupported provider is specified
+        """
+        if self._llm_provider == "bedrock":
+            try:
+                from llama_index.llms.bedrock_converse import BedrockConverse
+
+                logger.info(
+                    f"Creating Bedrock LLM: model={self._llm_model}, "
+                    f"region={self._aws_region}"
+                )
+                return BedrockConverse(
+                    model=self._llm_model,
+                    temperature=0,
+                    region_name=self._aws_region,
+                )
+            except ImportError:
+                raise ImportError(
+                    "llama-index-llms-bedrock-converse is required for Bedrock LLM. "
+                    "Install with: pip install llama-index-llms-bedrock-converse"
+                )
+        elif self._llm_provider == "openai":
+            from llama_index.llms.openai import OpenAI
+
+            logger.info(f"Creating OpenAI LLM: model={self._llm_model}")
+            return OpenAI(model=self._llm_model, temperature=0)
+        else:
+            raise ValueError(
+                f"Unsupported LLM provider: {self._llm_provider}. "
+                "Use 'openai' or 'bedrock'."
+            )
+
+    def _create_embed_model(self):
+        """Create embedding model based on configured provider.
+
+        Returns:
+            LlamaIndex embedding model instance (OpenAI or Bedrock)
+
+        Raises:
+            ImportError: If required LlamaIndex package is not installed
+            ValueError: If unsupported provider is specified
+        """
+        if self._embed_provider == "bedrock":
+            try:
+                from llama_index.embeddings.bedrock import BedrockEmbedding
+
+                logger.info(
+                    f"Creating Bedrock Embedding: model={self._embed_model}, "
+                    f"region={self._aws_region}"
+                )
+                return BedrockEmbedding(
+                    model_name=self._embed_model,
+                    region_name=self._aws_region,
+                )
+            except ImportError:
+                raise ImportError(
+                    "llama-index-embeddings-bedrock is required for Bedrock embeddings. "
+                    "Install with: pip install llama-index-embeddings-bedrock"
+                )
+        elif self._embed_provider == "openai":
+            from llama_index.embeddings.openai import OpenAIEmbedding
+
+            logger.info(f"Creating OpenAI Embedding: model={self._embed_model}")
+            return OpenAIEmbedding(model=self._embed_model)
+        else:
+            raise ValueError(
+                f"Unsupported embedding provider: {self._embed_provider}. "
+                "Use 'openai' or 'bedrock'."
+            )
 
     @property
     def is_available(self) -> bool:
@@ -581,6 +681,10 @@ class GraphRAGService:
                 "relationship_count": relationship_count,
                 "entity_types": entity_types,
                 "neo4j_url": self._neo4j_url,
+                "llm_provider": self._llm_provider,
+                "llm_model": self._llm_model,
+                "embed_provider": self._embed_provider,
+                "embed_model": self._embed_model,
             }
 
         except Exception as e:

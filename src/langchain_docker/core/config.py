@@ -527,3 +527,76 @@ def is_neo4j_configured() -> bool:
         True if NEO4J_URL and NEO4J_PASSWORD are set
     """
     return bool(get_neo4j_url() and get_neo4j_password())
+
+
+def get_graph_rag_llm_provider() -> str:
+    """Get the LLM provider for GraphRAG entity extraction.
+
+    Supported providers:
+    - "openai": Uses OpenAI models (default)
+    - "bedrock": Uses AWS Bedrock models (e.g., Claude Sonnet)
+
+    Returns:
+        Provider name (lowercase)
+    """
+    return os.getenv("GRAPH_RAG_LLM_PROVIDER", "openai").lower()
+
+
+def get_graph_rag_llm_model() -> str:
+    """Get the LLM model for GraphRAG entity extraction.
+
+    Default depends on the provider:
+    - OpenAI: gpt-4o-mini
+    - Bedrock: anthropic.claude-3-5-sonnet-20241022-v2:0
+
+    Returns:
+        Model identifier string
+    """
+    provider = get_graph_rag_llm_provider()
+    if provider == "bedrock":
+        default = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    else:
+        default = "gpt-4o-mini"
+    return os.getenv("GRAPH_RAG_LLM_MODEL", default)
+
+
+def get_graph_rag_embed_provider() -> str:
+    """Get the embedding provider for GraphRAG.
+
+    Supported providers:
+    - "openai": Uses OpenAI embeddings (default)
+    - "bedrock": Uses AWS Bedrock embeddings (Titan)
+
+    Returns:
+        Provider name (lowercase)
+    """
+    return os.getenv("GRAPH_RAG_EMBED_PROVIDER", "openai").lower()
+
+
+def get_graph_rag_embed_model() -> str:
+    """Get the embedding model for GraphRAG.
+
+    Default depends on the provider:
+    - OpenAI: text-embedding-3-small
+    - Bedrock: amazon.titan-embed-text-v2:0
+
+    Returns:
+        Model identifier string
+    """
+    provider = get_graph_rag_embed_provider()
+    if provider == "bedrock":
+        default = "amazon.titan-embed-text-v2:0"
+    else:
+        default = "text-embedding-3-small"
+    return os.getenv("GRAPH_RAG_EMBED_MODEL", default)
+
+
+def get_graph_rag_aws_region() -> str:
+    """Get AWS region for Bedrock GraphRAG.
+
+    Falls back to AWS_DEFAULT_REGION if GRAPH_RAG_AWS_REGION not set.
+
+    Returns:
+        AWS region string
+    """
+    return os.getenv("GRAPH_RAG_AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1")

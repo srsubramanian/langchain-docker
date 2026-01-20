@@ -333,6 +333,10 @@ async def get_graph_stats(
         relationship_count=stats.get("relationship_count", 0),
         entity_types=stats.get("entity_types", {}),
         neo4j_url=stats.get("neo4j_url"),
+        llm_provider=stats.get("llm_provider"),
+        llm_model=stats.get("llm_model"),
+        embed_provider=stats.get("embed_provider"),
+        embed_model=stats.get("embed_model"),
         error=stats.get("error") or stats.get("message"),
     )
 

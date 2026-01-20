@@ -116,6 +116,10 @@ class GraphStatsResponse(BaseModel):
     relationship_count: int = Field(0, description="Total number of relationships")
     entity_types: dict[str, int] = Field(default_factory=dict, description="Entity type distribution")
     neo4j_url: str | None = Field(None, description="Neo4j connection URL")
+    llm_provider: str | None = Field(None, description="LLM provider (openai or bedrock)")
+    llm_model: str | None = Field(None, description="LLM model for entity extraction")
+    embed_provider: str | None = Field(None, description="Embedding provider (openai or bedrock)")
+    embed_model: str | None = Field(None, description="Embedding model for vector search")
     error: str | None = Field(None, description="Error message if unavailable")
 
 
