@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -355,19 +357,43 @@ class MCPServerManager:
             env = os.environ.copy()
             env.update(config.env)
 
+            # Resolve command path (important for Windows where PATH lookup differs)
+            command = config.command
+            resolved_command = shutil.which(command)
+
+            if resolved_command:
+                command = resolved_command
+                logger.debug(f"Resolved command '{config.command}' to '{command}'")
+            else:
+                logger.warning(f"Could not resolve command '{command}' in PATH")
+
             # Build command
-            cmd = [config.command] + config.args
+            cmd = [command] + config.args
 
             logger.info(f"Starting MCP server '{server_id}': {' '.join(cmd)}")
 
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                )
+                # On Windows, we need shell=True for commands like npx/node
+                # that are actually .cmd/.bat wrapper scripts
+                if sys.platform == "win32":
+                    # Use shell on Windows to properly handle PATH and .cmd wrappers
+                    shell_cmd = " ".join(cmd)
+                    logger.debug(f"Using shell execution on Windows: {shell_cmd}")
+                    process = await asyncio.create_subprocess_shell(
+                        shell_cmd,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=env,
+                    )
+                else:
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=env,
+                    )
             except Exception as e:
                 logger.error(f"Failed to start MCP server '{server_id}': {e}")
                 raise RuntimeError(f"Failed to start MCP server: {e}")
