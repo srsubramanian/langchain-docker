@@ -104,6 +104,13 @@ class MCPToolService:
             logger.info(
                 f"Discovered {len(tools)} tools from MCP server '{server_id}'"
             )
+            # Log tool schemas for debugging
+            for tool in tools:
+                tool_name = tool.get("name", "unknown")
+                input_schema = tool.get("inputSchema", {})
+                logger.debug(
+                    f"Tool '{tool_name}' schema: {input_schema}"
+                )
             return tools
         except Exception as e:
             logger.error(f"Failed to discover tools from '{server_id}': {e}")
@@ -130,13 +137,24 @@ class MCPToolService:
         if status != "running":
             await self._server_manager.start_server(server_id)
 
+        # Filter out None values from arguments to avoid sending undefined
+        # MCP servers may reject arguments with null/undefined values
+        filtered_arguments = {
+            k: v for k, v in arguments.items() if v is not None
+        }
+
+        logger.debug(
+            f"Calling MCP tool '{tool_name}' on server '{server_id}' "
+            f"with arguments: {filtered_arguments}"
+        )
+
         # Call tools/call RPC method
         result = await self._server_manager.send_request(
             server_id,
             "tools/call",
             {
                 "name": tool_name,
-                "arguments": arguments
+                "arguments": filtered_arguments
             }
         )
 
@@ -215,11 +233,18 @@ class MCPToolService:
                 model_name=f"{tool_name.title().replace('_', '')}Input"
             )
 
+            # Log the generated schema for debugging
+            schema_fields = list(args_schema.model_fields.keys()) if hasattr(args_schema, 'model_fields') else []
+            logger.debug(
+                f"Created LangChain tool '{tool_name}' with fields: {schema_fields}"
+            )
+
             # Create tool execution wrapper that captures server context
             tool_service = self
 
             async def async_tool_executor(**kwargs) -> str:
                 """Async executor for MCP tool calls."""
+                logger.debug(f"MCP tool '{name}' called with kwargs: {kwargs}")
                 result = await tool_service.call_tool(server_id, name, kwargs)
                 return str(result)
 
@@ -228,6 +253,7 @@ class MCPToolService:
                 import asyncio
                 import concurrent.futures
 
+                logger.debug(f"MCP tool '{name}' (sync) called with kwargs: {kwargs}")
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(
                         asyncio.run,
