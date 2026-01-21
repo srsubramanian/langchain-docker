@@ -120,9 +120,9 @@ class MCPToolService:
                 tool_name = tool.get("name", "unknown")
                 input_schema = tool.get("inputSchema", {})
                 required_fields = input_schema.get("required", [])
-                properties = list(input_schema.get("properties", {}).keys())
+                properties = input_schema.get("properties", {})
                 logger.info(
-                    f"Tool '{tool_name}': properties={properties}, required={required_fields}"
+                    f"Tool '{tool_name}': required={required_fields}, properties={properties}"
                 )
             return tools
         except Exception as e:
