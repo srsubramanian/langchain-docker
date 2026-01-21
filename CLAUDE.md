@@ -518,14 +518,27 @@ NEO4J_URL=bolt://localhost:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your-password
 
-# Entity types for extraction
-GRAPH_RAG_ENTITIES=Person,Organization,Project,Technology,Concept,Document
+# Entity types for extraction (automatically converted to UPPER_SNAKE_CASE)
+GRAPH_RAG_ENTITIES=Person,Organization,PaymentNetwork,API,BIN
 
 # Relationship types for extraction
 GRAPH_RAG_RELATIONS=works_on,leads,member_of,uses,related_to,part_of,contains
 ```
 
-> **Schema Evolution Guide**: See [docs/GRAPH_RAG_SCHEMA.md](docs/GRAPH_RAG_SCHEMA.md) for domain-specific schema configuration, the schema discovery tool, and evolution strategies.
+**Entity Type → Neo4j Label Conversion:**
+
+Entity types in `.env` are automatically converted to UPPER_SNAKE_CASE for Neo4j node labels. Acronyms are preserved:
+
+| Input (`.env`) | Neo4j Label |
+|----------------|-------------|
+| `PaymentNetwork` | `PAYMENT_NETWORK` |
+| `API` | `API` |
+| `BIN` | `BIN` |
+| `PaymentFacilitator` | `PAYMENT_FACILITATOR` |
+
+This ensures proper entity categorization in Neo4j. Without UPPERCASE conversion, entities would be stored with generic `__Node__` labels instead of typed labels.
+
+> **Schema Evolution Guide**: See [docs/GRAPH_RAG_SCHEMA.md](docs/GRAPH_RAG_SCHEMA.md) for domain-specific schema configuration, entity/relation naming conventions, and evolution strategies.
 
 **API Usage:**
 ```python
@@ -630,8 +643,8 @@ For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
 - `NEO4J_URL` - Neo4j Bolt URL (e.g., `bolt://localhost:7687`)
 - `NEO4J_USERNAME` - Neo4j username (default: `neo4j`)
 - `NEO4J_PASSWORD` - Neo4j password (required if enabled)
-- `GRAPH_RAG_ENTITIES` - Entity types for extraction (comma-separated)
-- `GRAPH_RAG_RELATIONS` - Relationship types for extraction (comma-separated)
+- `GRAPH_RAG_ENTITIES` - Entity types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
+- `GRAPH_RAG_RELATIONS` - Relationship types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
 
 ## Key Patterns
 

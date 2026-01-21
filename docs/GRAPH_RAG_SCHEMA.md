@@ -50,6 +50,24 @@ GRAPH_RAG_ENTITIES=Person,Organization,Merchant,PaymentNetwork,Transaction,...
 GRAPH_RAG_RELATIONS=processes,owns,complies_with,integrates_with,...
 ```
 
+### Entity Types and Neo4j Labels
+
+Entity types configured in `.env` are automatically converted to **UPPER_SNAKE_CASE** and become Neo4j node labels. This conversion preserves acronyms:
+
+| Input (`.env`) | Neo4j Label | Example Node |
+|----------------|-------------|--------------|
+| `PaymentNetwork` | `PAYMENT_NETWORK` | `(Visa:PAYMENT_NETWORK)` |
+| `API` | `API` | `(Stripe:API)` |
+| `BIN` | `BIN` | `(411111:BIN)` |
+| `PaymentFacilitator` | `PAYMENT_FACILITATOR` | `(Square:PAYMENT_FACILITATOR)` |
+
+**Why UPPERCASE?** LlamaIndex's SchemaLLMPathExtractor uses entity types as Neo4j labels. UPPERCASE naming:
+- Clearly distinguishes entity types from properties
+- Follows Neo4j labeling conventions
+- Improves LLM extraction accuracy
+
+You can write entity types in `.env` using any case (PascalCase, camelCase, snake_case) - they'll be normalized automatically.
+
 ### Schema Mode: `strict` vs Non-Strict
 
 In `graph_rag_service.py`, the extractor is configured with `strict=False`:
@@ -103,13 +121,25 @@ extractor = SchemaLLMPathExtractor(
 
 ### Strategy 1: Automatic Insights Logging (Recommended)
 
-When documents are uploaded with GraphRAG enabled, the system automatically logs schema insights to `logs/schema_insights.jsonl`. This captures entity and relationship types discovered during extraction.
+When documents are uploaded with GraphRAG enabled, the system automatically logs schema insights. This captures entity and relationship types discovered during extraction.
+
+**Storage:**
+- **Redis (primary)**: Durable storage across container restarts when `REDIS_URL` is configured
+- **In-memory (fallback)**: When Redis is not available
+
+**Redis Keys:**
+| Key | Type | Description |
+|-----|------|-------------|
+| `schema_insights:logs` | List | Recent extraction insight records (max 1000) |
+| `schema_insights:entity_counts` | Hash | Aggregated counts of discovered entity types |
+| `schema_insights:relation_counts` | Hash | Aggregated counts of discovered relation types |
+| `schema_insights:doc_count` | String | Total documents analyzed |
 
 **How it works:**
 1. Document is uploaded → GraphRAG extracts entities/relationships
-2. Extracted types are compared against configured schema
-3. New types (not in schema) are logged with occurrence counts
-4. Analyze logs to identify types to add to schema
+2. Extracted types are compared against configured schema (case-insensitive)
+3. New types (not in schema) are logged with occurrence counts to Redis
+4. Analyze insights via API or CLI to identify types to add to schema
 
 **View insights via API:**
 ```bash
@@ -266,12 +296,29 @@ GRAPH_RAG_ENTITIES=Person,Organization,Merchant,Acquirer,Issuer,PaymentNetwork,.
 
 ### 2. Use Consistent Naming Conventions
 
-| Convention | Example | Avoid |
+**In `.env` file** (input):
+| Convention | Example | Notes |
 |------------|---------|-------|
-| PascalCase for entities | `PaymentNetwork` | `payment_network`, `PAYMENT_NETWORK` |
-| snake_case for relations | `settles_with` | `SettlesWith`, `SETTLES_WITH` |
-| Singular nouns for entities | `Transaction` | `Transactions` |
-| Active verbs for relations | `processes` | `processed_by` |
+| PascalCase for entities | `PaymentNetwork` | Automatically converted to `PAYMENT_NETWORK` |
+| snake_case for relations | `settles_with` | Automatically converted to `SETTLES_WITH` |
+| Singular nouns for entities | `Transaction` | Not `Transactions` |
+| Active verbs for relations | `processes` | Not `processed_by` |
+
+**Automatic Conversion:**
+```
+Input (.env)              →  Neo4j Label
+─────────────────────────────────────────
+PaymentNetwork            →  PAYMENT_NETWORK
+API                       →  API (acronyms preserved)
+BIN                       →  BIN
+cardNetwork               →  CARD_NETWORK
+already_snake_case        →  ALREADY_SNAKE_CASE
+```
+
+The conversion function handles:
+- PascalCase → UPPER_SNAKE_CASE (`PaymentNetwork` → `PAYMENT_NETWORK`)
+- Acronym preservation (`API` → `API`, not `A_P_I`)
+- Mixed case (`APIKey` → `API_KEY`)
 
 ### 3. Balance Granularity
 
@@ -344,6 +391,54 @@ curl -X POST http://localhost:8000/api/v1/kb/reindex
 1. **Add more specific relations** instead of generic "related_to"
 2. **Use active voice** verbs (processes, not processed_by)
 3. **Consider directionality** (A → owns → B vs B → owned_by → A)
+
+### Entity Types Showing as Generic `entity` Label
+
+If entities appear in Neo4j with generic labels like `["__Node__", "__Entity__", "entity"]` instead of typed labels like `PAYMENT_NETWORK`:
+
+1. **Check APOC is installed**: The system uses `apoc.create.addLabels()` to set entity type labels
+   ```cypher
+   SHOW PROCEDURES YIELD name WHERE name CONTAINS 'apoc.create' RETURN name
+   ```
+
+2. **Verify extraction is running**: Check for extraction logs:
+   ```bash
+   tail -f /tmp/api-server.log | grep -i "extraction\|entities"
+   ```
+
+3. **Inspect node labels**:
+   ```cypher
+   MATCH (n:__Entity__)
+   RETURN DISTINCT labels(n), count(n)
+   ORDER BY count(n) DESC
+   ```
+
+4. **Check entity type is being extracted**: Look for typed labels on recent nodes:
+   ```cypher
+   MATCH (n:__Entity__)
+   WHERE n.collection = 'your_collection'
+   RETURN [l IN labels(n) WHERE NOT l IN ['__Node__', '__Entity__', 'entity']] as types, n.name
+   LIMIT 10
+   ```
+
+**Expected result for properly typed entities:**
+```
+types                    | name
+["PAYMENT_NETWORK"]      | "Visa"
+["ISSUER"]               | "Chase Bank"
+["PAYMENT_PROCESSOR"]    | "First Data"
+```
+
+### Schema Insights Not Persisting
+
+If schema insights are lost on restart:
+
+1. **Check Redis connection**: Ensure `REDIS_URL` is set in `.env`
+2. **Verify Redis keys exist**:
+   ```bash
+   docker exec langchain-redis redis-cli KEYS "schema_insights:*"
+   ```
+3. **Check storage type in logs**: Look for "SchemaInsightsLogger initialized: storage=Redis" on startup
 
 ---
 
