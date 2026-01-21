@@ -50,14 +50,25 @@ def json_schema_to_pydantic(
         # Build Field with description
         description = prop.get("description", "")
 
-        if name in required:
+        # Check if field has an explicit default value in the schema
+        has_explicit_default = "default" in prop
+
+        # Treat field as required if:
+        # 1. It's in the required array, OR
+        # 2. It has no explicit default value (many MCP servers don't mark required properly)
+        is_required = name in required or not has_explicit_default
+
+        if is_required:
             field_definitions[name] = (python_type, Field(description=description))
+            logger.debug(f"Field '{name}' treated as required (in_required={name in required}, has_default={has_explicit_default})")
         else:
-            # Optional field with None default
+            # Optional field with schema default or None
+            default_value = prop.get("default")
             field_definitions[name] = (
                 python_type | None,
-                Field(default=None, description=description)
+                Field(default=default_value, description=description)
             )
+            logger.debug(f"Field '{name}' treated as optional with default={default_value}")
 
     return create_model(model_name, **field_definitions)
 
