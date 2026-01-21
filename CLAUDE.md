@@ -525,6 +525,8 @@ GRAPH_RAG_ENTITIES=Person,Organization,Project,Technology,Concept,Document
 GRAPH_RAG_RELATIONS=works_on,leads,member_of,uses,related_to,part_of,contains
 ```
 
+> **Schema Evolution Guide**: See [docs/GRAPH_RAG_SCHEMA.md](docs/GRAPH_RAG_SCHEMA.md) for domain-specific schema configuration, the schema discovery tool, and evolution strategies.
+
 **API Usage:**
 ```python
 # Search with graph-aware retrieval

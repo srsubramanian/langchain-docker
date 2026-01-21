@@ -139,3 +139,27 @@ class EntityContextResponse(BaseModel):
     connections: list[EntityConnection] = Field(default_factory=list, description="Connected entities")
     total_nodes: int = Field(0, description="Total nodes found")
     error: str | None = Field(None, description="Error message if failed")
+
+
+class SchemaSuggestion(BaseModel):
+    """Schema suggestion from insights analysis."""
+
+    type: str = Field(..., description="Suggested entity or relation type")
+    occurrences: int = Field(..., description="Number of times discovered")
+
+
+class SchemaInsightsResponse(BaseModel):
+    """Response schema for schema insights analysis."""
+
+    analyzed_documents: int = Field(..., description="Number of documents analyzed")
+    configured_entities: list[str] = Field(default_factory=list, description="Currently configured entity types")
+    configured_relations: list[str] = Field(default_factory=list, description="Currently configured relation types")
+    suggested_entities: list[SchemaSuggestion] = Field(
+        default_factory=list, description="Entity types discovered not in schema"
+    )
+    suggested_relations: list[SchemaSuggestion] = Field(
+        default_factory=list, description="Relation types discovered not in schema"
+    )
+    env_update: dict[str, str] | None = Field(
+        None, description="Suggested .env updates if new types found"
+    )

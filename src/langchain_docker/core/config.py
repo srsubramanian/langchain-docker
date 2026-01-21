@@ -494,17 +494,47 @@ def get_neo4j_password() -> str | None:
     return os.getenv("NEO4J_PASSWORD") or None
 
 
+def _to_upper_snake_case(s: str) -> str:
+    """Convert a string to UPPER_SNAKE_CASE.
+
+    Handles PascalCase, camelCase, and existing snake_case.
+    Preserves consecutive uppercase letters (acronyms like API, BIN, MCC).
+
+    Examples:
+        PaymentNetwork -> PAYMENT_NETWORK
+        API -> API
+        cardNetwork -> CARD_NETWORK
+        already_snake -> ALREADY_SNAKE
+    """
+    import re
+    # Insert underscore before uppercase letters that follow lowercase letters
+    # But NOT between consecutive uppercase letters (preserves acronyms)
+    s = re.sub(r'([a-z])([A-Z])', r'\1_\2', s)
+    # Handle transition from acronym to word: APIKey -> API_KEY
+    s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', s)
+    return s.upper().replace(' ', '_').replace('__', '_')
+
+
 def get_graph_rag_entities() -> list[str]:
     """Get entity types for knowledge graph extraction.
 
     These entity types are used by LlamaIndex SchemaLLMPathExtractor
     to guide entity extraction from documents.
 
+    Entity types are normalized to UPPERCASE for LlamaIndex compatibility,
+    which uses entity types as Neo4j node labels.
+
     Returns:
-        List of entity type names
+        List of entity type names (UPPERCASE)
     """
-    default = "Person,Organization,Project,Technology,Concept,Document"
-    return [e.strip() for e in os.getenv("GRAPH_RAG_ENTITIES", default).split(",")]
+    default = "PERSON,ORGANIZATION,PROJECT,TECHNOLOGY,CONCEPT,DOCUMENT"
+    entities = os.getenv("GRAPH_RAG_ENTITIES", default).split(",")
+    normalized = []
+    for e in entities:
+        e = e.strip()
+        if e:
+            normalized.append(_to_upper_snake_case(e))
+    return normalized
 
 
 def get_graph_rag_relations() -> list[str]:
@@ -513,11 +543,20 @@ def get_graph_rag_relations() -> list[str]:
     These relationship types are used by LlamaIndex SchemaLLMPathExtractor
     to guide relationship extraction between entities.
 
+    Relation types are normalized to UPPERCASE with underscores for
+    LlamaIndex/Neo4j compatibility.
+
     Returns:
-        List of relationship type names
+        List of relationship type names (UPPERCASE)
     """
-    default = "works_on,leads,member_of,uses,related_to,part_of,contains"
-    return [r.strip() for r in os.getenv("GRAPH_RAG_RELATIONS", default).split(",")]
+    default = "WORKS_ON,LEADS,MEMBER_OF,USES,RELATED_TO,PART_OF,CONTAINS"
+    relations = os.getenv("GRAPH_RAG_RELATIONS", default).split(",")
+    normalized = []
+    for r in relations:
+        r = r.strip()
+        if r:
+            normalized.append(_to_upper_snake_case(r))
+    return normalized
 
 
 def is_neo4j_configured() -> bool:

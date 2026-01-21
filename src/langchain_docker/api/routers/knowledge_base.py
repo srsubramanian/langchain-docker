@@ -17,6 +17,8 @@ from langchain_docker.api.schemas.knowledge_base import (
     FileUploadResponse,
     GraphStatsResponse,
     KBStatsResponse,
+    SchemaInsightsResponse,
+    SchemaSuggestion,
     SearchRequest,
     SearchResponse,
     SearchResultItem,
@@ -384,3 +386,57 @@ async def get_entity_context(
         connections=connections,
         total_nodes=context.get("total_nodes", 0),
     )
+
+
+@router.get("/graph/schema-insights", response_model=SchemaInsightsResponse)
+async def get_schema_insights(
+    min_occurrences: int = 2,
+) -> SchemaInsightsResponse:
+    """Get schema evolution insights from extraction logs.
+
+    Analyzes the extraction insights log to identify entity and relationship
+    types that were discovered during document ingestion but are not in the
+    current schema configuration.
+
+    Args:
+        min_occurrences: Minimum occurrences to suggest a type (default: 2)
+
+    Returns:
+        Schema insights with suggested updates
+    """
+    try:
+        from langchain_docker.api.services.schema_insights import (
+            get_schema_insights_logger,
+        )
+        from langchain_docker.core.config import (
+            get_graph_rag_entities,
+            get_graph_rag_relations,
+        )
+
+        insights_logger = get_schema_insights_logger()
+        suggestions = insights_logger.generate_schema_suggestions(
+            min_occurrences=min_occurrences
+        )
+
+        return SchemaInsightsResponse(
+            analyzed_documents=suggestions["analyzed_documents"],
+            configured_entities=get_graph_rag_entities(),
+            configured_relations=get_graph_rag_relations(),
+            suggested_entities=[
+                SchemaSuggestion(type=s["type"], occurrences=s["occurrences"])
+                for s in suggestions.get("suggested_entities", [])
+            ],
+            suggested_relations=[
+                SchemaSuggestion(type=s["type"], occurrences=s["occurrences"])
+                for s in suggestions.get("suggested_relations", [])
+            ],
+            env_update=suggestions.get("env_update"),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get schema insights: {e}")
+        return SchemaInsightsResponse(
+            analyzed_documents=0,
+            configured_entities=[],
+            configured_relations=[],
+        )

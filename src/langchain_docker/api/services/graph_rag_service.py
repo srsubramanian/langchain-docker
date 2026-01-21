@@ -397,19 +397,58 @@ class GraphRAGService:
                 )
 
             # Create schema-guided extractor
+            # Get configured entity and relation types (normalized to UPPERCASE)
+            entities = get_graph_rag_entities()
+            relations = get_graph_rag_relations()
+
+            logger.info(f"GraphRAG extraction using entities: {entities[:5]}... ({len(entities)} total)")
+            logger.info(f"GraphRAG extraction using relations: {relations[:5]}... ({len(relations)} total)")
+
+            # Note: strict=False allows entities outside schema for flexibility.
+            # strict=True requires Literal types which are complex with dynamic lists.
+            # Using UPPERCASE naming convention helps guide the LLM to proper types.
             extractor = SchemaLLMPathExtractor(
                 llm=Settings.llm,
-                possible_entities=get_graph_rag_entities(),
-                possible_relations=get_graph_rag_relations(),
-                strict=False,  # Allow entities outside schema for flexibility
+                possible_entities=entities,
+                possible_relations=relations,
+                strict=False,
             )
 
-            # Insert documents with entity extraction
-            # This adds nodes to the index and extracts entities/relationships
-            self._index.insert_nodes(documents, kg_extractors=[extractor])
+            # Convert documents to TextNodes for processing
+            from llama_index.core.schema import TextNode
+            from llama_index.core.graph_stores.types import KG_NODES_KEY, KG_RELATIONS_KEY
 
-            # Get extraction stats from graph store
+            text_nodes = []
+            for doc in documents:
+                text_nodes.append(TextNode(
+                    text=doc.text,
+                    metadata=doc.metadata.copy(),
+                ))
+
+            # Run the extractor manually on each node
+            # This is needed because insert_nodes doesn't process kg_extractors
+            import asyncio
+            for node in text_nodes:
+                extracted_node = asyncio.run(extractor._aextract(node))
+                # The extractor stores entities and relations in metadata
+                if extracted_node and hasattr(extracted_node, 'metadata'):
+                    node.metadata.update(extracted_node.metadata)
+
+            # Insert nodes with extracted entities/relations in metadata
+            # PropertyGraphIndex._insert_nodes will process the KG_NODES_KEY and KG_RELATIONS_KEY
+            self._index._insert_nodes(text_nodes)
+
+            # Get extraction stats and details from graph store
             stats = self._get_extraction_stats(document_id)
+            details = self._get_extraction_details(document_id)
+
+            # Log schema insights for evolution tracking
+            self._log_schema_insights(
+                document_id=document_id,
+                entities=details["entities"],
+                relationships=details["relationships"],
+                filename=metadata.get("filename") if metadata else None,
+            )
 
             logger.info(
                 f"Extracted entities for document '{document_id}': "
@@ -466,6 +505,122 @@ class GraphRAGService:
             logger.warning(f"Failed to get extraction stats: {e}")
 
         return {"entities": 0, "relationships": 0}
+
+    def _get_extraction_details(
+        self, document_id: str
+    ) -> dict[str, list]:
+        """Get detailed extraction results for schema insights.
+
+        Queries Neo4j to get the actual entity names/types and relationships
+        extracted for a document. This data is used for schema evolution tracking.
+
+        Args:
+            document_id: Document ID to get details for
+
+        Returns:
+            Dict with 'entities' list of (name, type) tuples and
+            'relationships' list of (subject, predicate, object) tuples
+        """
+        entities: list[tuple[str, str]] = []
+        relationships: list[tuple[str, str, str]] = []
+
+        try:
+            # Get entities with their types
+            entity_query = """
+            MATCH (n)
+            WHERE n.document_id = $document_id
+               OR n.metadata_document_id = $document_id
+               OR any(label IN labels(n) WHERE label <> '__Entity__')
+            WITH n, labels(n) as node_labels
+            WHERE any(l IN node_labels WHERE l <> '__Entity__')
+            RETURN DISTINCT
+                coalesce(n.name, n.id, 'unknown') as name,
+                [l IN node_labels WHERE l <> '__Entity__'][0] as type
+            LIMIT 100
+            """
+            entity_result = self._graph_store.structured_query(
+                entity_query,
+                param_map={"document_id": document_id},
+            )
+            if entity_result:
+                for row in entity_result:
+                    name = row.get("name", "unknown")
+                    etype = row.get("type", "Unknown")
+                    if name and etype:
+                        entities.append((str(name), str(etype)))
+
+            # Get relationships with their types
+            rel_query = """
+            MATCH (a)-[r]->(b)
+            WHERE a.document_id = $document_id
+               OR a.metadata_document_id = $document_id
+               OR b.document_id = $document_id
+               OR b.metadata_document_id = $document_id
+            RETURN DISTINCT
+                coalesce(a.name, a.id, 'unknown') as subject,
+                type(r) as predicate,
+                coalesce(b.name, b.id, 'unknown') as object
+            LIMIT 100
+            """
+            rel_result = self._graph_store.structured_query(
+                rel_query,
+                param_map={"document_id": document_id},
+            )
+            if rel_result:
+                for row in rel_result:
+                    subj = row.get("subject", "unknown")
+                    pred = row.get("predicate", "RELATED_TO")
+                    obj = row.get("object", "unknown")
+                    if subj and pred and obj:
+                        relationships.append((str(subj), str(pred), str(obj)))
+
+        except Exception as e:
+            logger.warning(f"Failed to get extraction details for schema insights: {e}")
+
+        return {"entities": entities, "relationships": relationships}
+
+    def _log_schema_insights(
+        self,
+        document_id: str,
+        entities: list[tuple[str, str]],
+        relationships: list[tuple[str, str, str]],
+        filename: str | None = None,
+    ) -> None:
+        """Log extraction insights for schema evolution.
+
+        Captures entity and relationship types discovered during extraction
+        to help identify types that should be added to the schema.
+
+        Args:
+            document_id: Source document ID
+            entities: List of (name, type) tuples
+            relationships: List of (subject, predicate, object) tuples
+            filename: Optional source filename
+        """
+        try:
+            from langchain_docker.api.services.schema_insights import (
+                get_schema_insights_logger,
+            )
+
+            insights_logger = get_schema_insights_logger()
+            insight = insights_logger.log_extraction(
+                document_id=document_id,
+                entities=entities,
+                relationships=relationships,
+                filename=filename,
+            )
+
+            # Log summary if new types were discovered
+            if insight.entity_types_discovered or insight.relation_types_discovered:
+                logger.info(
+                    f"Schema evolution hint [{document_id}]: "
+                    f"new entity types={insight.entity_types_discovered}, "
+                    f"new relation types={insight.relation_types_discovered}"
+                )
+
+        except Exception as e:
+            # Don't fail extraction if insights logging fails
+            logger.debug(f"Failed to log schema insights: {e}")
 
     def search(
         self,

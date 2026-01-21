@@ -55,6 +55,16 @@ A comprehensive demonstration of LangChain foundational models with examples for
 
 > **Full Documentation**: See [docs/SKILLS_ARCHITECTURE.md](docs/SKILLS_ARCHITECTURE.md) for the complete architecture guide.
 
+### Knowledge Base & GraphRAG
+- **Vector Search**: OpenSearch-based semantic search with configurable embeddings
+- **Document Processing**: PDF (via Docling), Markdown, and text file support
+- **GraphRAG**: Entity and relationship extraction using LlamaIndex + Neo4j
+- **Schema Discovery**: Tools to evolve your domain-specific entity schema
+- **Hybrid Retrieval**: Combines vector similarity with graph traversal
+- **Multi-Provider**: OpenAI or AWS Bedrock for LLM and embeddings
+
+> **Schema Guide**: See [docs/GRAPH_RAG_SCHEMA.md](docs/GRAPH_RAG_SCHEMA.md) for domain-specific schema configuration and evolution strategies.
+
 ### Chainlit UI (Legacy)
 - **Interactive Chat Interface**: Web-based chat UI powered by Chainlit
 - **Real-time Streaming**: See AI responses as they're being generated
