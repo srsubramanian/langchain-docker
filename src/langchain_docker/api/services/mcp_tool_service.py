@@ -260,11 +260,23 @@ class MCPToolService:
             # Create tool execution wrapper that captures server context
             tool_service = self
 
+            # Get required fields from the schema for validation
+            required_fields = [
+                f for f, info in args_schema.model_fields.items()
+                if info.is_required()
+            ] if hasattr(args_schema, 'model_fields') else []
+
             async def async_tool_executor(**kwargs) -> str:
                 """Async executor for MCP tool calls."""
                 logger.info(f"MCP tool '{name}' invoked with kwargs: {kwargs}")
-                if not kwargs:
-                    logger.warning(f"MCP tool '{name}' called with NO arguments!")
+
+                # Check for missing required fields
+                missing = [f for f in required_fields if f not in kwargs or kwargs[f] is None]
+                if missing:
+                    error_msg = f"Missing required arguments for tool '{name}': {missing}. Please provide: {', '.join(missing)}"
+                    logger.error(error_msg)
+                    return error_msg
+
                 result = await tool_service.call_tool(server_id, name, kwargs)
                 return str(result)
 
@@ -274,8 +286,14 @@ class MCPToolService:
                 import concurrent.futures
 
                 logger.info(f"MCP tool '{name}' (sync) invoked with kwargs: {kwargs}")
-                if not kwargs:
-                    logger.warning(f"MCP tool '{name}' (sync) called with NO arguments!")
+
+                # Check for missing required fields
+                missing = [f for f in required_fields if f not in kwargs or kwargs[f] is None]
+                if missing:
+                    error_msg = f"Missing required arguments for tool '{name}': {missing}. Please provide: {', '.join(missing)}"
+                    logger.error(error_msg)
+                    return error_msg
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(
                         asyncio.run,
@@ -283,11 +301,16 @@ class MCPToolService:
                     )
                     return str(future.result())
 
+            # Build enhanced description that includes required args hint
+            enhanced_description = f"[{server_id}] {description}"
+            if required_fields:
+                enhanced_description += f" (Required args: {', '.join(required_fields)})"
+
             return StructuredTool.from_function(
                 func=sync_tool_executor,
                 coroutine=async_tool_executor,
                 name=tool_name,
-                description=f"[{server_id}] {description}",
+                description=enhanced_description,
                 args_schema=args_schema,
             )
 
