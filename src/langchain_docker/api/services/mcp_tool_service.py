@@ -108,8 +108,10 @@ class MCPToolService:
             for tool in tools:
                 tool_name = tool.get("name", "unknown")
                 input_schema = tool.get("inputSchema", {})
-                logger.debug(
-                    f"Tool '{tool_name}' schema: {input_schema}"
+                required_fields = input_schema.get("required", [])
+                properties = list(input_schema.get("properties", {}).keys())
+                logger.info(
+                    f"Tool '{tool_name}': properties={properties}, required={required_fields}"
                 )
             return tools
         except Exception as e:
@@ -143,9 +145,8 @@ class MCPToolService:
             k: v for k, v in arguments.items() if v is not None
         }
 
-        logger.debug(
-            f"Calling MCP tool '{tool_name}' on server '{server_id}' "
-            f"with arguments: {filtered_arguments}"
+        logger.info(
+            f"MCP call_tool '{tool_name}': raw_args={arguments}, filtered_args={filtered_arguments}"
         )
 
         # Call tools/call RPC method
@@ -233,18 +234,26 @@ class MCPToolService:
                 model_name=f"{tool_name.title().replace('_', '')}Input"
             )
 
-            # Log the generated schema for debugging
-            schema_fields = list(args_schema.model_fields.keys()) if hasattr(args_schema, 'model_fields') else []
-            logger.debug(
-                f"Created LangChain tool '{tool_name}' with fields: {schema_fields}"
-            )
+            # Log the generated schema for debugging - show which fields are required
+            if hasattr(args_schema, 'model_fields'):
+                field_info = {}
+                for field_name, field in args_schema.model_fields.items():
+                    is_required = field.is_required()
+                    field_info[field_name] = "required" if is_required else "optional"
+                logger.info(
+                    f"Created LangChain tool '{tool_name}' with fields: {field_info}"
+                )
+            else:
+                logger.info(f"Created LangChain tool '{tool_name}' (no model_fields)")
 
             # Create tool execution wrapper that captures server context
             tool_service = self
 
             async def async_tool_executor(**kwargs) -> str:
                 """Async executor for MCP tool calls."""
-                logger.debug(f"MCP tool '{name}' called with kwargs: {kwargs}")
+                logger.info(f"MCP tool '{name}' invoked with kwargs: {kwargs}")
+                if not kwargs:
+                    logger.warning(f"MCP tool '{name}' called with NO arguments!")
                 result = await tool_service.call_tool(server_id, name, kwargs)
                 return str(result)
 
@@ -253,7 +262,9 @@ class MCPToolService:
                 import asyncio
                 import concurrent.futures
 
-                logger.debug(f"MCP tool '{name}' (sync) called with kwargs: {kwargs}")
+                logger.info(f"MCP tool '{name}' (sync) invoked with kwargs: {kwargs}")
+                if not kwargs:
+                    logger.warning(f"MCP tool '{name}' (sync) called with NO arguments!")
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(
                         asyncio.run,
