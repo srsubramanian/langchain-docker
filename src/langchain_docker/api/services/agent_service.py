@@ -1739,6 +1739,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_key},
                         "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 100,
                     },
                     version="v2",
                 ):
@@ -1988,6 +1989,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_key},
                         "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 100,
                     },
                     version="v2",
                 ):
@@ -2368,27 +2370,38 @@ Always use the tools to interact with the database.""")
         sess_key = session_id or f"{user_id}:agent:{agent_id}"
         memory_metadata = None
 
-        # Cache key for compiled agent - includes provider/model/mcp so switching works
-        mcp_key = ",".join(sorted(mcp_servers)) if mcp_servers else "none"
-        cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}:mcp:{mcp_key}"
+        # Cache key for compiled agent - includes provider/model
+        # NOTE: Don't cache agents with MCP servers - they need fresh persistent sessions each request
+        cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}"
+        use_mcp_sessions = bool(mcp_servers and self._mcp_tool_service)
+
+        # MCP session context for persistent sessions (stateful servers like chrome-devtools)
+        mcp_session_ctx = None
 
         # Get or create compiled agent
         try:
-            if cache_key not in self._direct_sessions:
+            # For MCP servers, always create fresh agent with persistent session-bound tools
+            # This ensures browser state persists across tool calls
+            force_rebuild = use_mcp_sessions
+
+            if force_rebuild or cache_key not in self._direct_sessions:
                 llm = self.model_service.get_or_create(
                     provider=agent_provider,
                     model=agent_model,
                     temperature=agent_temp,
                 )
 
-                # Load MCP tools if specified
+                # Load MCP tools with persistent sessions if specified
                 mcp_tools = []
-                if mcp_servers and self._mcp_tool_service:
+                if use_mcp_sessions:
                     try:
-                        mcp_tools = await self._mcp_tool_service.get_langchain_tools(mcp_servers)
-                        logger.info(f"[Stream Agent] Loaded {len(mcp_tools)} MCP tools from {mcp_servers}")
+                        # Create persistent session context - keeps MCP subprocesses alive
+                        mcp_session_ctx = self._mcp_tool_service.get_tools_with_session(mcp_servers)
+                        mcp_tools = await mcp_session_ctx.__aenter__()
+                        logger.info(f"[Stream Agent] Loaded {len(mcp_tools)} MCP tools with persistent sessions from {mcp_servers}")
                     except Exception as e:
-                        logger.warning(f"[Stream Agent] Failed to load MCP tools: {e}")
+                        logger.warning(f"[Stream Agent] Failed to load MCP tools with sessions: {e}")
+                        mcp_session_ctx = None
 
                 if agent_type == "custom":
                     agent = self._build_agent_from_custom(agent_id, llm)
@@ -2495,6 +2508,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_key},
                         "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 100,
                     },
                     version="v2",
                 ):
@@ -2635,6 +2649,14 @@ Always use the tools to interact with the database.""")
         finally:
             # Reset session context
             _current_session_id.reset(token)
+
+            # Clean up MCP persistent sessions
+            if mcp_session_ctx:
+                try:
+                    await mcp_session_ctx.__aexit__(None, None, None)
+                    logger.info(f"[Stream Agent] Closed MCP persistent sessions for {agent_id}")
+                except Exception as e:
+                    logger.error(f"[Stream Agent] Error closing MCP sessions: {e}")
 
     def create_workflow(
         self,
@@ -3005,6 +3027,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_id},
                         "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
+                        "recursion_limit": 100,
                     },
                     version="v2",
                 ):

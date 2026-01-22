@@ -1,14 +1,91 @@
 """MCP Tool Service using langchain-mcp-adapters for tool discovery and execution."""
 
 import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.interceptors import (
+    MCPToolCallRequest,
+    MCPToolCallResult,
+    ToolCallInterceptor,
+)
+from langchain_mcp_adapters.tools import load_mcp_tools
+from mcp import ClientSession
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from langchain_docker.api.services.mcp_server_manager import MCPServerManager
 
 logger = logging.getLogger(__name__)
+
+
+class ImageFilterInterceptor(ToolCallInterceptor):
+    """Interceptor that filters out image content from MCP tool results.
+
+    OpenAI's API does not support images in tool result messages.
+    This interceptor converts ImageContent to a text description,
+    preserving any text content and providing information about images.
+    """
+
+    async def __call__(
+        self,
+        request: MCPToolCallRequest,
+        handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
+    ) -> MCPToolCallResult:
+        """Filter image content from tool results.
+
+        Args:
+            request: The tool call request.
+            handler: The next handler in the chain.
+
+        Returns:
+            Tool result with images converted to text descriptions.
+        """
+        result = await handler(request)
+
+        # Only process CallToolResult (MCP format), not ToolMessage or Command
+        if not isinstance(result, CallToolResult):
+            return result
+
+        # Filter content to remove images and replace with descriptions
+        filtered_content = []
+        image_count = 0
+
+        for content in result.content:
+            if isinstance(content, ImageContent):
+                image_count += 1
+                # Add a text description instead of the image
+                filtered_content.append(
+                    TextContent(
+                        type="text",
+                        text=f"[Image {image_count}: {content.mimeType or 'image'} "
+                        f"({len(content.data) // 1024}KB base64 data)]"
+                    )
+                )
+            else:
+                filtered_content.append(content)
+
+        # If we filtered any images, add a summary
+        if image_count > 0:
+            filtered_content.append(
+                TextContent(
+                    type="text",
+                    text=f"\n(Note: {image_count} image(s) captured but omitted from "
+                    "response as images are not supported in tool results for this model)"
+                )
+            )
+            logger.info(
+                f"Filtered {image_count} image(s) from tool '{request.name}' result"
+            )
+
+        # Return modified result with filtered content
+        return CallToolResult(
+            content=filtered_content,
+            isError=result.isError,
+            structuredContent=result.structuredContent if hasattr(result, 'structuredContent') else None,
+        )
 
 
 class MCPToolService:
@@ -107,7 +184,10 @@ class MCPToolService:
 
                 # Create client for this server and cache it to keep connection alive
                 # This is important for servers like chrome-devtools that need persistent state
-                client = MultiServerMCPClient({server_id: client_config})
+                client = MultiServerMCPClient(
+                    {server_id: client_config},
+                    # tool_interceptors=[ImageFilterInterceptor()],  # Disabled for testing
+                )
                 self._client_cache[server_id] = client
 
                 # Get tools using the library's built-in method
@@ -127,6 +207,85 @@ class MCPToolService:
                 logger.error(f"Failed to load tools from MCP server '{server_id}': {e}")
 
         return all_tools
+
+    @asynccontextmanager
+    async def get_tools_with_session(
+        self,
+        server_ids: list[str]
+    ) -> AsyncIterator[list[BaseTool]]:
+        """Get LangChain tools with persistent MCP sessions.
+
+        This context manager keeps MCP sessions alive during agent execution,
+        which is required for stateful servers like chrome-devtools that need
+        to maintain browser state across multiple tool calls.
+
+        Usage:
+            async with mcp_tool_service.get_tools_with_session(["chrome-devtools"]) as tools:
+                # Run agent with tools - sessions stay alive
+                agent = create_react_agent(model, tools)
+                async for event in agent.astream_events(...):
+                    ...
+            # Sessions are closed when exiting the context
+
+        Args:
+            server_ids: List of server identifiers to get tools from.
+
+        Yields:
+            List of LangChain BaseTool instances bound to persistent sessions.
+        """
+        all_tools: list[BaseTool] = []
+        active_sessions: list[tuple[str, ClientSession, Any]] = []  # (server_id, session, context_manager)
+        clients: list[MultiServerMCPClient] = []
+
+        try:
+            for server_id in server_ids:
+                try:
+                    # Get server config
+                    client_config = self._get_client_config(server_id)
+                    if not client_config:
+                        logger.warning(f"MCP server '{server_id}' not found in config")
+                        continue
+
+                    # Check if server is enabled
+                    if server_id in self._server_manager._servers:
+                        if not self._server_manager._servers[server_id].enabled:
+                            logger.info(f"MCP server '{server_id}' is disabled, skipping")
+                            continue
+
+                    logger.info(f"Creating persistent session for MCP server '{server_id}'")
+
+                    # Create client for this server
+                    client = MultiServerMCPClient({server_id: client_config})
+                    clients.append(client)
+
+                    # Create persistent session - this keeps the subprocess alive
+                    session_ctx = client.session(server_id)
+                    session: ClientSession = await session_ctx.__aenter__()
+                    active_sessions.append((server_id, session, session_ctx))
+
+                    # Load tools from the persistent session
+                    tools = await load_mcp_tools(session)
+                    all_tools.extend(tools)
+
+                    logger.info(
+                        f"Loaded {len(tools)} tools from MCP server '{server_id}' "
+                        f"with persistent session: {[t.name for t in tools]}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to create session for MCP server '{server_id}': {e}")
+
+            logger.info(f"Total tools loaded with persistent sessions: {len(all_tools)}")
+            yield all_tools
+
+        finally:
+            # Clean up all sessions when context exits
+            for server_id, session, session_ctx in active_sessions:
+                try:
+                    logger.info(f"Closing persistent session for MCP server '{server_id}'")
+                    await session_ctx.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.error(f"Error closing session for '{server_id}': {e}")
 
     async def discover_tools(self, server_id: str) -> list[dict[str, Any]]:
         """Discover available tools from an MCP server.

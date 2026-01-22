@@ -6,7 +6,7 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
       "env": {},
-      "enabled": true,
+      "enabled": false,
       "timeout_seconds": 30
     },
     "memory": {
@@ -15,14 +15,14 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory"],
       "env": {},
-      "enabled": true,
+      "enabled": false,
       "timeout_seconds": 30
     },
     "chrome-devtools": {
       "name": "Chrome DevTools",
       "description": "Control and inspect Chrome browsers - automation, screenshots, network inspection, console monitoring, and performance profiling",
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--headless"],
+      "args": ["-y", "chrome-devtools-mcp@latest"],
       "env": {},
       "enabled": true,
       "timeout_seconds": 60

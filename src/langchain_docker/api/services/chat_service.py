@@ -272,35 +272,6 @@ class ChatService:
             max_tokens=request.max_tokens,
         )
 
-        # Get MCP tools if specified
-        mcp_tools = []
-        tools_by_name = {}
-        if request.mcp_servers and self.mcp_tool_service:
-            try:
-                mcp_tools = await self.mcp_tool_service.get_langchain_tools(
-                    request.mcp_servers
-                )
-                tools_by_name = {tool.name: tool for tool in mcp_tools}
-                logger.info(f"Loaded {len(mcp_tools)} MCP tools for chat")
-            except Exception as e:
-                logger.error(f"Failed to load MCP tools: {e}")
-
-        # Bind tools to model if available
-        if mcp_tools:
-            model = model.bind_tools(mcp_tools)
-
-        # Send start event (with memory info and tool count)
-        yield {
-            "event": "start",
-            "data": json.dumps({
-                "session_id": session.session_id,
-                "model": request.model or self.model_service._get_default_model(request.provider),
-                "provider": request.provider,
-                "memory_metadata": memory_metadata.model_dump(mode='json'),
-                "mcp_tools_count": len(mcp_tools),
-            }),
-        }
-
         # Helper to safely parse tool args (handles empty strings)
         def parse_args(args):
             if isinstance(args, str):
@@ -309,187 +280,233 @@ class ChatService:
                 return json.loads(args)
             return args if args else {}
 
-        # Stream response tokens with enhanced tracing
-        # trace_operation provides: session_id, user_id, metadata, and tags for Phoenix filtering
-        full_content = ""
+        # Get MCP tools if specified - use persistent sessions for stateful servers
+        mcp_tools = []
+        tools_by_name = {}
+        mcp_session_ctx = None
+
+        # Check if we need MCP tools with persistent sessions
+        if request.mcp_servers and self.mcp_tool_service:
+            try:
+                # Use the context manager to get tools with persistent sessions
+                # This keeps MCP subprocesses (like chrome-devtools) alive during execution
+                mcp_session_ctx = self.mcp_tool_service.get_tools_with_session(
+                    request.mcp_servers
+                )
+                mcp_tools = await mcp_session_ctx.__aenter__()
+                tools_by_name = {tool.name: tool for tool in mcp_tools}
+                logger.info(f"Loaded {len(mcp_tools)} MCP tools with persistent sessions")
+            except Exception as e:
+                logger.error(f"Failed to load MCP tools: {e}")
+                mcp_session_ctx = None
+
         try:
-            with trace_operation(
-                session_id=session.session_id,
-                user_id=user_id,
-                operation="chat_stream",
-                metadata={
-                    "provider": request.provider,
-                    "model": request.model or self.model_service._get_default_model(request.provider),
-                    "temperature": request.temperature,
-                    "message_count": len(context_messages),
-                    "mcp_tools_count": len(mcp_tools),
-                },
-                tags=["chat", "streaming", request.provider] + (["mcp"] if mcp_tools else []),
-            ):
-                # Agentic loop: handle tool calls and continue generating
-                max_iterations = 10  # Prevent infinite loops
-                iteration = 0
-                messages = list(context_messages)
+            # Bind tools to model if available
+            if mcp_tools:
+                model = model.bind_tools(mcp_tools)
 
-                while iteration < max_iterations:
-                    iteration += 1
-                    full_content = ""
-
-                    # Stream model response and accumulate chunks
-                    # LangChain's AIMessageChunk supports + operator for proper merging
-                    # including tool_call_chunks -> tool_calls accumulation
-                    gathered = None
-                    for chunk in model.stream(
-                        messages,
-                        config={"metadata": {"session_id": session.session_id, "user_id": user_id}}
-                    ):
-                        # Accumulate chunks using LangChain's built-in merging
-                        gathered = chunk if gathered is None else gathered + chunk
-
-                        # Stream content tokens to client
-                        if chunk.content:
-                            content = chunk.content
-                            if isinstance(content, list):
-                                content = "".join(
-                                    c.get("text", "") if isinstance(c, dict) else str(c)
-                                    for c in content
-                                )
-                            full_content += content
-                            yield {
-                                "event": "token",
-                                "data": json.dumps({"content": content}),
-                            }
-
-                    # Extract tool calls from accumulated message
-                    # LangChain automatically parses tool_call_chunks into tool_calls
-                    tool_calls = gathered.tool_calls if gathered and hasattr(gathered, "tool_calls") else []
-
-                    # If no tool calls, we're done
-                    if not tool_calls or not mcp_tools:
-                        break
-
-                    # Build AI message with accumulated tool calls
-                    ai_message = AIMessage(
-                        content=full_content,
-                        tool_calls=tool_calls
-                    )
-                    messages.append(ai_message)
-
-                    # Execute each tool call
-                    for tc in tool_calls:
-                        if not tc.get("name"):
-                            continue
-
-                        tool_name = tc["name"]
-                        tool_id = tc["id"]
-                        # LangChain's accumulated tool_calls have args as dict
-                        args = tc["args"] if isinstance(tc["args"], dict) else parse_args(tc["args"])
-                        logger.info(f"Tool call '{tool_name}': args={args}")
-
-                        # Emit tool_call event (serialize args for client)
-                        yield {
-                            "event": "tool_call",
-                            "data": json.dumps({
-                                "tool_name": tool_name,
-                                "tool_id": tool_id,
-                                "arguments": json.dumps(args) if isinstance(args, dict) else args,
-                            }),
-                        }
-
-                        # Check if this tool requires HITL approval
-                        hitl_config = self._hitl_tools.get(tool_name)
-                        if hitl_config and self.approval_service:
-                            # Create approval request
-                            approval = self.approval_service.create(
-                                tool_call_id=tool_id,
-                                session_id=session.session_id,
-                                thread_id=session.session_id,  # Use session as thread for simple case
-                                tool_name=tool_name,
-                                tool_args=args if hitl_config.show_args else {},
-                                config=hitl_config,
-                            )
-
-                            # Emit approval_request event
-                            yield {
-                                "event": "approval_request",
-                                "data": json.dumps({
-                                    "approval_id": approval.id,
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "message": hitl_config.message,
-                                    "tool_args": args if hitl_config.show_args else None,
-                                    "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
-                                    "config": {
-                                        "show_args": hitl_config.show_args,
-                                        "timeout_seconds": hitl_config.timeout_seconds,
-                                        "require_reason_on_reject": hitl_config.require_reason_on_reject,
-                                    },
-                                }),
-                            }
-
-                            # For now, return a pending message
-                            # Full implementation would use LangGraph interrupt/resume
-                            tool_result = (
-                                f"[APPROVAL REQUIRED] Action '{tool_name}' requires human approval. "
-                                f"Approval ID: {approval.id}. "
-                                "Waiting for user to approve or reject this action."
-                            )
-                            logger.info(f"HITL approval requested: {approval.id} for {tool_name}")
-                        else:
-                            # Execute the tool normally using standard LangChain interface
-                            tool_result = ""
-                            try:
-                                tool = tools_by_name.get(tool_name)
-                                if tool:
-                                    # Use ainvoke() - the standard async interface for all LangChain tools
-                                    tool_result = await tool.ainvoke(args)
-                                else:
-                                    tool_result = f"Error: Tool '{tool_name}' not found"
-                            except Exception as e:
-                                tool_result = f"Error executing tool: {e}"
-                                logger.error(f"Tool execution error: {e}")
-
-                        # Emit tool_result event
-                        yield {
-                            "event": "tool_result",
-                            "data": json.dumps({
-                                "tool_name": tc["name"],
-                                "tool_id": tc["id"],
-                                "result": str(tool_result)[:1000],  # Limit result size
-                            }),
-                        }
-
-                        # Add tool result to messages
-                        messages.append(ToolMessage(
-                            content=str(tool_result),
-                            tool_call_id=tc["id"],
-                        ))
-
-            # Create final AI message
-            ai_message = AIMessage(content=full_content)
-            session.messages.append(ai_message)
-
-            # Save session (required for Redis persistence)
-            self.session_service.save(session)
-
-            # Update session timestamp
-            self.session_service.update_timestamp(session.session_id)
-
-            # Send done event (with memory metadata)
+            # Send start event (with memory info and tool count)
             yield {
-                "event": "done",
+                "event": "start",
                 "data": json.dumps({
                     "session_id": session.session_id,
-                    "conversation_length": len(session.messages),
-                    "message": MessageSchema.from_langchain(ai_message).model_dump(mode='json'),
+                    "model": request.model or self.model_service._get_default_model(request.provider),
+                    "provider": request.provider,
                     "memory_metadata": memory_metadata.model_dump(mode='json'),
+                    "mcp_tools_count": len(mcp_tools),
                 }),
             }
 
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-            # Send error event
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": str(e)}),
-            }
+            # Stream response tokens with enhanced tracing
+            # trace_operation provides: session_id, user_id, metadata, and tags for Phoenix filtering
+            full_content = ""
+            try:
+                with trace_operation(
+                    session_id=session.session_id,
+                    user_id=user_id,
+                    operation="chat_stream",
+                    metadata={
+                        "provider": request.provider,
+                        "model": request.model or self.model_service._get_default_model(request.provider),
+                        "temperature": request.temperature,
+                        "message_count": len(context_messages),
+                        "mcp_tools_count": len(mcp_tools),
+                    },
+                    tags=["chat", "streaming", request.provider] + (["mcp"] if mcp_tools else []),
+                ):
+                    # Agentic loop: handle tool calls and continue generating
+                    max_iterations = 10  # Prevent infinite loops
+                    iteration = 0
+                    messages = list(context_messages)
+
+                    while iteration < max_iterations:
+                        iteration += 1
+                        full_content = ""
+
+                        # Stream model response and accumulate chunks
+                        # LangChain's AIMessageChunk supports + operator for proper merging
+                        # including tool_call_chunks -> tool_calls accumulation
+                        gathered = None
+                        for chunk in model.stream(
+                            messages,
+                            config={"metadata": {"session_id": session.session_id, "user_id": user_id}}
+                        ):
+                            # Accumulate chunks using LangChain's built-in merging
+                            gathered = chunk if gathered is None else gathered + chunk
+
+                            # Stream content tokens to client
+                            if chunk.content:
+                                content = chunk.content
+                                if isinstance(content, list):
+                                    content = "".join(
+                                        c.get("text", "") if isinstance(c, dict) else str(c)
+                                        for c in content
+                                    )
+                                full_content += content
+                                yield {
+                                    "event": "token",
+                                    "data": json.dumps({"content": content}),
+                                }
+
+                        # Extract tool calls from accumulated message
+                        # LangChain automatically parses tool_call_chunks into tool_calls
+                        tool_calls = gathered.tool_calls if gathered and hasattr(gathered, "tool_calls") else []
+
+                        # If no tool calls, we're done
+                        if not tool_calls or not mcp_tools:
+                            break
+
+                        # Build AI message with accumulated tool calls
+                        ai_message = AIMessage(
+                            content=full_content,
+                            tool_calls=tool_calls
+                        )
+                        messages.append(ai_message)
+
+                        # Execute each tool call
+                        for tc in tool_calls:
+                            if not tc.get("name"):
+                                continue
+
+                            tool_name = tc["name"]
+                            tool_id = tc["id"]
+                            # LangChain's accumulated tool_calls have args as dict
+                            args = tc["args"] if isinstance(tc["args"], dict) else parse_args(tc["args"])
+                            logger.info(f"Tool call '{tool_name}': args={args}")
+
+                            # Emit tool_call event (serialize args for client)
+                            yield {
+                                "event": "tool_call",
+                                "data": json.dumps({
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "arguments": json.dumps(args) if isinstance(args, dict) else args,
+                                }),
+                            }
+
+                            # Check if this tool requires HITL approval
+                            hitl_config = self._hitl_tools.get(tool_name)
+                            if hitl_config and self.approval_service:
+                                # Create approval request
+                                approval = self.approval_service.create(
+                                    tool_call_id=tool_id,
+                                    session_id=session.session_id,
+                                    thread_id=session.session_id,  # Use session as thread for simple case
+                                    tool_name=tool_name,
+                                    tool_args=args if hitl_config.show_args else {},
+                                    config=hitl_config,
+                                )
+
+                                # Emit approval_request event
+                                yield {
+                                    "event": "approval_request",
+                                    "data": json.dumps({
+                                        "approval_id": approval.id,
+                                        "tool_name": tool_name,
+                                        "tool_id": tool_id,
+                                        "message": hitl_config.message,
+                                        "tool_args": args if hitl_config.show_args else None,
+                                        "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+                                        "config": {
+                                            "show_args": hitl_config.show_args,
+                                            "timeout_seconds": hitl_config.timeout_seconds,
+                                            "require_reason_on_reject": hitl_config.require_reason_on_reject,
+                                        },
+                                    }),
+                                }
+
+                                # For now, return a pending message
+                                # Full implementation would use LangGraph interrupt/resume
+                                tool_result = (
+                                    f"[APPROVAL REQUIRED] Action '{tool_name}' requires human approval. "
+                                    f"Approval ID: {approval.id}. "
+                                    "Waiting for user to approve or reject this action."
+                                )
+                                logger.info(f"HITL approval requested: {approval.id} for {tool_name}")
+                            else:
+                                # Execute the tool normally using standard LangChain interface
+                                tool_result = ""
+                                try:
+                                    tool = tools_by_name.get(tool_name)
+                                    if tool:
+                                        # Use ainvoke() - the standard async interface for all LangChain tools
+                                        tool_result = await tool.ainvoke(args)
+                                    else:
+                                        tool_result = f"Error: Tool '{tool_name}' not found"
+                                except Exception as e:
+                                    tool_result = f"Error executing tool: {e}"
+                                    logger.error(f"Tool execution error: {e}")
+
+                            # Emit tool_result event
+                            yield {
+                                "event": "tool_result",
+                                "data": json.dumps({
+                                    "tool_name": tc["name"],
+                                    "tool_id": tc["id"],
+                                    "result": str(tool_result)[:1000],  # Limit result size
+                                }),
+                            }
+
+                            # Add tool result to messages
+                            messages.append(ToolMessage(
+                                content=str(tool_result),
+                                tool_call_id=tc["id"],
+                            ))
+
+                # Create final AI message
+                ai_message = AIMessage(content=full_content)
+                session.messages.append(ai_message)
+
+                # Save session (required for Redis persistence)
+                self.session_service.save(session)
+
+                # Update session timestamp
+                self.session_service.update_timestamp(session.session_id)
+
+                # Send done event (with memory metadata)
+                yield {
+                    "event": "done",
+                    "data": json.dumps({
+                        "session_id": session.session_id,
+                        "conversation_length": len(session.messages),
+                        "message": MessageSchema.from_langchain(ai_message).model_dump(mode='json'),
+                        "memory_metadata": memory_metadata.model_dump(mode='json'),
+                    }),
+                }
+
+            except Exception as e:
+                logger.error(f"Stream error: {e}")
+                # Send error event
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": str(e)}),
+                }
+
+        finally:
+            # Clean up MCP session context (closes persistent sessions)
+            if mcp_session_ctx:
+                try:
+                    await mcp_session_ctx.__aexit__(None, None, None)
+                    logger.info("Closed MCP persistent sessions")
+                except Exception as e:
+                    logger.error(f"Error closing MCP sessions: {e}")
