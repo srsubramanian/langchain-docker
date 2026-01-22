@@ -187,6 +187,10 @@ async def start_server(
 ) -> MCPServerStartResponse:
     """Start an MCP server and discover its tools.
 
+    Note: With langchain-mcp-adapters, servers are managed automatically.
+    This endpoint now discovers tools (which auto-starts the server) and
+    marks it as active for tracking purposes.
+
     Args:
         server_id: The server identifier to start.
 
@@ -197,22 +201,24 @@ async def start_server(
         HTTPException: If server_id is not found or server fails to start.
     """
     try:
+        # Validate server exists and is enabled
         await server_manager.start_server(server_id)
 
-        # Discover tools
+        # Discover tools (this will auto-connect via langchain-mcp-adapters)
         mcp_tools = await tool_service.discover_tools(server_id)
         tools = _to_mcp_tool_info(mcp_tools)
 
         return MCPServerStartResponse(
             id=server_id,
-            status="running",
-            message=f"Server started with {len(tools)} tools",
+            status="available",
+            message=f"Server available with {len(tools)} tools",
             tools=tools,
         )
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
+    except Exception as e:
+        logger.error(f"Failed to start MCP server '{server_id}': {e}")
         return MCPServerStartResponse(
             id=server_id,
             status="error",
@@ -232,6 +238,9 @@ async def stop_server(
 ) -> MCPServerStopResponse:
     """Stop a running MCP server.
 
+    Note: With langchain-mcp-adapters, servers are managed automatically.
+    This endpoint clears cached tools and marks the server as inactive.
+
     Args:
         server_id: The server identifier to stop.
 
@@ -243,8 +252,8 @@ async def stop_server(
 
     return MCPServerStopResponse(
         id=server_id,
-        status="stopped",
-        message="Server stopped successfully",
+        status="available",  # Still available, just not active
+        message="Server cache cleared",
     )
 
 
@@ -259,7 +268,7 @@ async def list_server_tools(
 ) -> MCPToolsResponse:
     """List tools available from an MCP server.
 
-    Starts the server if not already running.
+    With langchain-mcp-adapters, servers auto-connect when tools are requested.
 
     Args:
         server_id: The server identifier.
@@ -268,14 +277,19 @@ async def list_server_tools(
         List of tools with name, description, and input schema.
 
     Raises:
-        HTTPException: If server_id is not found.
+        HTTPException: If server_id is not found or disabled.
     """
     # Check if server exists
     status = server_manager.get_server_status(server_id)
-    if status == "error":
+    if status == "unknown":
         raise HTTPException(
             status_code=404,
             detail=f"Unknown MCP server: {server_id}"
+        )
+    if status == "disabled":
+        raise HTTPException(
+            status_code=400,
+            detail=f"MCP server '{server_id}' is disabled"
         )
 
     try:
@@ -307,7 +321,7 @@ async def call_tool(
 ) -> MCPToolCallResponse:
     """Call a tool on an MCP server.
 
-    Starts the server if not already running.
+    With langchain-mcp-adapters, servers auto-connect when tools are called.
 
     Args:
         server_id: The server identifier.
@@ -321,10 +335,15 @@ async def call_tool(
     """
     # Check if server exists
     status = server_manager.get_server_status(server_id)
-    if status == "error":
+    if status == "unknown":
         raise HTTPException(
             status_code=404,
             detail=f"Unknown MCP server: {server_id}"
+        )
+    if status == "disabled":
+        raise HTTPException(
+            status_code=400,
+            detail=f"MCP server '{server_id}' is disabled"
         )
 
     try:

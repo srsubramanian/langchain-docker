@@ -1,16 +1,14 @@
-"""MCP Server Manager for subprocess lifecycle management."""
+"""MCP Server Manager for configuration management.
 
-import asyncio
+Note: With langchain-mcp-adapters, subprocess lifecycle is managed automatically.
+This manager now focuses on server configuration and status tracking.
+"""
+
 import json
 import logging
-import os
-import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +35,16 @@ class MCPServerConfig:
     transport: Literal["stdio", "http"] = "stdio"
 
 
-@dataclass
-class MCPConnection:
-    """Active connection to an MCP server."""
-
-    server_id: str
-    process: asyncio.subprocess.Process
-    request_id: int = 0
-    pending_requests: dict[int, asyncio.Future] = field(default_factory=dict)
-    reader_task: asyncio.Task | None = None
-
-
 class MCPServerManager:
-    """Manages MCP server subprocess lifecycle and JSON-RPC communication."""
+    """Manages MCP server configurations.
+
+    With the migration to langchain-mcp-adapters, this manager now focuses on:
+    - Loading server configurations from JSON files
+    - Managing custom server configurations
+    - Providing server status information
+
+    Subprocess lifecycle is handled automatically by langchain-mcp-adapters.
+    """
 
     def __init__(self, config_path: str | None = None):
         """Initialize the MCP server manager.
@@ -64,9 +59,7 @@ class MCPServerManager:
             )
         self._config_path = config_path
         self._servers: dict[str, MCPServerConfig] = {}
-        self._connections: dict[str, MCPConnection] = {}  # For stdio servers
-        self._http_active: set[str] = set()  # For HTTP servers
-        self._lock = asyncio.Lock()
+        self._active_servers: set[str] = set()  # Track which servers have been used
         self._load_config()
 
     def _load_config(self) -> None:
@@ -160,6 +153,17 @@ class MCPServerManager:
             })
         return result
 
+    def get_server_config(self, server_id: str) -> MCPServerConfig | None:
+        """Get the configuration for a server.
+
+        Args:
+            server_id: The server identifier.
+
+        Returns:
+            MCPServerConfig or None if not found.
+        """
+        return self._servers.get(server_id)
+
     def add_custom_server(
         self,
         server_id: str,
@@ -212,465 +216,91 @@ class MCPServerManager:
             raise ValueError("Cannot delete builtin server")
 
         del self._servers[server_id]
+        self._active_servers.discard(server_id)
         self._save_custom_config()
         logger.info(f"Deleted custom MCP server: {server_id}")
 
     def get_server_status(self, server_id: str) -> str:
         """Get the status of a specific server.
 
+        With langchain-mcp-adapters, servers are managed automatically.
+        This returns:
+        - "available" if configured and enabled
+        - "disabled" if configured but not enabled
+        - "unknown" if not configured
+
         Args:
             server_id: The server identifier.
 
         Returns:
-            Status string: "running", "stopped", or "error".
+            Status string: "available", "disabled", or "unknown".
         """
         if server_id not in self._servers:
-            return "error"
+            return "unknown"
 
         config = self._servers[server_id]
+        if not config.enabled:
+            return "disabled"
 
-        # HTTP servers use _http_active set
-        if config.transport == "http":
-            return "running" if server_id in self._http_active else "stopped"
+        # With langchain-mcp-adapters, we can't easily track running status
+        # since it manages lifecycle automatically per invocation
+        return "available"
 
-        # Stdio servers use _connections dict
-        if server_id in self._connections:
-            conn = self._connections[server_id]
-            if conn.process.returncode is None:
-                return "running"
-            return "error"
-        return "stopped"
-
-    async def _send_http_request(
-        self,
-        url: str,
-        method: str,
-        params: dict | None = None,
-        timeout: int = 30,
-    ) -> dict:
-        """Send a JSON-RPC request over HTTP.
+    def mark_server_active(self, server_id: str) -> None:
+        """Mark a server as having been used (for tracking purposes).
 
         Args:
-            url: Server base URL.
-            method: The RPC method name.
-            params: Optional parameters for the method.
-            timeout: Request timeout in seconds.
+            server_id: The server identifier.
+        """
+        if server_id in self._servers:
+            self._active_servers.add(server_id)
+
+    def is_server_active(self, server_id: str) -> bool:
+        """Check if a server has been used in this session.
+
+        Args:
+            server_id: The server identifier.
 
         Returns:
-            The result from the server response.
-
-        Raises:
-            RuntimeError: If request fails or server returns error.
+            True if server has been used.
         """
-        request = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-        }
-        if params is not None:
-            request["params"] = params
+        return server_id in self._active_servers
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url,
-                    json=request,
-                    timeout=timeout,
-                )
-                response.raise_for_status()
-                result = response.json()
+    async def start_server(self, server_id: str) -> None:
+        """Mark a server as started.
 
-                if "error" in result:
-                    error = result["error"]
-                    raise RuntimeError(
-                        f"MCP error: {error.get('message', 'Unknown error')} "
-                        f"(code: {error.get('code', 'N/A')})"
-                    )
-
-                return result.get("result", {})
-            except httpx.HTTPError as e:
-                raise RuntimeError(f"HTTP request failed: {e}")
-
-    async def start_server(self, server_id: str) -> MCPConnection | None:
-        """Start an MCP server subprocess or connect to HTTP server.
+        With langchain-mcp-adapters, actual subprocess management is automatic.
+        This method exists for API compatibility and tracking.
 
         Args:
             server_id: The server identifier to start.
 
-        Returns:
-            MCPConnection for stdio servers, None for HTTP servers.
-
         Raises:
             ValueError: If server_id is not configured.
-            RuntimeError: If server fails to start.
         """
         if server_id not in self._servers:
             raise ValueError(f"Unknown MCP server: {server_id}")
 
         config = self._servers[server_id]
+        if not config.enabled:
+            raise ValueError(f"MCP server '{server_id}' is disabled")
 
-        # Handle HTTP-based servers
-        if config.transport == "http":
-            async with self._lock:
-                if server_id in self._http_active:
-                    logger.info(f"HTTP server '{server_id}' already connected")
-                    return None
-
-                logger.info(f"Connecting to HTTP MCP server '{server_id}' at {config.url}")
-
-                try:
-                    # Test connection with initialize handshake
-                    await self._send_http_request(
-                        config.url,
-                        "initialize",
-                        {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {
-                                "name": "langchain-docker",
-                                "version": "0.1.0"
-                            }
-                        },
-                        config.timeout_seconds,
-                    )
-
-                    # Mark as active
-                    self._http_active.add(server_id)
-                    logger.info(f"HTTP MCP server '{server_id}' connected successfully")
-                    return None
-
-                except Exception as e:
-                    logger.error(f"Failed to connect to HTTP MCP server '{server_id}': {e}")
-                    raise RuntimeError(f"Failed to connect to MCP server at {config.url}: {e}")
-
-        # Handle stdio-based servers (existing logic)
-        async with self._lock:
-            # Return existing connection if running
-            if server_id in self._connections:
-                conn = self._connections[server_id]
-                if conn.process.returncode is None:
-                    return conn
-                # Clean up dead connection
-                del self._connections[server_id]
-
-            # Prepare environment
-            env = os.environ.copy()
-            env.update(config.env)
-
-            # Resolve command path (important for Windows where PATH lookup differs)
-            command = config.command
-            resolved_command = shutil.which(command)
-
-            if resolved_command:
-                command = resolved_command
-                logger.debug(f"Resolved command '{config.command}' to '{command}'")
-            else:
-                logger.warning(f"Could not resolve command '{command}' in PATH")
-
-            # Build command
-            cmd = [command] + config.args
-
-            logger.info(f"Starting MCP server '{server_id}': {' '.join(cmd)}")
-
-            try:
-                # On Windows, we need shell=True for commands like npx/node
-                # that are actually .cmd/.bat wrapper scripts
-                if sys.platform == "win32":
-                    # Use shell on Windows to properly handle PATH and .cmd wrappers
-                    shell_cmd = " ".join(cmd)
-                    logger.debug(f"Using shell execution on Windows: {shell_cmd}")
-                    process = await asyncio.create_subprocess_shell(
-                        shell_cmd,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        env=env,
-                    )
-                else:
-                    process = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        env=env,
-                    )
-            except Exception as e:
-                logger.error(f"Failed to start MCP server '{server_id}': {e}")
-                raise RuntimeError(f"Failed to start MCP server: {e}")
-
-            conn = MCPConnection(
-                server_id=server_id,
-                process=process,
-            )
-
-            # Start background reader task
-            conn.reader_task = asyncio.create_task(
-                self._read_responses(conn)
-            )
-
-            self._connections[server_id] = conn
-
-            # Send initialize request
-            try:
-                await self._initialize_server(conn, config.timeout_seconds)
-            except Exception as e:
-                logger.error(f"Failed to initialize MCP server '{server_id}': {e}")
-                await self.stop_server(server_id)
-                raise RuntimeError(f"Failed to initialize MCP server: {e}")
-
-            logger.info(f"MCP server '{server_id}' started successfully")
-            return conn
-
-    async def _initialize_server(self, conn: MCPConnection, timeout: int) -> dict:
-        """Send initialize request to MCP server.
-
-        Args:
-            conn: The server connection.
-            timeout: Timeout in seconds.
-
-        Returns:
-            Initialize response from server.
-        """
-        response = await self.send_request(
-            conn.server_id,
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "langchain-docker",
-                    "version": "0.1.0"
-                }
-            },
-            timeout=timeout
-        )
-
-        # Send initialized notification
-        await self._send_notification(conn, "notifications/initialized", {})
-
-        return response
+        self._active_servers.add(server_id)
+        logger.info(f"MCP server '{server_id}' marked as active")
 
     async def stop_server(self, server_id: str) -> None:
-        """Stop an MCP server subprocess or disconnect from HTTP server.
+        """Mark a server as stopped.
+
+        With langchain-mcp-adapters, actual subprocess management is automatic.
+        This method exists for API compatibility and tracking.
 
         Args:
             server_id: The server identifier to stop.
         """
-        # Check if this is an HTTP server
-        if server_id in self._servers and self._servers[server_id].transport == "http":
-            async with self._lock:
-                if server_id in self._http_active:
-                    self._http_active.discard(server_id)
-                    logger.info(f"HTTP MCP server '{server_id}' disconnected")
-            return
-
-        # Handle stdio-based servers
-        async with self._lock:
-            if server_id not in self._connections:
-                return
-
-            conn = self._connections[server_id]
-
-            # Cancel reader task
-            if conn.reader_task:
-                conn.reader_task.cancel()
-                try:
-                    await conn.reader_task
-                except asyncio.CancelledError:
-                    pass
-
-            # Cancel pending requests
-            for future in conn.pending_requests.values():
-                if not future.done():
-                    future.cancel()
-
-            # Terminate process
-            if conn.process.returncode is None:
-                conn.process.terminate()
-                try:
-                    await asyncio.wait_for(conn.process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    conn.process.kill()
-                    await conn.process.wait()
-
-            del self._connections[server_id]
-            logger.info(f"MCP server '{server_id}' stopped")
+        self._active_servers.discard(server_id)
+        logger.info(f"MCP server '{server_id}' marked as inactive")
 
     async def stop_all_servers(self) -> None:
-        """Stop all running MCP servers (stdio and HTTP)."""
-        # Stop stdio servers
-        server_ids = list(self._connections.keys())
-        for server_id in server_ids:
-            await self.stop_server(server_id)
-
-        # Disconnect HTTP servers
-        http_server_ids = list(self._http_active)
-        for server_id in http_server_ids:
-            await self.stop_server(server_id)
-
-    async def send_request(
-        self,
-        server_id: str,
-        method: str,
-        params: dict | None = None,
-        timeout: int | None = None,
-    ) -> dict:
-        """Send a JSON-RPC request to an MCP server.
-
-        Args:
-            server_id: The server identifier.
-            method: The RPC method name.
-            params: Optional parameters for the method.
-            timeout: Optional timeout in seconds.
-
-        Returns:
-            The result from the server response.
-
-        Raises:
-            ValueError: If server is not running.
-            TimeoutError: If request times out.
-            RuntimeError: If server returns an error.
-        """
-        if server_id not in self._servers:
-            raise ValueError(f"Unknown MCP server: {server_id}")
-
-        config = self._servers[server_id]
-
-        if timeout is None:
-            timeout = config.timeout_seconds
-
-        # Handle HTTP-based servers
-        if config.transport == "http":
-            if server_id not in self._http_active:
-                raise ValueError(f"HTTP MCP server '{server_id}' is not connected")
-
-            return await self._send_http_request(
-                config.url,
-                method,
-                params,
-                timeout,
-            )
-
-        # Handle stdio-based servers
-        if server_id not in self._connections:
-            raise ValueError(f"MCP server '{server_id}' is not running")
-
-        conn = self._connections[server_id]
-
-        # Generate request ID
-        conn.request_id += 1
-        request_id = conn.request_id
-
-        # Build JSON-RPC request
-        request = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-        }
-        if params is not None:
-            request["params"] = params
-
-        # Create future for response
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        conn.pending_requests[request_id] = future
-
-        # Send request
-        request_line = json.dumps(request) + "\n"
-        logger.debug(f"Sending to '{server_id}': {request_line.strip()}")
-
-        try:
-            conn.process.stdin.write(request_line.encode())
-            await conn.process.stdin.drain()
-        except Exception as e:
-            del conn.pending_requests[request_id]
-            raise RuntimeError(f"Failed to send request: {e}")
-
-        # Wait for response
-        try:
-            response = await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
-            del conn.pending_requests[request_id]
-            raise TimeoutError(f"Request to '{server_id}' timed out")
-
-        # Check for error
-        if "error" in response:
-            error = response["error"]
-            raise RuntimeError(
-                f"MCP error: {error.get('message', 'Unknown error')} "
-                f"(code: {error.get('code', 'N/A')})"
-            )
-
-        return response.get("result", {})
-
-    async def _send_notification(
-        self,
-        conn: MCPConnection,
-        method: str,
-        params: dict | None = None,
-    ) -> None:
-        """Send a JSON-RPC notification (no response expected).
-
-        Args:
-            conn: The server connection.
-            method: The notification method name.
-            params: Optional parameters.
-        """
-        notification = {
-            "jsonrpc": "2.0",
-            "method": method,
-        }
-        if params is not None:
-            notification["params"] = params
-
-        notification_line = json.dumps(notification) + "\n"
-        logger.debug(f"Sending notification: {notification_line.strip()}")
-
-        conn.process.stdin.write(notification_line.encode())
-        await conn.process.stdin.drain()
-
-    async def _read_responses(self, conn: MCPConnection) -> None:
-        """Background task to read responses from MCP server.
-
-        Args:
-            conn: The server connection.
-        """
-        try:
-            while True:
-                line = await conn.process.stdout.readline()
-                if not line:
-                    break
-
-                try:
-                    response = json.loads(line.decode())
-                    logger.debug(f"Received from '{conn.server_id}': {response}")
-
-                    # Handle response with ID
-                    if "id" in response:
-                        request_id = response["id"]
-                        if request_id in conn.pending_requests:
-                            future = conn.pending_requests.pop(request_id)
-                            if not future.done():
-                                future.set_result(response)
-                    # Handle notification (no ID)
-                    else:
-                        logger.debug(
-                            f"Received notification from '{conn.server_id}': "
-                            f"{response.get('method', 'unknown')}"
-                        )
-
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"Invalid JSON from '{conn.server_id}': {e}"
-                    )
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Error reading from '{conn.server_id}': {e}")
-
-        # Mark all pending requests as failed
-        for future in conn.pending_requests.values():
-            if not future.done():
-                future.set_exception(
-                    RuntimeError(f"MCP server '{conn.server_id}' disconnected")
-                )
+        """Mark all servers as stopped."""
+        self._active_servers.clear()
+        logger.info("All MCP servers marked as inactive")

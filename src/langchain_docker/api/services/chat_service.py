@@ -312,7 +312,6 @@ class ChatService:
         # Stream response tokens with enhanced tracing
         # trace_operation provides: session_id, user_id, metadata, and tags for Phoenix filtering
         full_content = ""
-        tool_calls = []
         try:
             with trace_operation(
                 session_id=session.session_id,
@@ -335,14 +334,19 @@ class ChatService:
                 while iteration < max_iterations:
                     iteration += 1
                     full_content = ""
-                    tool_calls = []
 
-                    # Stream model response
+                    # Stream model response and accumulate chunks
+                    # LangChain's AIMessageChunk supports + operator for proper merging
+                    # including tool_call_chunks -> tool_calls accumulation
+                    gathered = None
                     for chunk in model.stream(
                         messages,
                         config={"metadata": {"session_id": session.session_id, "user_id": user_id}}
                     ):
-                        # Accumulate content
+                        # Accumulate chunks using LangChain's built-in merging
+                        gathered = chunk if gathered is None else gathered + chunk
+
+                        # Stream content tokens to client
                         if chunk.content:
                             content = chunk.content
                             if isinstance(content, list):
@@ -356,42 +360,18 @@ class ChatService:
                                 "data": json.dumps({"content": content}),
                             }
 
-                        # Accumulate tool calls
-                        if hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks:
-                            for tc_chunk in chunk.tool_call_chunks:
-                                # Find or create tool call entry
-                                tc_id = tc_chunk.get("id") or tc_chunk.get("index", 0)
-                                existing = next(
-                                    (tc for tc in tool_calls if tc.get("id") == tc_id),
-                                    None
-                                )
-                                if existing:
-                                    # Append to existing tool call
-                                    if tc_chunk.get("args"):
-                                        existing["args"] = existing.get("args", "") + tc_chunk["args"]
-                                else:
-                                    tool_calls.append({
-                                        "id": tc_id,
-                                        "name": tc_chunk.get("name", ""),
-                                        "args": tc_chunk.get("args", ""),
-                                    })
+                    # Extract tool calls from accumulated message
+                    # LangChain automatically parses tool_call_chunks into tool_calls
+                    tool_calls = gathered.tool_calls if gathered and hasattr(gathered, "tool_calls") else []
 
                     # If no tool calls, we're done
                     if not tool_calls or not mcp_tools:
                         break
 
-                    # Process tool calls
+                    # Build AI message with accumulated tool calls
                     ai_message = AIMessage(
                         content=full_content,
-                        tool_calls=[
-                            {
-                                "id": tc["id"],
-                                "name": tc["name"],
-                                "args": parse_args(tc["args"]),
-                            }
-                            for tc in tool_calls
-                            if tc.get("name")
-                        ]
+                        tool_calls=tool_calls
                     )
                     messages.append(ai_message)
 
@@ -402,15 +382,17 @@ class ChatService:
 
                         tool_name = tc["name"]
                         tool_id = tc["id"]
-                        args = parse_args(tc["args"])
+                        # LangChain's accumulated tool_calls have args as dict
+                        args = tc["args"] if isinstance(tc["args"], dict) else parse_args(tc["args"])
+                        logger.info(f"Tool call '{tool_name}': args={args}")
 
-                        # Emit tool_call event
+                        # Emit tool_call event (serialize args for client)
                         yield {
                             "event": "tool_call",
                             "data": json.dumps({
                                 "tool_name": tool_name,
                                 "tool_id": tool_id,
-                                "arguments": tc["args"],
+                                "arguments": json.dumps(args) if isinstance(args, dict) else args,
                             }),
                         }
 
@@ -454,15 +436,13 @@ class ChatService:
                             )
                             logger.info(f"HITL approval requested: {approval.id} for {tool_name}")
                         else:
-                            # Execute the tool normally
+                            # Execute the tool normally using standard LangChain interface
                             tool_result = ""
                             try:
                                 tool = tools_by_name.get(tool_name)
                                 if tool:
-                                    if tool.coroutine:
-                                        tool_result = await tool.coroutine(**args)
-                                    else:
-                                        tool_result = tool.func(**args)
+                                    # Use ainvoke() - the standard async interface for all LangChain tools
+                                    tool_result = await tool.ainvoke(args)
                                 else:
                                     tool_result = f"Error: Tool '{tool_name}' not found"
                             except Exception as e:
