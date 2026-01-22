@@ -37,6 +37,7 @@ from langchain_docker.api.schemas.agents import (
     DirectInvokeRequest,
     DirectInvokeResponse,
     ScheduleInfo,
+    StarterPromptsResponse,
     ToolTemplateSchema,
     WorkflowCreateRequest,
     WorkflowCreateResponse,
@@ -173,6 +174,10 @@ def get_agent(
                 "next_run": schedule_data.get("next_run") if schedule_data else None,
             }
 
+        # Count starter prompts
+        starter_prompts = custom.starter_prompts or []
+        prompts_count = sum(len(cat.get("prompts", [])) for cat in starter_prompts)
+
         return {
             "id": agent_id,
             "name": custom.name,
@@ -182,6 +187,7 @@ def get_agent(
             "description": custom.system_prompt[:100] + "..." if len(custom.system_prompt) > 100 else custom.system_prompt,
             "system_prompt": custom.system_prompt,
             "schedule": schedule_info,
+            "starter_prompts_count": prompts_count,
             "created_at": custom.created_at.isoformat(),
             "provider": custom.provider,
             "model": custom.model,
@@ -194,6 +200,10 @@ def get_agent(
         else:
             tool_names = [t.__name__ for t in config.get("tools", [])]
 
+        # Count starter prompts
+        starter_prompts = config.get("starter_prompts", [])
+        prompts_count = sum(len(cat.get("prompts", [])) for cat in starter_prompts)
+
         return {
             "id": agent_id,
             "name": config["name"],
@@ -201,7 +211,36 @@ def get_agent(
             "tools": tool_names,
             "description": config["prompt"][:100] + "..." if len(config["prompt"]) > 100 else config["prompt"],
             "system_prompt": config["prompt"],
+            "starter_prompts_count": prompts_count,
         }
+
+
+@router.get("/{agent_id}/starter-prompts", response_model=StarterPromptsResponse)
+def get_starter_prompts(
+    agent_id: str,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """Get starter prompts for an agent.
+
+    Returns categorized starter prompts that can be used to guide users
+    on what questions to ask the agent. Prompts may contain {url} placeholders
+    that should be replaced with actual URLs in the UI.
+
+    Args:
+        agent_id: Agent ID (custom or built-in)
+
+    Returns:
+        Starter prompts grouped by category
+    """
+    result = agent_service.get_starter_prompts(agent_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    return StarterPromptsResponse(
+        agent_id=result["agent_id"],
+        agent_name=result["agent_name"],
+        categories=result["categories"],
+    )
 
 
 @router.post("", response_model=CustomAgentCreateResponse, status_code=201)
@@ -238,6 +277,11 @@ def create_agent(
                 "timezone": request.schedule.timezone,
             }
 
+        # Convert starter prompts to dicts if provided
+        starter_prompts = None
+        if request.starter_prompts:
+            starter_prompts = [cat.model_dump() for cat in request.starter_prompts]
+
         agent_service.create_custom_agent(
             agent_id=agent_id,
             name=request.name,
@@ -245,6 +289,7 @@ def create_agent(
             tool_configs=tool_configs,
             skill_ids=request.skills,
             schedule_config=schedule_config,
+            starter_prompts=starter_prompts,
             metadata=request.metadata,
             provider=request.provider,
             model=request.model,
@@ -315,6 +360,11 @@ def update_agent(
                 "timezone": request.schedule.timezone,
             }
 
+        # Convert starter prompts if provided
+        starter_prompts = None
+        if request.starter_prompts is not None:
+            starter_prompts = [cat.model_dump() for cat in request.starter_prompts]
+
         agent = agent_service.update_custom_agent(
             agent_id=agent_id,
             name=request.name,
@@ -322,6 +372,7 @@ def update_agent(
             tool_configs=tool_configs,
             skill_ids=request.skills,
             schedule_config=schedule_config,
+            starter_prompts=starter_prompts,
             metadata=request.metadata,
             provider=request.provider,
             model=request.model,

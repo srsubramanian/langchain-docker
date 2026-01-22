@@ -29,10 +29,11 @@ import { useMCPStore } from '@/stores/mcpStore';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard } from '@/components/chat';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard, StarterPrompts } from '@/components/chat';
 import type { ApprovalRequestEvent } from '@/components/chat';
 import { MCPServerToggle } from '@/features/chat/MCPServerToggle';
 import { useImageUpload } from '@/hooks/useImageUpload';
+import type { StarterPromptCategory } from '@/types/api';
 
 // Tool call tracking for skill/tool badges
 interface ToolCallInfo {
@@ -217,6 +218,7 @@ export function MultiAgentPage() {
   const [showMCPPanel, setShowMCPPanel] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
   const [agentDetails, setAgentDetails] = useState<UnifiedAgentInfo | null>(null);
+  const [starterPrompts, setStarterPrompts] = useState<StarterPromptCategory[]>([]);
 
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
@@ -288,6 +290,23 @@ export function MultiAgentPage() {
     }
   }, [isSingleAgentMode, isCustomAgent, customAgentId, singleAgentName]);
 
+  // Fetch starter prompts for single-agent mode
+  useEffect(() => {
+    if (isSingleAgentMode) {
+      const agentId = isCustomAgent && customAgentId ? customAgentId : singleAgentName;
+      if (agentId) {
+        agentsApi.getStarterPrompts(agentId)
+          .then((response) => setStarterPrompts(response.categories))
+          .catch((err) => {
+            console.error('Failed to fetch starter prompts:', err);
+            setStarterPrompts([]);
+          });
+      }
+    } else {
+      setStarterPrompts([]);
+    }
+  }, [isSingleAgentMode, isCustomAgent, customAgentId, singleAgentName]);
+
   // Create workflow when agents change (only for built-in agents)
   useEffect(() => {
     let currentWorkflowId: string | null = null;
@@ -342,6 +361,18 @@ export function MultiAgentPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
+
+  // Handle starter prompt selection - populate input and auto-submit
+  const handleStarterPromptSelect = (prompt: string) => {
+    setInput(prompt);
+    // Auto-submit after a short delay to allow UI to update
+    setTimeout(() => {
+      const form = document.querySelector('form');
+      if (form) {
+        form.requestSubmit();
+      }
+    }, 100);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -623,7 +654,7 @@ export function MultiAgentPage() {
             <ScrollArea className="flex-1 pr-4">
               <div className="space-y-4 pb-4">
                 {messages.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
                     <div
                       className={cn(
                         'flex h-16 w-16 items-center justify-center rounded-xl text-white font-bold text-xl mb-4',
@@ -632,10 +663,22 @@ export function MultiAgentPage() {
                     >
                       {initials}
                     </div>
-                    <p className="text-lg font-medium text-foreground mb-1">
-                      Start a conversation with {agentDisplayName}
-                    </p>
-                    <p>Ask anything this agent can help you with.</p>
+                    {starterPrompts.length > 0 ? (
+                      <StarterPrompts
+                        categories={starterPrompts}
+                        onSelectPrompt={handleStarterPromptSelect}
+                        className="w-full max-w-2xl"
+                      />
+                    ) : (
+                      <>
+                        <p className="text-lg font-medium text-foreground mb-1">
+                          Start a conversation with {agentDisplayName}
+                        </p>
+                        <p className="text-muted-foreground">
+                          Ask anything this agent can help you with.
+                        </p>
+                      </>
+                    )}
                   </div>
                 )}
 

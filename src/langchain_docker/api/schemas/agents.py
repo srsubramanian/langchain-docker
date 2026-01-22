@@ -7,6 +7,45 @@ from pydantic import BaseModel, Field, field_validator
 from langchain_docker.api.schemas.chat import MemoryMetadata
 
 
+# Starter Prompt Schemas
+
+
+class StarterPrompt(BaseModel):
+    """A single starter prompt suggestion."""
+
+    title: str = Field(..., description="Short display title (e.g., 'Count static files')")
+    prompt: str = Field(
+        ...,
+        description="Full prompt text. Use {url} placeholder for URL inputs.",
+    )
+    icon: str = Field(
+        default="💬",
+        description="Emoji icon for the prompt",
+    )
+
+
+class StarterPromptCategory(BaseModel):
+    """A category of starter prompts."""
+
+    category: str = Field(..., description="Category name (e.g., 'Static Resources')")
+    icon: str = Field(default="📁", description="Emoji icon for the category")
+    prompts: list[StarterPrompt] = Field(
+        default_factory=list,
+        description="List of prompts in this category",
+    )
+
+
+class StarterPromptsResponse(BaseModel):
+    """Response containing starter prompts for an agent."""
+
+    agent_id: str = Field(..., description="Agent ID")
+    agent_name: str = Field(..., description="Agent display name")
+    categories: list[StarterPromptCategory] = Field(
+        default_factory=list,
+        description="Categorized starter prompts",
+    )
+
+
 # Schedule Schemas
 
 
@@ -112,6 +151,10 @@ class CustomAgentCreateRequest(BaseModel):
         None,
         description="Optional schedule configuration for automated execution",
     )
+    starter_prompts: Optional[list[StarterPromptCategory]] = Field(
+        None,
+        description="Optional starter prompts to suggest to users",
+    )
     metadata: dict = Field(
         default_factory=dict,
         description="Optional metadata for the agent",
@@ -151,6 +194,10 @@ class CustomAgentInfo(BaseModel):
     skills: list[str] = Field(default_factory=list, description="Skill IDs included")
     description: str = Field(..., description="Truncated system prompt")
     schedule: Optional[ScheduleInfo] = Field(None, description="Schedule configuration")
+    starter_prompts_count: int = Field(
+        default=0,
+        description="Number of starter prompts configured",
+    )
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     provider: str = Field("openai", description="Model provider")
     model: Optional[str] = Field(None, description="Model name")
@@ -192,6 +239,10 @@ class CustomAgentUpdateRequest(BaseModel):
     schedule: Optional[ScheduleConfig] = Field(
         None,
         description="Schedule configuration for automated execution",
+    )
+    starter_prompts: Optional[list[StarterPromptCategory]] = Field(
+        None,
+        description="Starter prompts to suggest to users",
     )
     metadata: Optional[dict] = Field(
         None,
@@ -242,6 +293,10 @@ class AgentInfo(BaseModel):
     name: str = Field(..., description="Agent name")
     tools: list[str] = Field(..., description="List of tool names")
     description: str = Field(..., description="Agent description")
+    starter_prompts_count: int = Field(
+        default=0,
+        description="Number of starter prompts available",
+    )
 
 
 class WorkflowCreateRequest(BaseModel):

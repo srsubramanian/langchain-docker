@@ -14,6 +14,7 @@ import type {
   DirectInvokeRequest,
   DirectInvokeResponse,
   StreamEvent,
+  StarterPromptsResponse,
 } from '@/types/api';
 
 // Unified agent info type
@@ -57,6 +58,15 @@ export const agentsApi = {
    */
   async getAgent(agentId: string): Promise<UnifiedAgentInfo> {
     const { data } = await apiClient.get<UnifiedAgentInfo>(`/api/v1/agents/${agentId}`);
+    return data;
+  },
+
+  /**
+   * Get starter prompts for an agent
+   * Returns categorized prompts that guide users on what to ask
+   */
+  async getStarterPrompts(agentId: string): Promise<StarterPromptsResponse> {
+    const { data } = await apiClient.get<StarterPromptsResponse>(`/api/v1/agents/${agentId}/starter-prompts`);
     return data;
   },
 

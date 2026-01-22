@@ -53,6 +53,7 @@ class CustomAgent:
     created_at: datetime
     skill_ids: list[str] = field(default_factory=list)  # Skills to include
     schedule: Optional[ScheduleConfig] = None  # Schedule configuration
+    starter_prompts: Optional[list[dict]] = None  # Starter prompts for this agent
     metadata: dict = field(default_factory=dict)
     provider: str = "openai"  # Model provider (openai, anthropic, google, bedrock)
     model: Optional[str] = None  # Specific model name (uses provider default if None)
@@ -232,6 +233,71 @@ Best practices:
 - Provide specific, actionable recommendations with code examples when possible
 
 You help developers understand and improve their website's performance.""",
+        "starter_prompts": [
+            {
+                "category": "Static Resources",
+                "icon": "📦",
+                "prompts": [
+                    {
+                        "title": "Count static files",
+                        "prompt": "How many static files (CSS, JS, images, fonts) are loaded to paint {url}?",
+                        "icon": "📊",
+                    },
+                    {
+                        "title": "Find render-blocking resources",
+                        "prompt": "What render-blocking resources slow down first paint on {url}?",
+                        "icon": "🚫",
+                    },
+                    {
+                        "title": "Check image optimization",
+                        "prompt": "Are images optimized on {url}? Find oversized or uncompressed images.",
+                        "icon": "🖼️",
+                    },
+                ],
+            },
+            {
+                "category": "Core Web Vitals",
+                "icon": "⚡",
+                "prompts": [
+                    {
+                        "title": "Full CWV analysis",
+                        "prompt": "Analyze Core Web Vitals (LCP, INP, CLS, FCP, TTFB) for {url}",
+                        "icon": "📈",
+                    },
+                    {
+                        "title": "Check layout shifts",
+                        "prompt": "What causes Cumulative Layout Shift (CLS) on {url}?",
+                        "icon": "📐",
+                    },
+                    {
+                        "title": "Measure load times",
+                        "prompt": "Measure Time to First Byte (TTFB) and First Contentful Paint (FCP) for {url}",
+                        "icon": "⏱️",
+                    },
+                ],
+            },
+            {
+                "category": "Caching & APIs",
+                "icon": "🗄️",
+                "prompts": [
+                    {
+                        "title": "Check caching headers",
+                        "prompt": "Check HTTP caching headers for static resources on {url}. Are they properly configured?",
+                        "icon": "💾",
+                    },
+                    {
+                        "title": "Find slow API calls",
+                        "prompt": "Find slow API/XHR calls (>500ms) on {url} and identify bottlenecks.",
+                        "icon": "🐌",
+                    },
+                    {
+                        "title": "Auth performance",
+                        "prompt": "Are there authentication or token refresh bottlenecks on {url}?",
+                        "icon": "🔐",
+                    },
+                ],
+            },
+        ],
     },
 }
 
@@ -523,12 +589,48 @@ Guidelines:
                 tool_names = config["tool_ids"]
             else:
                 tool_names = [t.__name__ for t in config["tools"]]
+            # Count starter prompts
+            starter_prompts = config.get("starter_prompts", [])
+            prompts_count = sum(
+                len(cat.get("prompts", [])) for cat in starter_prompts
+            )
             result.append({
                 "name": config["name"],
                 "tools": tool_names,
                 "description": config["prompt"][:100] + "...",
+                "starter_prompts_count": prompts_count,
             })
         return result
+
+    def get_starter_prompts(self, agent_id: str) -> dict | None:
+        """Get starter prompts for an agent.
+
+        Args:
+            agent_id: Agent ID (built-in or custom)
+
+        Returns:
+            Starter prompts configuration or None if not found
+        """
+        # Check built-in agents first
+        all_builtin = self._get_all_builtin_agents()
+        if agent_id in all_builtin:
+            config = all_builtin[agent_id]
+            return {
+                "agent_id": agent_id,
+                "agent_name": config["name"],
+                "categories": config.get("starter_prompts", []),
+            }
+
+        # Check custom agents
+        custom_agent = self._agent_store.get(agent_id)
+        if custom_agent:
+            return {
+                "agent_id": agent_id,
+                "agent_name": custom_agent.name,
+                "categories": custom_agent.starter_prompts or [],
+            }
+
+        return None
 
     # Tool Registry Methods
 
@@ -762,6 +864,7 @@ Guidelines:
         tool_configs: list[dict],
         skill_ids: Optional[list[str]] = None,
         schedule_config: Optional[dict] = None,
+        starter_prompts: Optional[list[dict]] = None,
         metadata: Optional[dict] = None,
         provider: str = "openai",
         model: Optional[str] = None,
@@ -780,6 +883,7 @@ Guidelines:
                 - cron_expression: str (e.g., "0 9 * * *")
                 - trigger_prompt: str
                 - timezone: str (default: "UTC")
+            starter_prompts: Optional list of starter prompt categories
             metadata: Optional additional metadata
             provider: Model provider to use (openai, anthropic, google, bedrock)
             model: Specific model name (uses provider default if None)
@@ -823,6 +927,7 @@ Guidelines:
             created_at=datetime.utcnow(),
             skill_ids=skill_ids,
             schedule=schedule,
+            starter_prompts=starter_prompts,
             metadata=metadata or {},
             provider=provider,
             model=model,
@@ -1022,6 +1127,7 @@ Guidelines:
         tool_configs: Optional[list[dict]] = None,
         skill_ids: Optional[list[str]] = None,
         schedule_config: Optional[dict] = None,
+        starter_prompts: Optional[list[dict]] = None,
         metadata: Optional[dict] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
@@ -1040,6 +1146,7 @@ Guidelines:
             tool_configs: New tool configurations [{"tool_id": str, "config": dict}]
             skill_ids: New skill IDs to include
             schedule_config: New schedule configuration
+            starter_prompts: New starter prompts
             metadata: New metadata
             provider: New model provider (openai, anthropic, google, bedrock)
             model: New model name
@@ -1078,6 +1185,8 @@ Guidelines:
             agent.name = name
         if system_prompt is not None:
             agent.system_prompt = system_prompt
+        if starter_prompts is not None:
+            agent.starter_prompts = starter_prompts
         if metadata is not None:
             agent.metadata = metadata
         if provider is not None:

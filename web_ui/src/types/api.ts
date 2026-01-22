@@ -200,6 +200,25 @@ export interface CustomAgentCreateResponse {
   message: string;
 }
 
+// Starter Prompts types
+export interface StarterPrompt {
+  title: string;
+  prompt: string;
+  icon: string;
+}
+
+export interface StarterPromptCategory {
+  category: string;
+  icon: string;
+  prompts: StarterPrompt[];
+}
+
+export interface StarterPromptsResponse {
+  agent_id: string;
+  agent_name: string;
+  categories: StarterPromptCategory[];
+}
+
 // Workflow types
 export interface WorkflowInfo {
   workflow_id: string;
