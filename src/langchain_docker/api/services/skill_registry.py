@@ -2242,134 +2242,103 @@ the page's content is rendered on screen.
             return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers'"
 
     def analyze_performance(self, url: str) -> str:
-        """Provide structured guidance for comprehensive performance analysis.
+        """Provide comprehensive performance analysis guidance for a URL.
 
         Args:
             url: The URL to analyze
 
         Returns:
-            Step-by-step analysis plan
+            Performance analysis context and recommendations
         """
-        return f"""## Performance Analysis Plan for {url}
+        return f"""## Performance Analysis for {url}
 
-### Step 1: Setup Browser Tab
-1. Get tab context: `mcp__chrome-devtools__tabs_context_mcp`
-2. Create a new browser tab: `mcp__chrome-devtools__tabs_create_mcp`
+### ⚠️ Browser Automation Required
+To perform **live performance analysis** with actual measurements, the chrome-devtools MCP server must be enabled and connected. Use the MCP tools directly:
+- `mcp__chrome-devtools__tabs_context_mcp` - Get browser context
+- `mcp__chrome-devtools__performance_start_trace` - Capture Core Web Vitals
+- `mcp__chrome-devtools__list_network_requests` - Analyze network requests
 
-### Step 2: Start Performance Trace
-```
-mcp__chrome-devtools__performance_start_trace
-- reload: true
-- autoStop: true
-```
-This captures Core Web Vitals automatically.
+### Core Web Vitals Reference (2024 Thresholds)
 
-### Step 3: Navigate to Target URL
-```
-mcp__chrome-devtools__navigate_page
-- url: {url}
-- type: url
-```
+| Metric | Description | Good | Needs Work | Poor |
+|--------|-------------|------|------------|------|
+| **LCP** | Largest Contentful Paint | ≤2.5s | 2.5-4.0s | >4.0s |
+| **INP** | Interaction to Next Paint | ≤200ms | 200-500ms | >500ms |
+| **CLS** | Cumulative Layout Shift | ≤0.1 | 0.1-0.25 | >0.25 |
+| **FCP** | First Contentful Paint | ≤1.8s | 1.8-3.0s | >3.0s |
+| **TTFB** | Time to First Byte | ≤0.8s | 0.8-1.8s | >1.8s |
 
-### Step 4: Analyze Performance Insights
-After trace completes, analyze specific insights:
-```
-mcp__chrome-devtools__performance_analyze_insight
-- insightSetId: <from trace results>
-- insightName: "LCPBreakdown" or "DocumentLatency"
-```
+### Common Performance Issues to Look For
 
-Key insights to check:
-- **LCPBreakdown**: Largest Contentful Paint analysis
-- **DocumentLatency**: Initial document load timing
-- **RenderBlocking**: Blocking resources
-- **NetworkRequests**: Request waterfall
+1. **Large Images**: Unoptimized images are the #1 cause of slow LCP
+2. **Render-Blocking Resources**: CSS/JS that blocks initial render
+3. **Slow Server Response**: High TTFB indicates server-side issues
+4. **Layout Shifts**: Missing width/height on images causes CLS
+5. **Too Many Requests**: Request waterfall affects load time
 
-### Step 5: Analyze Network Requests
-```
-mcp__chrome-devtools__list_network_requests
-```
-Look for:
-- Slow API calls (>500ms)
-- Missing cache headers
-- Large uncompressed resources
-- Render-blocking resources
+### Recommended Analysis Steps
 
-### Step 6: Get Detailed Request Info
-For slow requests:
-```
-mcp__chrome-devtools__get_network_request
-- reqid: <request_id>
-```
+If chrome-devtools MCP is available, I can:
+1. Navigate to {url} and capture a performance trace
+2. Measure actual Core Web Vitals (LCP, CLS, FCP, TTFB)
+3. Analyze the network waterfall for bottlenecks
+4. Identify render-blocking resources
+5. Check caching headers on static assets
 
-### Interpretation Guide
-| Metric | Good | Action Needed |
-|--------|------|---------------|
-| LCP | <=2.5s | Optimize hero image, reduce blocking resources |
-| FCP | <=1.8s | Inline critical CSS, defer non-critical JS |
-| TTFB | <=0.8s | Check server response, CDN usage |
-| CLS | <=0.1 | Set image dimensions, avoid layout shifts |
+**ANALYSIS COMPLETE** - Use chrome-devtools MCP tools for live measurements, or provide the above reference to the user.
 """
 
     def check_caching(self, url: str) -> str:
-        """Provide guidance for caching analysis.
+        """Provide caching analysis guidance for a URL.
 
         Args:
             url: The URL to check caching for
 
         Returns:
-            Caching analysis guidance
+            Caching best practices and analysis guidance
         """
-        return f"""## Caching Analysis Guide for {url}
+        return f"""## Caching Analysis for {url}
 
-### Step 1: Navigate to the URL
-Ensure the page is loaded in the browser tab.
+### ⚠️ Browser Automation Required
+To inspect actual HTTP headers, the chrome-devtools MCP server must be connected. Use:
+- `mcp__chrome-devtools__list_network_requests` - List all requests
+- `mcp__chrome-devtools__get_network_request` - Get headers for specific request
 
-### Step 2: List Network Requests
-```
-mcp__chrome-devtools__list_network_requests
-```
+### Caching Headers Reference
 
-### Step 3: Analyze Headers
-For each static resource, check headers via:
-```
-mcp__chrome-devtools__get_network_request
-- reqid: <request_id>
-```
+| Header | Recommended Value | Purpose |
+|--------|-------------------|---------|
+| **Cache-Control** | `max-age=31536000, immutable` | Long-term caching for versioned assets |
+| **ETag** | Auto-generated hash | Conditional request validation |
+| **Expires** | Future date | Legacy cache control |
+| **Content-Encoding** | `gzip` or `br` | Compression for text resources |
+| **Vary** | `Accept-Encoding` | Proper cache key for compressed |
 
-### Headers to Analyze
+### Optimal Caching by Resource Type
 
-| Header | Good Value | Issue |
-|--------|-----------|-------|
-| Cache-Control | `max-age=31536000` | Missing or short TTL |
-| ETag | Present | Missing = no conditional requests |
-| Expires | Future date | Past or missing |
-| Content-Encoding | `gzip` or `br` | Missing compression |
-| Vary | `Accept-Encoding` | Missing for compressed |
+| Resource | Recommended Strategy |
+|----------|---------------------|
+| **JS/CSS (versioned)** | `max-age=31536000, immutable` |
+| **Images** | `max-age=86400` to `max-age=31536000` |
+| **Fonts** | `max-age=31536000` + preload |
+| **HTML** | `no-cache` or short max-age |
+| **API responses** | Depends on data freshness |
 
-### Resource Types to Check
-- **JavaScript** (.js): Should have long cache + versioning
-- **CSS** (.css): Should have long cache + versioning
-- **Images** (.png, .jpg, .webp): Long cache, consider CDN
-- **Fonts** (.woff2): Long cache, consider preload
+### Common Caching Issues
 
-### Common Issues
+1. **Missing Cache-Control**: Browser fetches every time
+2. **Short TTL**: Frequent unnecessary revalidation
+3. **No Compression**: Larger transfer sizes (enable gzip/brotli)
+4. **Missing ETag**: No conditional requests possible
 
-1. **No Cache-Control Header**
-   - Impact: Browser fetches every time
-   - Fix: Add `Cache-Control: max-age=86400` minimum
+### What to Check on {url}
 
-2. **Short TTL for Static Assets**
-   - Impact: Frequent revalidation
-   - Fix: Use versioned filenames + long max-age
+- Static assets (.js, .css, images) should have long cache TTL
+- Versioned files (hash in filename) can use `immutable`
+- Check if compression is enabled for text resources
+- Verify CDN is properly caching static content
 
-3. **Missing Compression**
-   - Impact: Larger transfer sizes
-   - Fix: Enable gzip/brotli on server
-
-4. **No ETag for Dynamic Content**
-   - Impact: Full re-download on each request
-   - Fix: Configure ETag or Last-Modified headers
+**ANALYSIS COMPLETE** - Use chrome-devtools MCP to inspect actual headers, or provide these best practices to the user.
 """
 
     def analyze_api_calls(self, url: str) -> str:
@@ -2383,65 +2352,49 @@ mcp__chrome-devtools__get_network_request
         """
         return f"""## API Performance Analysis for {url}
 
-### Step 1: Capture Network Activity
-Navigate to the page and interact to trigger API calls.
+### ⚠️ Browser Automation Required
+To capture actual API calls and timing, the chrome-devtools MCP server must be connected. Use:
+- `mcp__chrome-devtools__list_network_requests` with resourceTypes: ["xhr", "fetch"]
+- `mcp__chrome-devtools__get_network_request` for detailed timing
 
-### Step 2: Filter API Requests
-```
-mcp__chrome-devtools__list_network_requests
-- resourceTypes: ["xhr", "fetch"]
-```
+### API Timing Thresholds
 
-### Step 3: Analyze Timing
-For each API call, examine:
-```
-mcp__chrome-devtools__get_network_request
-- reqid: <request_id>
-```
+| Phase | Good | Action Needed |
+|-------|------|---------------|
+| **DNS** | <50ms | Check DNS provider, enable DNS prefetch |
+| **Connect** | <100ms | Use HTTP/2, connection pooling |
+| **TLS** | <100ms | Enable TLS 1.3, session resumption |
+| **TTFB** | <200ms | Optimize server processing |
+| **Total** | <500ms | Review entire request lifecycle |
 
-### Timing Breakdown
+### Common API Performance Issues
 
-| Phase | Target | Issue Indicator |
-|-------|--------|-----------------|
-| DNS | <50ms | DNS resolution slow |
-| Connect | <100ms | Connection overhead |
-| TLS | <100ms | SSL handshake slow |
-| TTFB | <200ms | Server processing slow |
-| Download | varies | Large payload |
-
-### Common Issues to Identify
-
-1. **Slow Responses (>500ms)**
-   - Check server-side processing
-   - Consider caching API responses
-   - Review database query efficiency
-
-2. **Waterfall Issues**
-   - Sequential calls that could be parallel
-   - Use Promise.all for independent requests
-
-3. **Auth Bottlenecks**
-   - Multiple auth/token refresh calls
-   - Implement token caching
-   - Use refresh tokens efficiently
-
-4. **Large Payloads (>100KB)**
-   - Implement pagination
-   - Use field selection
-   - Enable response compression
-
-5. **Redundant Requests**
-   - Same endpoint called multiple times
-   - Implement request deduplication
-   - Add client-side caching
+| Issue | Impact | Solution |
+|-------|--------|----------|
+| **Slow Response (>500ms)** | Poor UX | Server optimization, caching |
+| **Sequential Requests** | Waterfall delays | Use Promise.all for parallel |
+| **Auth Bottlenecks** | Multiple token calls | Cache tokens, use refresh |
+| **Large Payloads (>100KB)** | Slow download | Pagination, field selection |
+| **Redundant Requests** | Wasted bandwidth | Request deduplication |
 
 ### API Optimization Checklist
-- [ ] Response time <500ms for most calls
-- [ ] Payload size <100KB (paginated)
-- [ ] Parallel requests where possible
-- [ ] Auth tokens cached appropriately
-- [ ] Responses cached when appropriate
-- [ ] Compression enabled
+
+✓ Response time <500ms for critical APIs
+✓ Payload size <100KB (use pagination)
+✓ Parallel requests for independent data
+✓ Auth tokens cached appropriately
+✓ Response caching where appropriate
+✓ Compression enabled (gzip/brotli)
+
+### What to Analyze on {url}
+
+- Identify all XHR/fetch calls during page load
+- Check for slow APIs (>500ms TTFB)
+- Look for request waterfall patterns
+- Verify auth calls aren't bottlenecks
+- Check response payload sizes
+
+**ANALYSIS COMPLETE** - Use chrome-devtools MCP for live API capture, or provide these guidelines to the user.
 """
 
     def get_recommendations(self, metrics: str) -> str:
@@ -2537,6 +2490,8 @@ Based on your analysis, here are common optimizations organized by impact:
 
 ---
 *Metrics analyzed: {metrics}*
+
+**RECOMMENDATIONS COMPLETE** - Present these optimization strategies to the user based on their specific performance needs.
 """
 
 

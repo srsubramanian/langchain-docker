@@ -238,8 +238,8 @@ export function MultiAgentPage() {
   } = useImageUpload();
 
   const { provider, model, temperature, agentPreset, setAgentPreset } = useSettingsStore();
-  // MCP store - getEnabledServers available for future MCP integration with agents
-  useMCPStore();
+  // MCP store - get enabled servers to pass to agent invocations
+  const { getEnabledServers } = useMCPStore();
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
@@ -398,6 +398,9 @@ export function MultiAgentPage() {
         const toolCalls: ToolCallInfo[] = [];
         let fullContent = '';
 
+        // Get enabled MCP servers to pass to agent
+        const enabledMCPServers = getEnabledServers();
+
         for await (const event of agentsApi.invokeAgentStream(agentId, {
           message: userMessage,
           images: userImages,
@@ -405,6 +408,7 @@ export function MultiAgentPage() {
           provider,
           model,
           temperature,
+          mcp_servers: enabledMCPServers.length > 0 ? enabledMCPServers : undefined,
         })) {
           if (event.event === 'start' && event.session_id) {
             setSessionId(event.session_id);

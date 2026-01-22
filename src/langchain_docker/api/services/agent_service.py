@@ -999,6 +999,7 @@ Guidelines:
                     config={
                         "configurable": {"thread_id": workflow_id},
                         "metadata": {"agent_id": agent_id, "scheduled": True},
+                        "recursion_limit": 50,
                     },
                 )
 
@@ -1535,6 +1536,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_key},
                         "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 50,
                     },
                 )
 
@@ -1570,6 +1572,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_key},
                         "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 50,
                     },
                 )
 
@@ -2286,6 +2289,7 @@ Always use the tools to interact with the database.""")
                 config={
                     "configurable": {"thread_id": sess_key},
                     "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                    "recursion_limit": 50,
                 },
             )
 
@@ -2841,6 +2845,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_id},
                         "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
+                        "recursion_limit": 50,
                     },
                 )
 
@@ -2874,6 +2879,7 @@ Always use the tools to interact with the database.""")
                     config={
                         "configurable": {"thread_id": sess_id},
                         "metadata": {"session_id": sess_id, "workflow_id": workflow_id, "user_id": user_id},
+                        "recursion_limit": 50,
                     },
                 )
 

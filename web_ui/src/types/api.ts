@@ -274,6 +274,8 @@ export interface DirectInvokeRequest {
   enable_memory?: boolean;
   memory_trigger_count?: number | null;
   memory_keep_recent?: number | null;
+  // MCP servers to enable for this request
+  mcp_servers?: string[];
 }
 
 export interface DirectInvokeResponse {

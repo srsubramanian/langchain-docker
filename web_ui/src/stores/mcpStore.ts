@@ -153,7 +153,12 @@ export const useMCPStore = create<MCPState>()(
 
       getEnabledServers: () => {
         const { enabledServerIds, servers } = get();
-        // Only return IDs of servers that exist and are enabled
+        // If servers haven't been fetched yet, return all enabled IDs
+        // (user explicitly selected these, so trust their selection)
+        if (servers.length === 0) {
+          return enabledServerIds;
+        }
+        // Only return IDs of servers that exist and are enabled in config
         return enabledServerIds.filter((id) =>
           servers.some((s) => s.id === id && s.enabled)
         );
