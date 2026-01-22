@@ -382,6 +382,10 @@ class DirectInvokeRequest(BaseModel):
         gt=0,
         description="Override: Number of recent messages to keep after summarization",
     )
+    mcp_servers: Optional[list[str]] = Field(
+        None,
+        description="List of MCP server IDs to enable (e.g., ['chrome-devtools', 'filesystem'])",
+    )
 
 
 class DirectInvokeResponse(BaseModel):

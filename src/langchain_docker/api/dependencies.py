@@ -270,6 +270,7 @@ def get_agent_service(
     memory_service: MemoryService = Depends(get_memory_service),
     skill_registry: SkillRegistry = Depends(get_skill_registry),
     approval_service: ApprovalService = Depends(get_approval_service),
+    mcp_tool_service: MCPToolService = Depends(get_mcp_tool_service),
 ) -> AgentService:
     """Get agent service instance.
 
@@ -279,6 +280,7 @@ def get_agent_service(
         memory_service: Memory service for summarization (injected)
         skill_registry: Skill registry (injected)
         approval_service: Approval service for HITL tool approval (injected)
+        mcp_tool_service: MCP tool service for MCP tool integration (injected)
 
     Returns:
         AgentService instance
@@ -295,6 +297,7 @@ def get_agent_service(
             checkpointer=checkpointer,
             redis_url=redis_url,
             approval_service=approval_service,
+            mcp_tool_service=mcp_tool_service,
         )
     return _agent_service
 

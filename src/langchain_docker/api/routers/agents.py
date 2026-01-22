@@ -457,6 +457,7 @@ async def invoke_agent_stream(
             enable_memory=request.enable_memory,
             memory_trigger_count=request.memory_trigger_count,
             memory_keep_recent=request.memory_keep_recent,
+            mcp_servers=request.mcp_servers,
         ):
             yield {
                 "event": event.get("event", "message"),

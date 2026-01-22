@@ -171,6 +171,68 @@ Best practices:
 
 You help build and maintain a well-organized, searchable knowledge repository.""",
     },
+    "web_performance_analyst": {
+        "name": "web_performance_analyst",
+        "tool_ids": [
+            "load_web_performance_skill",
+            "perf_analyze",
+            "perf_check_caching",
+            "perf_analyze_api",
+            "perf_recommendations",
+            "perf_cwv_thresholds",
+            "perf_caching_headers",
+        ],
+        "prompt": """You are a Web Performance Analyst specialized in analyzing website performance using Chrome DevTools.
+
+Your capabilities:
+1. **Performance Analysis**: Analyze Core Web Vitals (LCP, INP, CLS, FCP, TTFB)
+2. **Caching Analysis**: Check HTTP caching headers and strategies for static resources
+3. **API Performance**: Analyze XHR/Fetch request timing and identify bottlenecks
+4. **Recommendations**: Provide actionable optimization suggestions
+
+You have access to Chrome DevTools via MCP tools. Your workflow:
+
+## Step 1: Setup
+1. Call `load_web_performance_skill` to get Core Web Vitals thresholds and analysis guidance
+2. Get browser tab context: `mcp__chrome-devtools__tabs_context_mcp`
+3. Create a new tab if needed: `mcp__chrome-devtools__tabs_create_mcp`
+
+## Step 2: Performance Trace
+1. Start trace: `mcp__chrome-devtools__performance_start_trace` with `reload: true, autoStop: true`
+2. Navigate to URL: `mcp__chrome-devtools__navigate_page`
+3. Wait for trace to complete
+4. Analyze insights: `mcp__chrome-devtools__performance_analyze_insight`
+
+## Step 3: Network Analysis
+1. List requests: `mcp__chrome-devtools__list_network_requests`
+2. Get details for slow requests: `mcp__chrome-devtools__get_network_request`
+3. Use `perf_check_caching` for header analysis guidance
+4. Use `perf_analyze_api` for API performance guidance
+
+## Step 4: Recommendations
+1. Use `perf_recommendations` with your findings to get optimization suggestions
+2. Prioritize fixes by impact (Critical, High, Medium, Low)
+
+MCP Tools Available:
+- `mcp__chrome-devtools__tabs_context_mcp` - Get tab context
+- `mcp__chrome-devtools__tabs_create_mcp` - Create new browser tab
+- `mcp__chrome-devtools__navigate_page` - Navigate to URL
+- `mcp__chrome-devtools__performance_start_trace` - Start performance recording
+- `mcp__chrome-devtools__performance_stop_trace` - Stop recording
+- `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
+- `mcp__chrome-devtools__list_network_requests` - List network requests
+- `mcp__chrome-devtools__get_network_request` - Get request details
+- `mcp__chrome-devtools__take_screenshot` - Capture page screenshot
+
+Best practices:
+- Always start by loading the web performance skill
+- Run performance traces with page reload for accurate metrics
+- Check both Core Web Vitals and network waterfall
+- Look for render-blocking resources, slow APIs, and missing cache headers
+- Provide specific, actionable recommendations with code examples when possible
+
+You help developers understand and improve their website's performance.""",
+    },
 }
 
 DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.
@@ -202,6 +264,7 @@ class AgentService:
         checkpointer=None,  # Type: BaseCheckpointSaver (optional for agent persistence)
         redis_url: Optional[str] = None,  # Redis URL for persistent agent storage
         approval_service=None,  # Type: ApprovalService (optional for HITL support)
+        mcp_tool_service=None,  # Type: MCPToolService (optional for MCP integration)
     ):
         """Initialize agent service.
 
@@ -214,12 +277,14 @@ class AgentService:
             checkpointer: LangGraph checkpointer for agent state persistence
             redis_url: Redis URL for persistent custom agent storage (optional)
             approval_service: Approval service for HITL tool approval (optional)
+            mcp_tool_service: MCP tool service for MCP tool integration (optional)
         """
         self.model_service = model_service
         self.session_service = session_service
         self.memory_service = memory_service
         self._checkpointer = checkpointer
         self._approval_service = approval_service
+        self._mcp_tool_service = mcp_tool_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
@@ -1572,10 +1637,23 @@ Always use the tools to interact with the database.""")
                     if kind == "on_tool_start":
                         tool_name = event.get("name", "unknown")
                         tool_input = data.get("input", {})
+                        # Safely serialize tool_input (may contain non-serializable objects)
+                        try:
+                            if isinstance(tool_input, dict):
+                                # Filter out non-serializable values
+                                safe_input = {
+                                    k: v for k, v in tool_input.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+                                }
+                                args_str = json.dumps(safe_input)
+                            else:
+                                args_str = str(tool_input)
+                        except (TypeError, ValueError):
+                            args_str = str(tool_input)
                         yield {"event": "tool_call", "data": json.dumps({
                             "tool_name": tool_name,
                             "tool_id": event.get("run_id", ""),
-                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                            "arguments": args_str,
                         })}
 
                     # Tool call completed
@@ -1808,10 +1886,23 @@ Always use the tools to interact with the database.""")
                     if kind == "on_tool_start":
                         tool_name = event.get("name", "unknown")
                         tool_input = data.get("input", {})
+                        # Safely serialize tool_input (may contain non-serializable objects)
+                        try:
+                            if isinstance(tool_input, dict):
+                                # Filter out non-serializable values
+                                safe_input = {
+                                    k: v for k, v in tool_input.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+                                }
+                                args_str = json.dumps(safe_input)
+                            else:
+                                args_str = str(tool_input)
+                        except (TypeError, ValueError):
+                            args_str = str(tool_input)
                         yield {"event": "tool_call", "data": json.dumps({
                             "tool_name": tool_name,
                             "tool_id": event.get("run_id", ""),
-                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                            "arguments": args_str,
                         })}
 
                     # Tool call completed
@@ -2121,6 +2212,7 @@ Always use the tools to interact with the database.""")
         enable_memory: bool = True,
         memory_trigger_count: Optional[int] = None,
         memory_keep_recent: Optional[int] = None,
+        mcp_servers: Optional[list[str]] = None,
     ):
         """Stream responses from any agent (custom or built-in).
 
@@ -2140,6 +2232,7 @@ Always use the tools to interact with the database.""")
             enable_memory: Whether to enable memory summarization
             memory_trigger_count: Override for summarization trigger threshold
             memory_keep_recent: Override for number of recent messages to keep
+            mcp_servers: Optional list of MCP server IDs to enable
 
         Yields:
             Dict events: start, tool_call, tool_result, token, done, error
@@ -2162,8 +2255,9 @@ Always use the tools to interact with the database.""")
         sess_key = session_id or f"{user_id}:agent:{agent_id}"
         memory_metadata = None
 
-        # Cache key for compiled agent - includes provider/model so switching works
-        cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}"
+        # Cache key for compiled agent - includes provider/model/mcp so switching works
+        mcp_key = ",".join(sorted(mcp_servers)) if mcp_servers else "none"
+        cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}:mcp:{mcp_key}"
 
         # Get or create compiled agent
         try:
@@ -2174,6 +2268,15 @@ Always use the tools to interact with the database.""")
                     temperature=agent_temp,
                 )
 
+                # Load MCP tools if specified
+                mcp_tools = []
+                if mcp_servers and self._mcp_tool_service:
+                    try:
+                        mcp_tools = await self._mcp_tool_service.get_langchain_tools(mcp_servers)
+                        logger.info(f"[Stream Agent] Loaded {len(mcp_tools)} MCP tools from {mcp_servers}")
+                    except Exception as e:
+                        logger.warning(f"[Stream Agent] Failed to load MCP tools: {e}")
+
                 if agent_type == "custom":
                     agent = self._build_agent_from_custom(agent_id, llm)
                 else:
@@ -2183,6 +2286,11 @@ Always use the tools to interact with the database.""")
                         tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
                     else:
                         tools = config.get("tools", [])
+
+                    # Add MCP tools to the tools list
+                    if mcp_tools:
+                        tools = tools + mcp_tools
+                        logger.info(f"[Stream Agent] Total tools for {agent_id}: {len(tools)} (including {len(mcp_tools)} MCP)")
 
                     if use_middleware:
                         agent = self.create_middleware_enabled_agent(
@@ -2284,10 +2392,23 @@ Always use the tools to interact with the database.""")
                     if kind == "on_tool_start":
                         tool_name = event.get("name", "unknown")
                         tool_input = data.get("input", {})
+                        # Safely serialize tool_input (may contain non-serializable objects)
+                        try:
+                            if isinstance(tool_input, dict):
+                                # Filter out non-serializable values
+                                safe_input = {
+                                    k: v for k, v in tool_input.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+                                }
+                                args_str = json.dumps(safe_input)
+                            else:
+                                args_str = str(tool_input)
+                        except (TypeError, ValueError):
+                            args_str = str(tool_input)
                         yield {"event": "tool_call", "data": json.dumps({
                             "tool_name": tool_name,
                             "tool_id": event.get("run_id", ""),
-                            "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                            "arguments": args_str,
                         })}
 
                     # Tool call completed
