@@ -18,7 +18,7 @@ class MCPToolService:
     - Built-in subprocess management for stdio servers
     - Built-in HTTP client for remote servers
     - Automatic LangChain tool conversion
-    - Proper session management (stateless by default)
+    - Client caching for persistent connections
     """
 
     def __init__(self, server_manager: MCPServerManager):
@@ -73,7 +73,7 @@ class MCPToolService:
         Uses langchain-mcp-adapters' MultiServerMCPClient for:
         - Automatic subprocess/HTTP management
         - Built-in tool schema conversion
-        - Stateless session handling
+        - Persistent client connections (cached to keep servers running)
 
         Args:
             server_ids: List of server identifiers to get tools from.
@@ -105,8 +105,10 @@ class MCPToolService:
 
                 logger.info(f"Loading tools from MCP server '{server_id}'")
 
-                # Create client for this server
+                # Create client for this server and cache it to keep connection alive
+                # This is important for servers like chrome-devtools that need persistent state
                 client = MultiServerMCPClient({server_id: client_config})
+                self._client_cache[server_id] = client
 
                 # Get tools using the library's built-in method
                 # This handles subprocess lifecycle, JSON-RPC, and tool conversion

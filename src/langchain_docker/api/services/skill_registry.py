@@ -2042,6 +2042,504 @@ The web content has been processed and indexed for semantic search.
             return f"Error getting document: {str(e)}"
 
 
+class WebPerformanceSkill(Skill):
+    """Web Performance Analysis skill using Chrome DevTools MCP integration.
+
+    Provides guidance and structured workflows for analyzing website performance
+    including Core Web Vitals, caching, API latency, and optimization recommendations.
+
+    Content is loaded from .md files in src/langchain_docker/skills/web_performance/
+    """
+
+    def __init__(self):
+        """Initialize Web Performance skill."""
+        self.id = "web_performance"
+        self.name = "Web Performance Analysis"
+        self.description = (
+            "Analyze website performance including Core Web Vitals, caching, "
+            "API latency, and provide optimization recommendations"
+        )
+        self.category = "performance"
+        self.is_builtin = True
+        self.version = "1.0.0"
+        self._skill_dir = SKILLS_DIR / "web_performance"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._load_configs_from_frontmatter()
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory.
+
+        Args:
+            filename: Name of the .md file to read
+
+        Returns:
+            File content or error message if file not found
+        """
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Extract frontmatter
+            lines = content.split("\n")
+            frontmatter_end = -1
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    frontmatter_end = i
+                    break
+
+            if frontmatter_end == -1:
+                return
+
+            import yaml
+            frontmatter_text = "\n".join(lines[1:frontmatter_end])
+            frontmatter = yaml.safe_load(frontmatter_text)
+
+            if frontmatter:
+                self._tool_configs = frontmatter.get("tool_configs", [])
+                self._resource_configs = frontmatter.get("resource_configs", [])
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill.
+
+        Returns:
+            Original SKILL.md content (static guidelines only)
+        """
+        return self._read_md_file("SKILL.md")
+
+    def load_core(self) -> str:
+        """Level 2: Load web performance skill instructions.
+
+        Returns:
+            Complete skill context for performance analysis
+        """
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
+
+        # Add MCP server status information
+        mcp_status = """### MCP Server Status
+The chrome-devtools MCP server provides browser automation for performance analysis.
+
+**Required MCP Tools:**
+- `mcp__chrome-devtools__tabs_create_mcp` - Create new browser tab
+- `mcp__chrome-devtools__tabs_context_mcp` - Get tab context
+- `mcp__chrome-devtools__performance_start_trace` - Start performance recording
+- `mcp__chrome-devtools__performance_stop_trace` - Stop and get results
+- `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
+- `mcp__chrome-devtools__list_network_requests` - Analyze network calls
+- `mcp__chrome-devtools__get_network_request` - Individual request details
+- `mcp__chrome-devtools__navigate_page` - Page navigation
+"""
+
+        return f"""## Web Performance Analysis Skill Activated
+
+{mcp_status}
+
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources.
+
+        Args:
+            resource: Resource identifier
+
+        Returns:
+            Detailed resource content
+        """
+        if resource == "cwv_thresholds":
+            return """## Core Web Vitals Thresholds (2024)
+
+| Metric | Description | Good | Needs Improvement | Poor |
+|--------|-------------|------|-------------------|------|
+| **LCP** | Largest Contentful Paint | <=2.5s | 2.5s-4.0s | >4.0s |
+| **INP** | Interaction to Next Paint | <=200ms | 200ms-500ms | >500ms |
+| **CLS** | Cumulative Layout Shift | <=0.1 | 0.1-0.25 | >0.25 |
+| **FCP** | First Contentful Paint | <=1.8s | 1.8s-3.0s | >3.0s |
+| **TTFB** | Time to First Byte | <=0.8s | 0.8s-1.8s | >1.8s |
+
+### Metric Explanations
+
+**LCP (Largest Contentful Paint)**: Measures loading performance. Reports the render time
+of the largest image or text block visible within the viewport.
+
+**INP (Interaction to Next Paint)**: Measures responsiveness. Observes the latency of all
+interactions a user makes with the page and reports a single value.
+
+**CLS (Cumulative Layout Shift)**: Measures visual stability. Quantifies how much visible
+content shifts in the viewport during the entire page lifecycle.
+
+**FCP (First Contentful Paint)**: Measures the time from page load to when any part of
+the page's content is rendered on screen.
+
+**TTFB (Time to First Byte)**: Measures the time from request to first byte of response.
+"""
+        elif resource == "caching_headers":
+            return """## Caching Headers Reference
+
+### Cache-Control Directives
+| Directive | Description |
+|-----------|-------------|
+| `max-age=N` | Cache is fresh for N seconds |
+| `s-maxage=N` | Shared cache (CDN) freshness time |
+| `no-cache` | Must revalidate before using cached copy |
+| `no-store` | Don't cache at all |
+| `immutable` | Content won't change, don't revalidate |
+| `public` | Can be cached by any cache |
+| `private` | Only cache in browser, not CDN |
+
+### Recommended Values by Resource Type
+| Resource | Recommended Cache-Control |
+|----------|--------------------------|
+| Static JS/CSS (versioned) | `max-age=31536000, immutable` |
+| Images | `max-age=86400` to `max-age=31536000` |
+| HTML | `no-cache` or short `max-age` |
+| API responses | Depends on data freshness needs |
+
+### ETag and Last-Modified
+- **ETag**: Unique identifier for resource version
+- **Last-Modified**: Timestamp of last change
+- Enable conditional requests (304 Not Modified)
+"""
+        else:
+            return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers'"
+
+    def analyze_performance(self, url: str) -> str:
+        """Provide structured guidance for comprehensive performance analysis.
+
+        Args:
+            url: The URL to analyze
+
+        Returns:
+            Step-by-step analysis plan
+        """
+        return f"""## Performance Analysis Plan for {url}
+
+### Step 1: Setup Browser Tab
+1. Get tab context: `mcp__chrome-devtools__tabs_context_mcp`
+2. Create a new browser tab: `mcp__chrome-devtools__tabs_create_mcp`
+
+### Step 2: Start Performance Trace
+```
+mcp__chrome-devtools__performance_start_trace
+- reload: true
+- autoStop: true
+```
+This captures Core Web Vitals automatically.
+
+### Step 3: Navigate to Target URL
+```
+mcp__chrome-devtools__navigate_page
+- url: {url}
+- type: url
+```
+
+### Step 4: Analyze Performance Insights
+After trace completes, analyze specific insights:
+```
+mcp__chrome-devtools__performance_analyze_insight
+- insightSetId: <from trace results>
+- insightName: "LCPBreakdown" or "DocumentLatency"
+```
+
+Key insights to check:
+- **LCPBreakdown**: Largest Contentful Paint analysis
+- **DocumentLatency**: Initial document load timing
+- **RenderBlocking**: Blocking resources
+- **NetworkRequests**: Request waterfall
+
+### Step 5: Analyze Network Requests
+```
+mcp__chrome-devtools__list_network_requests
+```
+Look for:
+- Slow API calls (>500ms)
+- Missing cache headers
+- Large uncompressed resources
+- Render-blocking resources
+
+### Step 6: Get Detailed Request Info
+For slow requests:
+```
+mcp__chrome-devtools__get_network_request
+- reqid: <request_id>
+```
+
+### Interpretation Guide
+| Metric | Good | Action Needed |
+|--------|------|---------------|
+| LCP | <=2.5s | Optimize hero image, reduce blocking resources |
+| FCP | <=1.8s | Inline critical CSS, defer non-critical JS |
+| TTFB | <=0.8s | Check server response, CDN usage |
+| CLS | <=0.1 | Set image dimensions, avoid layout shifts |
+"""
+
+    def check_caching(self, url: str) -> str:
+        """Provide guidance for caching analysis.
+
+        Args:
+            url: The URL to check caching for
+
+        Returns:
+            Caching analysis guidance
+        """
+        return f"""## Caching Analysis Guide for {url}
+
+### Step 1: Navigate to the URL
+Ensure the page is loaded in the browser tab.
+
+### Step 2: List Network Requests
+```
+mcp__chrome-devtools__list_network_requests
+```
+
+### Step 3: Analyze Headers
+For each static resource, check headers via:
+```
+mcp__chrome-devtools__get_network_request
+- reqid: <request_id>
+```
+
+### Headers to Analyze
+
+| Header | Good Value | Issue |
+|--------|-----------|-------|
+| Cache-Control | `max-age=31536000` | Missing or short TTL |
+| ETag | Present | Missing = no conditional requests |
+| Expires | Future date | Past or missing |
+| Content-Encoding | `gzip` or `br` | Missing compression |
+| Vary | `Accept-Encoding` | Missing for compressed |
+
+### Resource Types to Check
+- **JavaScript** (.js): Should have long cache + versioning
+- **CSS** (.css): Should have long cache + versioning
+- **Images** (.png, .jpg, .webp): Long cache, consider CDN
+- **Fonts** (.woff2): Long cache, consider preload
+
+### Common Issues
+
+1. **No Cache-Control Header**
+   - Impact: Browser fetches every time
+   - Fix: Add `Cache-Control: max-age=86400` minimum
+
+2. **Short TTL for Static Assets**
+   - Impact: Frequent revalidation
+   - Fix: Use versioned filenames + long max-age
+
+3. **Missing Compression**
+   - Impact: Larger transfer sizes
+   - Fix: Enable gzip/brotli on server
+
+4. **No ETag for Dynamic Content**
+   - Impact: Full re-download on each request
+   - Fix: Configure ETag or Last-Modified headers
+"""
+
+    def analyze_api_calls(self, url: str) -> str:
+        """Provide guidance for API call analysis.
+
+        Args:
+            url: The URL to analyze API calls for
+
+        Returns:
+            API analysis guidance
+        """
+        return f"""## API Performance Analysis for {url}
+
+### Step 1: Capture Network Activity
+Navigate to the page and interact to trigger API calls.
+
+### Step 2: Filter API Requests
+```
+mcp__chrome-devtools__list_network_requests
+- resourceTypes: ["xhr", "fetch"]
+```
+
+### Step 3: Analyze Timing
+For each API call, examine:
+```
+mcp__chrome-devtools__get_network_request
+- reqid: <request_id>
+```
+
+### Timing Breakdown
+
+| Phase | Target | Issue Indicator |
+|-------|--------|-----------------|
+| DNS | <50ms | DNS resolution slow |
+| Connect | <100ms | Connection overhead |
+| TLS | <100ms | SSL handshake slow |
+| TTFB | <200ms | Server processing slow |
+| Download | varies | Large payload |
+
+### Common Issues to Identify
+
+1. **Slow Responses (>500ms)**
+   - Check server-side processing
+   - Consider caching API responses
+   - Review database query efficiency
+
+2. **Waterfall Issues**
+   - Sequential calls that could be parallel
+   - Use Promise.all for independent requests
+
+3. **Auth Bottlenecks**
+   - Multiple auth/token refresh calls
+   - Implement token caching
+   - Use refresh tokens efficiently
+
+4. **Large Payloads (>100KB)**
+   - Implement pagination
+   - Use field selection
+   - Enable response compression
+
+5. **Redundant Requests**
+   - Same endpoint called multiple times
+   - Implement request deduplication
+   - Add client-side caching
+
+### API Optimization Checklist
+- [ ] Response time <500ms for most calls
+- [ ] Payload size <100KB (paginated)
+- [ ] Parallel requests where possible
+- [ ] Auth tokens cached appropriately
+- [ ] Responses cached when appropriate
+- [ ] Compression enabled
+"""
+
+    def get_recommendations(self, metrics: str) -> str:
+        """Generate optimization recommendations based on metrics.
+
+        Args:
+            metrics: JSON string or description of performance metrics
+
+        Returns:
+            Optimization recommendations
+        """
+        return f"""## Performance Optimization Recommendations
+
+Based on your analysis, here are common optimizations organized by impact:
+
+### High Impact - Critical Rendering Path
+
+1. **Defer Non-Critical JavaScript**
+   ```html
+   <script src="app.js" defer></script>
+   ```
+   - Moves script execution after HTML parsing
+   - Reduces FCP and LCP
+
+2. **Inline Critical CSS**
+   - Extract above-the-fold CSS
+   - Inline in `<head>`, defer the rest
+   - Tools: Critical, Critters
+
+3. **Preload Key Resources**
+   ```html
+   <link rel="preload" href="hero.webp" as="image">
+   <link rel="preload" href="font.woff2" as="font" crossorigin>
+   ```
+
+### Medium Impact - Caching
+
+1. **Set Long Cache TTL for Static Assets**
+   ```
+   Cache-Control: max-age=31536000, immutable
+   ```
+   - Use content hash in filenames for versioning
+
+2. **Enable Compression**
+   - gzip for broad compatibility
+   - Brotli for better compression
+   - Target: text/html, text/css, application/javascript
+
+3. **Implement Stale-While-Revalidate**
+   ```
+   Cache-Control: max-age=3600, stale-while-revalidate=86400
+   ```
+
+### Medium Impact - API Optimization
+
+1. **Batch API Requests**
+   - Combine multiple calls into one
+   - Use GraphQL or similar for selective data
+
+2. **Implement Response Caching**
+   - Cache GET responses (SWR pattern)
+   - Use IndexedDB for larger datasets
+
+3. **Add Pagination**
+   - Limit payload sizes
+   - Implement cursor-based pagination
+
+### Lower Impact - Images
+
+1. **Use Modern Formats**
+   - WebP: 30% smaller than JPEG
+   - AVIF: 50% smaller than JPEG (newer)
+
+2. **Lazy Load Below-Fold Images**
+   ```html
+   <img src="photo.webp" loading="lazy" alt="...">
+   ```
+
+3. **Serve Responsive Images**
+   ```html
+   <img srcset="small.webp 400w, medium.webp 800w, large.webp 1200w"
+        sizes="(max-width: 600px) 400px, (max-width: 1200px) 800px, 1200px"
+        src="medium.webp" alt="...">
+   ```
+
+### Quick Wins
+
+- [ ] Add `width` and `height` to images (prevents CLS)
+- [ ] Remove unused CSS/JS (audit with DevTools Coverage)
+- [ ] Enable HTTP/2 or HTTP/3
+- [ ] Use CDN for static assets
+- [ ] Optimize web fonts (subset, display: swap)
+
+---
+*Metrics analyzed: {metrics}*
+"""
+
+
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
 
@@ -2343,6 +2841,7 @@ class SkillRegistry:
             JiraSkill(),
             KnowledgeBaseSkill(),
             KBIngestionSkill(),
+            WebPerformanceSkill(),
         ]
 
         for skill in builtin_skills:
