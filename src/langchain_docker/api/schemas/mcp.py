@@ -23,12 +23,16 @@ class MCPServerInfo(BaseModel):
     name: str = Field(..., description="Human-readable server name")
     description: str = Field("", description="Server description")
     enabled: bool = Field(True, description="Whether server is enabled in config")
-    status: Literal["running", "stopped", "error"] = Field(
+    status: Literal["available", "disabled", "unknown", "error"] = Field(
         ...,
-        description="Current server status"
+        description="Current server status (available=ready to use, disabled=in config but disabled)"
     )
     is_custom: bool = Field(False, description="Whether this is a custom HTTP server")
     url: str | None = Field(None, description="Server URL for custom HTTP servers")
+    tool_count: int | None = Field(
+        None,
+        description="Number of tools loaded (None if not yet loaded)"
+    )
     tools: list[MCPToolInfo] | None = Field(
         None,
         description="Available tools (only when running)"
@@ -54,7 +58,7 @@ class MCPServerStartResponse(BaseModel):
     """Response after starting an MCP server."""
 
     id: str = Field(..., description="Server identifier")
-    status: Literal["running", "stopped", "error"] = Field(
+    status: Literal["available", "disabled", "unknown", "error"] = Field(
         ...,
         description="Server status after start attempt"
     )
@@ -69,9 +73,9 @@ class MCPServerStopResponse(BaseModel):
     """Response after stopping an MCP server."""
 
     id: str = Field(..., description="Server identifier")
-    status: Literal["stopped"] = Field(
-        "stopped",
-        description="Server status after stop"
+    status: Literal["available", "disabled", "unknown"] = Field(
+        "available",
+        description="Server status after stop (still available, just cache cleared)"
     )
     message: str = Field("", description="Status message")
 

@@ -44,15 +44,20 @@ def _to_mcp_tool_info(tools: list[dict]) -> list[MCPToolInfo]:
 @router.get("/servers", response_model=MCPServersResponse)
 async def list_servers(
     server_manager: MCPServerManager = Depends(get_mcp_server_manager),
+    tool_service: MCPToolService = Depends(get_mcp_tool_service),
 ) -> MCPServersResponse:
     """List all configured MCP servers with their status.
 
     Returns:
-        List of MCP servers with id, name, description, enabled, status, is_custom, and url.
+        List of MCP servers with id, name, description, enabled, status, is_custom, url, and tool_count.
     """
     servers_data = server_manager.list_servers()
-    servers = [
-        MCPServerInfo(
+    servers = []
+    for s in servers_data:
+        # Get tool count from cache if available
+        tool_count = tool_service.get_cached_tool_count(s["id"])
+
+        servers.append(MCPServerInfo(
             id=s["id"],
             name=s["name"],
             description=s["description"],
@@ -60,10 +65,9 @@ async def list_servers(
             status=s["status"],
             is_custom=s.get("is_custom", False),
             url=s.get("url"),
+            tool_count=tool_count,
             tools=None,
-        )
-        for s in servers_data
-    ]
+        ))
     return MCPServersResponse(servers=servers)
 
 

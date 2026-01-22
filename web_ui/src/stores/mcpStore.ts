@@ -69,12 +69,17 @@ export const useMCPStore = create<MCPState>()(
         set({ loading: true, error: null });
         try {
           const result = await mcpApi.startServer(serverId);
-          // Update server status in state
+          // Update server status in state with tool count
           const { servers } = get();
           set({
             servers: servers.map((s) =>
               s.id === serverId
-                ? { ...s, status: result.status, tools: result.tools }
+                ? {
+                    ...s,
+                    status: result.status,
+                    tools: result.tools,
+                    tool_count: result.tools?.length ?? null,
+                  }
                 : s
             ),
             loading: false,
@@ -91,12 +96,12 @@ export const useMCPStore = create<MCPState>()(
         set({ loading: true, error: null });
         try {
           await mcpApi.stopServer(serverId);
-          // Update server status in state
+          // Update server status in state - clear tool cache but keep status available
           const { servers } = get();
           set({
             servers: servers.map((s) =>
               s.id === serverId
-                ? { ...s, status: 'stopped', tools: null }
+                ? { ...s, status: 'available', tools: null, tool_count: null }
                 : s
             ),
             loading: false,

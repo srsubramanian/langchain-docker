@@ -460,9 +460,10 @@ export interface MCPServerInfo {
   name: string;
   description: string;
   enabled: boolean;
-  status: 'running' | 'stopped' | 'error';
+  status: 'available' | 'disabled' | 'unknown' | 'error';
   is_custom?: boolean;
   url?: string | null;
+  tool_count?: number | null;
   tools?: MCPToolInfo[] | null;
 }
 
@@ -472,14 +473,14 @@ export interface MCPServersResponse {
 
 export interface MCPServerStartResponse {
   id: string;
-  status: 'running' | 'stopped' | 'error';
+  status: 'available' | 'disabled' | 'unknown' | 'error';
   message: string;
   tools?: MCPToolInfo[] | null;
 }
 
 export interface MCPServerStopResponse {
   id: string;
-  status: 'stopped';
+  status: 'available' | 'disabled' | 'unknown';
   message: string;
 }
 

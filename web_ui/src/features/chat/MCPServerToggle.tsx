@@ -44,8 +44,8 @@ export function MCPServerToggle({ isOpen, onToggle }: MCPServerToggleProps) {
     const server = servers.find((s) => s.id === serverId);
     if (!server) return;
 
-    // If enabling and server is stopped, start it first
-    if (!enabledServerIds.includes(serverId) && server.status === 'stopped') {
+    // If enabling and server hasn't loaded tools yet, start it to discover tools
+    if (!enabledServerIds.includes(serverId) && server.tool_count == null) {
       await startServer(serverId);
     }
 
@@ -181,7 +181,7 @@ export function MCPServerToggle({ isOpen, onToggle }: MCPServerToggleProps) {
           <div className="space-y-2">
             {servers.map((server) => {
               const isEnabled = enabledServerIds.includes(server.id);
-              const isRunning = server.status === 'running';
+              const isAvailable = server.status === 'available';
 
               return (
                 <div key={server.id} className="flex gap-1">
@@ -199,7 +199,7 @@ export function MCPServerToggle({ isOpen, onToggle }: MCPServerToggleProps) {
                     <span
                       className={cn(
                         'h-2 w-2 rounded-full shrink-0',
-                        isRunning ? 'bg-green-500' : 'bg-gray-400'
+                        isAvailable ? 'bg-green-500' : 'bg-gray-400'
                       )}
                     />
 
@@ -219,9 +219,9 @@ export function MCPServerToggle({ isOpen, onToggle }: MCPServerToggleProps) {
                     </div>
 
                     {/* Tool count badge */}
-                    {server.tools && server.tools.length > 0 && (
+                    {server.tool_count != null && server.tool_count > 0 && (
                       <Badge variant="outline" className="text-xs shrink-0">
-                        {server.tools.length} tools
+                        {server.tool_count} tools
                       </Badge>
                     )}
 

@@ -198,6 +198,18 @@ class MCPToolService:
         result = await tool.ainvoke(arguments)
         return result
 
+    def get_cached_tool_count(self, server_id: str) -> int | None:
+        """Get the number of cached tools for a server.
+
+        Args:
+            server_id: The server identifier.
+
+        Returns:
+            Number of cached tools, or None if not yet loaded.
+        """
+        cached_tools = self._tool_cache.get(server_id)
+        return len(cached_tools) if cached_tools is not None else None
+
     def clear_cache(self, server_id: str | None = None) -> None:
         """Clear the tool cache.
 
