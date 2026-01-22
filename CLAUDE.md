@@ -60,8 +60,8 @@ src/langchain_docker/
 │   │   ├── redis_session_store.py # Redis session backend
 │   │   ├── session_serializer.py  # Message serialization
 │   │   ├── chat_service.py       # Chat orchestration with MCP tools + HITL
-│   │   ├── mcp_server_manager.py # MCP subprocess lifecycle
-│   │   ├── mcp_tool_service.py   # MCP tool discovery/execution
+│   │   ├── mcp_server_manager.py # MCP server configuration management
+│   │   ├── mcp_tool_service.py   # MCP tool discovery via langchain-mcp-adapters
 │   │   ├── skill_registry.py     # Skills: built-in + custom, editable via API
 │   │   ├── redis_skill_store.py  # Redis-backed skill versioning
 │   │   ├── versioned_skill.py    # Skill version dataclasses
@@ -242,6 +242,12 @@ schedule = ScheduleConfig(
 
 ### 7. MCP Server Integration
 
+MCP integration uses the official `langchain-mcp-adapters` library for:
+- Automatic subprocess lifecycle management (stateless by default)
+- Built-in JSON-RPC communication
+- Native LangChain tool conversion
+- Support for both stdio and HTTP/SSE transports
+
 ```json
 // mcp_servers.json
 {
@@ -251,6 +257,14 @@ schedule = ScheduleConfig(
     "enabled": true
   }
 }
+```
+
+**Architecture:**
+```
+MCPServerManager (config only)     MCPToolService
+├── Load server configs      ──▶   ├── MultiServerMCPClient
+├── Custom server CRUD             │   └── Automatic subprocess mgmt
+└── Status tracking                └── Tool caching
 ```
 
 Custom servers stored in: `~/.langchain-docker/custom_mcp_servers.json`
@@ -676,9 +690,14 @@ mw_registry.load_from_legacy(skill_registry)  # Bridge
 ### MCP Tool Discovery
 
 ```python
-# mcp_tool_service.py
-tools = await mcp_tool_service.get_langchain_tools(["filesystem"])
+# mcp_tool_service.py - uses langchain-mcp-adapters internally
+tools = await mcp_tool_service.get_langchain_tools(["filesystem", "chrome-devtools"])
 model_with_tools = model.bind_tools(tools)
+
+# Tools are LangChain BaseTool instances with:
+# - Automatic subprocess management (starts on first call)
+# - Built-in argument validation from MCP schemas
+# - Async execution via tool.ainvoke(args)
 ```
 
 ### Agent with Checkpointing
@@ -819,14 +838,15 @@ KEYS checkpoint:*   # LangGraph state
 | `skill_registry.py` | 75KB | Skills system: built-in + custom, versioning, Redis persistence |
 | `agent_service.py` | 46KB | LangGraph orchestration, scheduling |
 | `tool_registry.py` | 26KB | Tool templates, factories, HITL config support |
-| `mcp_server_manager.py` | 22KB | MCP subprocess management |
+| `graph_rag_service.py` | 15KB | LlamaIndex GraphRAG with Neo4j |
 | `redis_skill_store.py` | 15KB | Redis-backed skill versioning and metrics |
-| `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
-| `approval_service.py` | 12KB | HITL approval request management |
 | `chat_service.py` | 14KB | Chat orchestration with MCP tools + HITL + RAG |
 | `knowledge_base_service.py` | 12KB | KB orchestration (upload, search, manage, graph) |
-| `graph_rag_service.py` | 15KB | LlamaIndex GraphRAG with Neo4j |
+| `versioned_skill.py` | 12KB | Skill version dataclasses, tool/resource configs |
+| `approval_service.py` | 12KB | HITL approval request management |
+| `mcp_server_manager.py` | 10KB | MCP server configuration (uses langchain-mcp-adapters) |
 | `opensearch_store.py` | 10KB | OpenSearch vector store with k-NN search |
+| `mcp_tool_service.py` | 7KB | MCP tool discovery via MultiServerMCPClient |
 
 ## Provider-Specific Streaming Behavior
 
