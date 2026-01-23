@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Loader2, Wrench } from 'lucide-react';
+import { Send, Loader2, Wrench, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -24,6 +24,7 @@ export function ChatPage() {
   const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Use the shared image upload hook
   const {
@@ -161,6 +162,9 @@ export function ChatPage() {
     // Get enabled MCP servers
     const mcpServers = getEnabledServers();
 
+    // Create abort controller for this request
+    abortControllerRef.current = new AbortController();
+
     try {
       for await (const event of chatApi.streamMessage({
         message: userMessage.content,
@@ -170,7 +174,7 @@ export function ChatPage() {
         model,
         temperature,
         mcp_servers: mcpServers.length > 0 ? mcpServers : null,
-      })) {
+      }, abortControllerRef.current.signal)) {
         if (event.event === 'start') {
           if (event.session_id && !sessionId) {
             setSessionId(event.session_id);
@@ -218,9 +222,34 @@ export function ChatPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      // Don't show error for intentional abort
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Request was cancelled by user
+        console.log('Request cancelled by user');
+      } else {
+        setError(err instanceof Error ? err.message : 'Request failed');
+      }
       setStreaming(false);
       setToolActivity(null);
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  // Stop/cancel the current streaming request
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setStreaming(false);
+      setToolActivity(null);
+      clearStreamingContent();
+      // Add a system message indicating the request was stopped
+      addMessage({
+        role: 'assistant',
+        content: '_Request cancelled by user._',
+        timestamp: new Date().toISOString(),
+      });
     }
   };
 
@@ -391,13 +420,24 @@ export function ChatPage() {
                 disabled={isLoading || isStreaming}
                 className="flex-1"
               />
-              <Button type="submit" disabled={isLoading || isStreaming || !input.trim()}>
-                {isLoading || isStreaming ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
+              {isStreaming ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleStop}
+                  title="Stop generation"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button type="submit" disabled={isLoading || !input.trim()}>
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
             </form>
           </div>
         </div>

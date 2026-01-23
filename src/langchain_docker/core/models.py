@@ -3,9 +3,42 @@
 from typing import Any
 
 from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain_core.rate_limiters import InMemoryRateLimiter
 
-from langchain_docker.core.config import validate_api_key
+from langchain_docker.core.config import (
+    validate_api_key,
+    is_rate_limit_enabled,
+    get_rate_limit_requests_per_second,
+)
 from langchain_docker.utils.errors import ModelInitializationError
+
+# Global rate limiter instance (shared across all models)
+_rate_limiter: InMemoryRateLimiter | None = None
+
+
+def get_rate_limiter() -> InMemoryRateLimiter | None:
+    """Get the global rate limiter instance.
+
+    Creates the rate limiter on first call if rate limiting is enabled.
+    The rate limiter uses a token bucket algorithm to control request rate.
+
+    Returns:
+        InMemoryRateLimiter instance if enabled, None otherwise
+    """
+    global _rate_limiter
+
+    if not is_rate_limit_enabled():
+        return None
+
+    if _rate_limiter is None:
+        requests_per_second = get_rate_limit_requests_per_second()
+        _rate_limiter = InMemoryRateLimiter(
+            requests_per_second=requests_per_second,
+            check_every_n_seconds=0.1,  # Check frequently for smoother throttling
+            max_bucket_size=10,  # Allow small bursts
+        )
+
+    return _rate_limiter
 
 
 def get_supported_providers() -> list[str]:
@@ -21,6 +54,7 @@ def init_model(
     provider: str,
     model: str,
     temperature: float = 0.0,
+    rate_limiter: InMemoryRateLimiter | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """Initialize a chat model with the specified provider and configuration.
@@ -29,6 +63,8 @@ def init_model(
         provider: Model provider (openai, anthropic, google, bedrock)
         model: Model name/identifier
         temperature: Temperature for response generation (0.0-2.0)
+        rate_limiter: Optional rate limiter. If None, uses global rate limiter
+            when RATE_LIMIT_ENABLED=true.
         **kwargs: Additional provider-specific parameters
             - For bedrock: region_name, credentials_profile_name, etc.
 
@@ -41,6 +77,9 @@ def init_model(
     """
     validate_api_key(provider)
 
+    # Use provided rate limiter, or get global one if rate limiting enabled
+    effective_rate_limiter = rate_limiter if rate_limiter is not None else get_rate_limiter()
+
     try:
         # For Bedrock, LangChain expects model_provider="bedrock"
         # and boto3 will automatically use default credential chain
@@ -48,6 +87,7 @@ def init_model(
             model=model,
             model_provider=provider,
             temperature=temperature,
+            rate_limiter=effective_rate_limiter,
             **kwargs,
         )
         return chat_model
@@ -144,6 +184,7 @@ def create_bedrock_client():
 def get_bedrock_model(
     model: str | None = None,
     temperature: float = 0.0,
+    rate_limiter: InMemoryRateLimiter | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """Get a pre-configured AWS Bedrock model.
@@ -151,6 +192,8 @@ def get_bedrock_model(
     Args:
         model: Bedrock model ID or ARN. If None, uses first configured model.
         temperature: Sampling temperature (0.0-1.0)
+        rate_limiter: Optional rate limiter. If None, uses global rate limiter
+            when RATE_LIMIT_ENABLED=true.
         **kwargs: Additional arguments for ChatBedrockConverse
 
     Returns:
@@ -170,12 +213,16 @@ def get_bedrock_model(
         available_models = get_bedrock_models()
         model = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
+    # Use provided rate limiter, or get global one if rate limiting enabled
+    effective_rate_limiter = rate_limiter if rate_limiter is not None else get_rate_limiter()
+
     # Build kwargs for ChatBedrockConverse
     bedrock_kwargs = {
         "model": model,
         "provider": "anthropic",
         "temperature": temperature,
         "client": create_bedrock_client(),
+        "rate_limiter": effective_rate_limiter,
     }
 
     bedrock_kwargs.update(kwargs)

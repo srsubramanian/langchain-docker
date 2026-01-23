@@ -101,7 +101,7 @@ export const agentsApi = {
   /**
    * Invoke any agent (custom or built-in) - streaming with SSE
    */
-  async *invokeAgentStream(agentId: string, request: DirectInvokeRequest): AsyncGenerator<StreamEvent> {
+  async *invokeAgentStream(agentId: string, request: DirectInvokeRequest, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
     const userId = useUserStore.getState().currentUserId;
     const response = await fetch(`${API_BASE_URL}/api/v1/agents/${agentId}/invoke/stream`, {
       method: 'POST',
@@ -110,6 +110,7 @@ export const agentsApi = {
         ...(userId && { 'X-User-ID': userId }),
       },
       body: JSON.stringify(request),
+      signal, // Pass abort signal to fetch
     });
 
     if (!response.ok) {
@@ -231,8 +232,8 @@ export const agentsApi = {
   /**
    * @deprecated Use invokeAgentStream() instead
    */
-  async *invokeAgentDirectStream(agentId: string, request: DirectInvokeRequest): AsyncGenerator<StreamEvent> {
-    yield* this.invokeAgentStream(agentId, request);
+  async *invokeAgentDirectStream(agentId: string, request: DirectInvokeRequest, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+    yield* this.invokeAgentStream(agentId, request, signal);
   },
 
   // =============================================================================
@@ -261,7 +262,7 @@ export const agentsApi = {
   /**
    * Invoke a workflow with streaming - returns SSE events
    */
-  async *invokeWorkflowStream(workflowId: string, request: WorkflowInvokeRequest): AsyncGenerator<StreamEvent> {
+  async *invokeWorkflowStream(workflowId: string, request: WorkflowInvokeRequest, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
     const userId = useUserStore.getState().currentUserId;
     const response = await fetch(`${API_BASE_URL}/api/v1/workflows/${workflowId}/invoke/stream`, {
       method: 'POST',
@@ -270,6 +271,7 @@ export const agentsApi = {
         ...(userId && { 'X-User-ID': userId }),
       },
       body: JSON.stringify(request),
+      signal, // Pass abort signal to fetch
     });
 
     if (!response.ok) {

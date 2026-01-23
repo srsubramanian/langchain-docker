@@ -660,6 +660,18 @@ For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
 - `GRAPH_RAG_ENTITIES` - Entity types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
 - `GRAPH_RAG_RELATIONS` - Relationship types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
 
+**Rate Limiting:**
+- `RATE_LIMIT_ENABLED` - Enable client-side rate limiting (default: `true`)
+- `RATE_LIMIT_REQUESTS_PER_SECOND` - Request rate limit (default: `0.75` = 45 RPM)
+
+Rate limiting prevents 429 errors from LLM providers by throttling requests. Default is 0.75 requests/second (45 RPM), under Anthropic's Tier 1 limit of 50 RPM. Adjust based on your API tier:
+
+| Provider | Tier 1 RPM | Recommended Setting |
+|----------|------------|---------------------|
+| Anthropic | 50 RPM | 0.75 (default) |
+| OpenAI | 500 RPM | 8.0 |
+| Google | 60 RPM | 0.9 |
+
 ## Key Patterns
 
 ### Dependency Injection

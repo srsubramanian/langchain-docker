@@ -8,7 +8,7 @@ export const chatApi = {
     return data;
   },
 
-  async *streamMessage(request: ChatRequest): AsyncGenerator<StreamEvent> {
+  async *streamMessage(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
     const userId = useUserStore.getState().currentUserId;
     const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
       method: 'POST',
@@ -17,6 +17,7 @@ export const chatApi = {
         ...(userId && { 'X-User-ID': userId }),
       },
       body: JSON.stringify({ ...request, stream: true }),
+      signal, // Pass abort signal to fetch
     });
 
     if (!response.ok) {

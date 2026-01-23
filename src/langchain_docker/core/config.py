@@ -44,6 +44,8 @@ class Config:
         neo4j_url: Neo4j Bolt URL for graph storage
         neo4j_username: Neo4j username
         neo4j_password: Neo4j password
+        rate_limit_enabled: Enable client-side rate limiting (default: true for anthropic)
+        rate_limit_requests_per_second: Requests per second limit (default: 0.75 = 45 RPM)
     """
 
     default_provider: str = "openai"
@@ -73,6 +75,9 @@ class Config:
     neo4j_url: str | None = None
     neo4j_username: str = "neo4j"
     neo4j_password: str | None = None
+    # Rate limiting settings
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_second: float = 0.75  # ~45 RPM, under Anthropic's 50 RPM limit
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -107,6 +112,8 @@ class Config:
             neo4j_url=os.getenv("NEO4J_URL") or None,
             neo4j_username=os.getenv("NEO4J_USERNAME", "neo4j"),
             neo4j_password=os.getenv("NEO4J_PASSWORD") or None,
+            rate_limit_enabled=os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true",
+            rate_limit_requests_per_second=float(os.getenv("RATE_LIMIT_REQUESTS_PER_SECOND", "0.75")),
         )
 
 
@@ -639,3 +646,37 @@ def get_graph_rag_aws_region() -> str:
         AWS region string
     """
     return os.getenv("GRAPH_RAG_AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+# ============================================================
+# Rate Limiting Configuration
+# ============================================================
+
+
+def is_rate_limit_enabled() -> bool:
+    """Check if client-side rate limiting is enabled.
+
+    Rate limiting helps prevent 429 errors from LLM providers by
+    throttling requests on the client side.
+
+    Returns:
+        True if rate limiting is enabled (default: true)
+    """
+    return os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+
+
+def get_rate_limit_requests_per_second() -> float:
+    """Get rate limit in requests per second.
+
+    Default is 0.75 (45 requests per minute), which is under Anthropic's
+    Tier 1 limit of 50 RPM. Adjust based on your API tier.
+
+    Provider rate limits (Tier 1):
+    - Anthropic: 50 RPM (set to 0.75 = 45 RPM)
+    - OpenAI: 500 RPM (can increase to ~8.0)
+    - Google: 60 RPM (set to 0.9 = 54 RPM)
+
+    Returns:
+        Requests per second limit
+    """
+    return float(os.getenv("RATE_LIMIT_REQUESTS_PER_SECOND", "0.75"))
