@@ -70,12 +70,14 @@ class MCPServerManager:
                 data = json.load(f)
 
             for server_id, config in data.get("servers", {}).items():
+                args = config.get("args", [])
+                logger.info(f"Loading MCP server '{server_id}': command={config['command']}, args={args}")
                 self._servers[server_id] = MCPServerConfig(
                     id=server_id,
                     name=config.get("name", server_id),
                     description=config.get("description", ""),
                     command=config["command"],
-                    args=config.get("args", []),
+                    args=args,
                     env=config.get("env", {}),
                     enabled=config.get("enabled", True),
                     timeout_seconds=config.get("timeout_seconds", 30),

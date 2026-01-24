@@ -118,17 +118,21 @@ class MCPToolService:
             Config dict for MultiServerMCPClient, or None if not found.
         """
         if server_id not in self._server_manager._servers:
+            logger.debug(f"MCP server '{server_id}' not found in server manager")
             return None
 
         config = self._server_manager._servers[server_id]
+        logger.info(f"MCP server '{server_id}' raw config: command={config.command}, args={config.args}, env={config.env}")
 
         if config.transport == "http":
             # HTTP/SSE transport
             # Note: timeout is passed via session_kwargs if needed
-            return {
+            client_config = {
                 "transport": "sse",
                 "url": config.url,
             }
+            logger.info(f"MCP server '{server_id}' using HTTP/SSE transport: {client_config}")
+            return client_config
         else:
             # stdio transport (subprocess)
             # See: langchain_mcp_adapters.sessions.StdioConnection
@@ -139,6 +143,7 @@ class MCPToolService:
             }
             if config.env:
                 client_config["env"] = config.env
+            logger.info(f"MCP server '{server_id}' using stdio transport: command='{config.command}', args={config.args}")
             return client_config
 
     async def get_langchain_tools(
@@ -253,10 +258,12 @@ class MCPToolService:
                             continue
 
                     logger.info(f"Creating persistent session for MCP server '{server_id}'")
+                    logger.info(f"MCP client config for '{server_id}': {client_config}")
 
                     # Create client for this server
                     client = MultiServerMCPClient({server_id: client_config})
                     clients.append(client)
+                    logger.info(f"MultiServerMCPClient created for '{server_id}', starting session...")
 
                     # Create persistent session - this keeps the subprocess alive
                     session_ctx = client.session(server_id)

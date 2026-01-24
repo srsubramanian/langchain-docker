@@ -22,7 +22,7 @@
       "name": "Chrome DevTools",
       "description": "Control and inspect Chrome browsers - automation, screenshots, network inspection, console monitoring, and performance profiling",
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "args": ["-y", "chrome-devtools-mcp@latest", "--browserUrl=http://127.0.0.1:9222"],
       "env": {},
       "enabled": true,
       "timeout_seconds": 60
