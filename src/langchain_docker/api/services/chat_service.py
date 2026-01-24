@@ -499,9 +499,17 @@ class ChatService:
             if mcp_tools:
                 bedrock_model = bedrock_model.bind_tools(mcp_tools)
 
-            # Stream with the model
+            # Helper to safely parse tool args (handles empty strings)
+            def parse_args(args):
+                if isinstance(args, str):
+                    if not args or args.strip() == "":
+                        return {}
+                    return json.loads(args)
+                return args if args else {}
+
+            # Stream with the model using proper chunk accumulation
             accumulated_content = ""
-            tool_calls_pending = []
+            tools_by_name = {tool.name: tool for tool in mcp_tools} if mcp_tools else {}
 
             with trace_operation(
                 session_id=session.session_id,
@@ -517,84 +525,28 @@ class ChatService:
                 },
                 tags=["chat", "streaming", "bedrock", "prompt_caching"] + (["mcp"] if mcp_tools else []),
             ):
-                # Use astream for streaming responses
-                async for chunk in bedrock_model.astream(final_messages):
-                    # Handle content chunks
-                    if chunk.content:
-                        content = chunk.content
-                        if isinstance(content, str):
-                            accumulated_content += content
-                            yield {"event": "token", "data": json.dumps({"content": content})}
-                        elif isinstance(content, list):
-                            text_content = "".join(
-                                c.get("text", "") if isinstance(c, dict) else str(c)
-                                for c in content
-                                if isinstance(c, dict) and c.get("type") == "text" or isinstance(c, str)
-                            )
-                            if text_content:
-                                accumulated_content += text_content
-                                yield {"event": "token", "data": json.dumps({"content": text_content})}
+                # Agentic loop: handle tool calls and continue generating
+                max_iterations = 10  # Prevent infinite loops
+                iteration = 0
+                messages = list(final_messages)
 
-                    # Handle tool calls
-                    if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
-                        for tool_call in chunk.tool_calls:
-                            tool_name = tool_call.get("name", "unknown")
-                            tool_args = tool_call.get("args", {})
-                            tool_id = tool_call.get("id", "")
+                while iteration < max_iterations:
+                    iteration += 1
+                    iteration_content = ""
 
-                            yield {
-                                "event": "tool_call",
-                                "data": json.dumps({
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
-                                }),
-                            }
-                            tool_calls_pending.append(tool_call)
+                    # Stream model response and accumulate chunks
+                    # LangChain's AIMessageChunk supports + operator for proper merging
+                    # including tool_call_chunks -> tool_calls accumulation
+                    gathered = None
+                    async for chunk in bedrock_model.astream(messages):
+                        # Accumulate chunks using LangChain's built-in merging
+                        gathered = chunk if gathered is None else gathered + chunk
 
-                # Execute pending tool calls
-                if tool_calls_pending and mcp_tools:
-                    tools_by_name = {tool.name: tool for tool in mcp_tools}
-                    for tool_call in tool_calls_pending:
-                        tool_name = tool_call.get("name", "")
-                        tool_args = tool_call.get("args", {})
-                        tool_id = tool_call.get("id", "")
-
-                        if tool_name in tools_by_name:
-                            try:
-                                tool = tools_by_name[tool_name]
-                                result = await tool.ainvoke(tool_args)
-                                result_str = str(result)[:1000] if result else ""
-                                yield {
-                                    "event": "tool_result",
-                                    "data": json.dumps({
-                                        "tool_name": tool_name,
-                                        "tool_id": tool_id,
-                                        "result": result_str,
-                                    }),
-                                }
-
-                                # Add tool message and continue conversation
-                                final_messages.append(AIMessage(content="", tool_calls=[tool_call]))
-                                final_messages.append(ToolMessage(content=result_str, tool_call_id=tool_id))
-
-                            except Exception as e:
-                                logger.error(f"Tool execution error: {e}")
-                                yield {
-                                    "event": "tool_result",
-                                    "data": json.dumps({
-                                        "tool_name": tool_name,
-                                        "tool_id": tool_id,
-                                        "result": f"Error: {str(e)}",
-                                    }),
-                                }
-
-                    # Get final response after tool execution
-                    async for chunk in bedrock_model.astream(final_messages):
+                        # Handle content chunks - stream to client
                         if chunk.content:
                             content = chunk.content
                             if isinstance(content, str):
-                                accumulated_content += content
+                                iteration_content += content
                                 yield {"event": "token", "data": json.dumps({"content": content})}
                             elif isinstance(content, list):
                                 text_content = "".join(
@@ -603,8 +555,74 @@ class ChatService:
                                     if isinstance(c, dict) and c.get("type") == "text" or isinstance(c, str)
                                 )
                                 if text_content:
-                                    accumulated_content += text_content
+                                    iteration_content += text_content
                                     yield {"event": "token", "data": json.dumps({"content": text_content})}
+
+                    accumulated_content += iteration_content
+
+                    # Extract tool calls from accumulated message
+                    # LangChain automatically parses tool_call_chunks into tool_calls
+                    tool_calls = gathered.tool_calls if gathered and hasattr(gathered, "tool_calls") else []
+
+                    # If no tool calls, we're done
+                    if not tool_calls or not mcp_tools:
+                        break
+
+                    # Build AI message with accumulated tool calls
+                    ai_message = AIMessage(
+                        content=iteration_content,
+                        tool_calls=tool_calls
+                    )
+                    messages.append(ai_message)
+
+                    # Execute each tool call
+                    for tc in tool_calls:
+                        if not tc.get("name"):
+                            continue
+
+                        tool_name = tc["name"]
+                        tool_id = tc["id"]
+                        # LangChain's accumulated tool_calls have args as dict
+                        args = tc["args"] if isinstance(tc["args"], dict) else parse_args(tc["args"])
+                        logger.info(f"Bedrock cached tool call '{tool_name}': args={args}")
+
+                        # Emit tool_call event
+                        yield {
+                            "event": "tool_call",
+                            "data": json.dumps({
+                                "tool_name": tool_name,
+                                "tool_id": tool_id,
+                                "arguments": json.dumps(args) if isinstance(args, dict) else args,
+                            }),
+                        }
+
+                        # Execute the tool
+                        tool_result = ""
+                        try:
+                            tool = tools_by_name.get(tool_name)
+                            if tool:
+                                tool_result = await tool.ainvoke(args)
+                            else:
+                                tool_result = f"Error: Tool '{tool_name}' not found"
+                        except Exception as e:
+                            tool_result = f"Error executing tool: {e}"
+                            logger.error(f"Tool execution error: {e}")
+
+                        # Emit tool_result event
+                        yield {
+                            "event": "tool_result",
+                            "data": json.dumps({
+                                "tool_name": tool_name,
+                                "tool_id": tool_id,
+                                "result": str(tool_result)[:1000],
+                            }),
+                        }
+
+                        # Add tool result to messages
+                        messages.append(ToolMessage(
+                            content=str(tool_result),
+                            tool_call_id=tool_id,
+                        ))
 
             # Update session with response
             session.messages.append(AIMessage(content=accumulated_content))
