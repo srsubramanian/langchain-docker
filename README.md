@@ -1366,6 +1366,86 @@ brew install node
 npx -y @modelcontextprotocol/server-filesystem /tmp
 ```
 
+#### Chrome DevTools MCP on Windows
+
+If you get the error "Could not find Google Chrome executable for channel stable":
+
+**Option 1: Specify Chrome executable path**
+
+Update `mcp_servers.json`:
+```json
+{
+  "chrome-devtools": {
+    "name": "Chrome DevTools",
+    "command": "npx",
+    "args": [
+      "-y",
+      "chrome-devtools-mcp@latest",
+      "--executablePath=C:/Program Files/Google/Chrome/Application/chrome.exe"
+    ],
+    "enabled": true,
+    "timeout_seconds": 120
+  }
+}
+```
+
+**Option 2: Connect to a running Chrome instance (Recommended for Windows)**
+
+This approach avoids executable path issues by connecting to an already-running Chrome:
+
+1. **Start Chrome with remote debugging enabled**:
+   ```cmd
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%TEMP%\chrome-debug"
+   ```
+
+2. **Configure MCP to connect to it** in `mcp_servers.json`:
+   ```json
+   {
+     "chrome-devtools": {
+       "name": "Chrome DevTools",
+       "command": "npx",
+       "args": [
+         "-y",
+         "chrome-devtools-mcp@latest",
+         "--browserUrl=http://127.0.0.1:9222"
+       ],
+       "enabled": true,
+       "timeout_seconds": 120
+     }
+   }
+   ```
+
+3. **Benefits of this approach**:
+   - Avoids executable path detection issues
+   - Maintains browser state between sessions
+   - Works with any Chrome installation location
+   - Useful when Chrome is installed in non-standard locations
+
+**Option 3: Use cmd wrapper with environment variables**
+
+```json
+{
+  "chrome-devtools": {
+    "name": "Chrome DevTools",
+    "command": "cmd",
+    "args": [
+      "/c",
+      "npx",
+      "-y",
+      "chrome-devtools-mcp@latest"
+    ],
+    "env": {
+      "SystemRoot": "C:\\Windows",
+      "PROGRAMFILES": "C:\\Program Files"
+    },
+    "enabled": true,
+    "timeout_seconds": 120
+  }
+}
+```
+
+> **Note**: See the [chrome-devtools-mcp documentation](https://www.npmjs.com/package/chrome-devtools-mcp) for all available configuration options.
+
 #### Docker Build Failures
 
 ```bash
