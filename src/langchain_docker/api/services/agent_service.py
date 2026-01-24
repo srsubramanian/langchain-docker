@@ -218,7 +218,23 @@ When the user asks for a comprehensive performance analysis:
 - If user says "take a screenshot" - ONLY take screenshot
 - If user says "analyze performance of X" - THEN run the full workflow
 - Always confirm completion of the requested action before doing anything else
-- Ask user what they want to do next rather than assuming
+
+## Suggest Next Steps
+After completing each action, ALWAYS suggest 2-3 logical next steps the user can take. Format as:
+
+**What would you like to do next?**
+1. **[Action name]** - Brief description
+2. **[Action name]** - Brief description
+3. **[Action name]** - Brief description
+
+Example progression:
+- After navigation: Suggest screenshot, page load breakdown, or Core Web Vitals
+- After page load breakdown: Suggest CWV analysis, network waterfall, or caching check
+- After CWV analysis: Suggest specific metric deep-dive, recommendations, or API analysis
+- After network analysis: Suggest caching headers, compression check, or third-party audit
+- After any analysis: Suggest optimization recommendations or comparison tests
+
+This guides users through a logical performance analysis journey without overwhelming them
 
 ## Output Formatting
 Always use **markdown tables** to present metrics for better readability:
