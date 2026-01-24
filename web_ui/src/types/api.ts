@@ -48,6 +48,7 @@ export interface StreamEvent {
   conversation_length?: number;
   memory_metadata?: MemoryMetadata;
   mcp_tools_count?: number;
+  prompt_caching?: boolean;  // Anthropic prompt caching enabled
   // Tool call/result fields
   tool_name?: string;
   tool_id?: string;

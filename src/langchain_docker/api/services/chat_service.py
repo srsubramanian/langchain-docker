@@ -4,7 +4,11 @@ import json
 import logging
 from typing import AsyncGenerator, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain.agents import create_agent
+from langchain_anthropic import ChatAnthropic
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+from langchain_aws import ChatBedrockConverse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from langchain_docker.api.schemas.chat import ChatRequest, ChatResponse, MessageSchema
 from langchain_docker.api.services.approval_service import ApprovalService, ApprovalConfig
@@ -166,6 +170,471 @@ class ChatService:
 
         return HumanMessage(content=content)
 
+    async def _stream_with_anthropic_caching(
+        self,
+        request: ChatRequest,
+        session,
+        context_messages: list,
+        memory_metadata,
+        mcp_tools: list,
+        mcp_session_ctx,
+        user_id: str,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream with Anthropic prompt caching middleware.
+
+        Uses create_agent with AnthropicPromptCachingMiddleware to cache
+        tool definitions and system prompts, reducing ITPM usage.
+
+        Args:
+            request: Chat request
+            session: Session object
+            context_messages: Processed conversation messages
+            memory_metadata: Memory metadata from processing
+            mcp_tools: List of MCP tools
+            mcp_session_ctx: MCP session context manager
+            user_id: User ID for session scoping
+
+        Yields:
+            Server-Sent Event dicts with event and data keys
+        """
+        try:
+            # Create Anthropic model with caching support
+            model_name = request.model or "claude-sonnet-4-20250514"
+            anthropic_model = ChatAnthropic(
+                model=model_name,
+                temperature=request.temperature,
+            )
+
+            # Extract system prompt from context messages if present
+            system_prompt = None
+            user_messages = []
+            for msg in context_messages:
+                if isinstance(msg, SystemMessage):
+                    system_prompt = msg.content if isinstance(msg.content, str) else str(msg.content)
+                else:
+                    user_messages.append(msg)
+
+            # Create agent with prompt caching middleware
+            # This caches tool definitions and system prompt for 5 minutes
+            agent = create_agent(
+                model=anthropic_model,
+                tools=mcp_tools if mcp_tools else None,
+                system_prompt=system_prompt,
+                middleware=[AnthropicPromptCachingMiddleware(ttl="5m")],
+            )
+
+            # Send start event
+            yield {
+                "event": "start",
+                "data": json.dumps({
+                    "session_id": session.session_id,
+                    "model": model_name,
+                    "provider": "anthropic",
+                    "memory_metadata": memory_metadata.model_dump(mode='json'),
+                    "mcp_tools_count": len(mcp_tools),
+                    "prompt_caching": True,
+                }),
+            }
+
+            # Stream with the agent using astream_events
+            accumulated_content = ""
+            final_messages = []
+
+            with trace_operation(
+                session_id=session.session_id,
+                user_id=user_id,
+                operation="chat_stream_anthropic_cached",
+                metadata={
+                    "provider": "anthropic",
+                    "model": model_name,
+                    "temperature": request.temperature,
+                    "message_count": len(context_messages),
+                    "mcp_tools_count": len(mcp_tools),
+                    "prompt_caching": True,
+                },
+                tags=["chat", "streaming", "anthropic", "prompt_caching"] + (["mcp"] if mcp_tools else []),
+            ):
+                async for event in agent.astream_events(
+                    {"messages": user_messages},
+                    config={
+                        "configurable": {"thread_id": session.session_id},
+                        "metadata": {"session_id": session.session_id, "user_id": user_id},
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    data = event.get("data", {})
+
+                    # Tool call started
+                    if kind == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = data.get("input", {})
+                        try:
+                            if isinstance(tool_input, dict):
+                                safe_input = {
+                                    k: v for k, v in tool_input.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+                                }
+                                args_str = json.dumps(safe_input)
+                            else:
+                                args_str = str(tool_input)
+                        except (TypeError, ValueError):
+                            args_str = str(tool_input)
+                        yield {
+                            "event": "tool_call",
+                            "data": json.dumps({
+                                "tool_name": tool_name,
+                                "tool_id": event.get("run_id", ""),
+                                "arguments": args_str,
+                            }),
+                        }
+
+                    # Tool call completed
+                    elif kind == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = data.get("output", "")
+                        output_str = str(output)[:1000] if output else ""
+                        yield {
+                            "event": "tool_result",
+                            "data": json.dumps({
+                                "tool_name": tool_name,
+                                "tool_id": event.get("run_id", ""),
+                                "result": output_str,
+                            }),
+                        }
+
+                    # Streaming tokens from LLM
+                    elif kind == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if chunk and hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+                            elif isinstance(content, list):
+                                text_content = "".join(
+                                    c.get("text", "") if isinstance(c, dict) else str(c)
+                                    for c in content
+                                )
+                                if text_content:
+                                    accumulated_content += text_content
+                                    yield {"event": "token", "data": json.dumps({"content": text_content})}
+
+                    # Chain/graph end - capture final messages
+                    elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                        output = data.get("output", {})
+                        if isinstance(output, dict) and "messages" in output:
+                            final_messages = output["messages"]
+
+            # Update session with final messages or accumulated content
+            if final_messages:
+                session.messages = final_messages
+            else:
+                session.messages.append(AIMessage(content=accumulated_content))
+
+            # Save session
+            self.session_service.save(session)
+            self.session_service.update_timestamp(session.session_id)
+
+            # Extract response for done event
+            response_content = accumulated_content
+            if final_messages:
+                for msg in reversed(final_messages):
+                    if isinstance(msg, AIMessage) and msg.content:
+                        content = msg.content
+                        if isinstance(content, str):
+                            response_content = content
+                        elif isinstance(content, list):
+                            # Handle Anthropic's content blocks format
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, dict) and "text" in block:
+                                    text_parts.append(block["text"])
+                                elif isinstance(block, str):
+                                    text_parts.append(block)
+                            response_content = "".join(text_parts) if text_parts else str(content)
+                        else:
+                            response_content = str(content)
+                        break
+
+            # Send done event
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "session_id": session.session_id,
+                    "conversation_length": len(session.messages),
+                    "message": MessageSchema.from_langchain(
+                        AIMessage(content=response_content)
+                    ).model_dump(mode='json'),
+                    "memory_metadata": memory_metadata.model_dump(mode='json'),
+                }),
+            }
+
+        except Exception as e:
+            logger.error(f"Anthropic cached stream error: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+        finally:
+            # Clean up MCP session context
+            if mcp_session_ctx:
+                try:
+                    await mcp_session_ctx.__aexit__(None, None, None)
+                    logger.info("Closed MCP persistent sessions")
+                except Exception as e:
+                    logger.error(f"Error closing MCP sessions: {e}")
+
+    async def _stream_with_bedrock_caching(
+        self,
+        request: ChatRequest,
+        session,
+        context_messages: list,
+        memory_metadata,
+        mcp_tools: list,
+        mcp_session_ctx,
+        user_id: str,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream with Bedrock prompt caching using cachePoint.
+
+        Uses ChatBedrockConverse with cachePoint markers to cache
+        tool definitions and system prompts, reducing ITPM usage.
+
+        Bedrock caching requires:
+        - botocore >= 1.37.25
+        - Content > 1024 tokens (2048 for Haiku)
+        - Supported models: Claude 3.5 Sonnet V2+, Claude 3.7 Sonnet, Claude 4 Sonnet
+
+        Args:
+            request: Chat request
+            session: Session object
+            context_messages: Processed conversation messages
+            memory_metadata: Memory metadata from processing
+            mcp_tools: List of MCP tools
+            mcp_session_ctx: MCP session context manager
+            user_id: User ID for session scoping
+
+        Yields:
+            Server-Sent Event dicts with event and data keys
+        """
+        from langchain_docker.core.models import create_bedrock_client
+        from langchain_docker.core.config import get_bedrock_models
+
+        try:
+            # Get model name - use request model or first configured Bedrock model
+            model_name = request.model
+            if not model_name:
+                available_models = get_bedrock_models()
+                model_name = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
+            # Create Bedrock model
+            bedrock_model = ChatBedrockConverse(
+                model=model_name,
+                temperature=request.temperature,
+                client=create_bedrock_client(),
+            )
+
+            # Extract system prompt from context messages
+            system_prompt = None
+            user_messages = []
+            for msg in context_messages:
+                if isinstance(msg, SystemMessage):
+                    system_prompt = msg.content if isinstance(msg.content, str) else str(msg.content)
+                else:
+                    user_messages.append(msg)
+
+            # Build system message with cache point for tool definitions
+            # This caches the system prompt + tool definitions
+            system_content = []
+            if system_prompt:
+                system_content.append({"type": "text", "text": system_prompt})
+
+            # Add tool definitions to system prompt for caching
+            if mcp_tools:
+                tool_definitions = []
+                for tool in mcp_tools:
+                    tool_def = {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                    }
+                    if hasattr(tool, 'args_schema') and tool.args_schema:
+                        # Handle both Pydantic model classes and dict schemas
+                        args_schema = tool.args_schema
+                        if hasattr(args_schema, 'schema'):
+                            tool_def["parameters"] = args_schema.schema()
+                        elif isinstance(args_schema, dict):
+                            tool_def["parameters"] = args_schema
+                    tool_definitions.append(tool_def)
+
+                tools_text = f"\n\nAvailable tools:\n{json.dumps(tool_definitions, indent=2)}"
+                system_content.append({"type": "text", "text": tools_text})
+
+            # Add cache point after system content (caches everything before it)
+            if system_content:
+                system_content.append({"cachePoint": {"type": "default"}})
+
+            # Create system message with cache point
+            cached_system_msg = SystemMessage(content=system_content) if system_content else None
+
+            # Build final messages list
+            final_messages = []
+            if cached_system_msg:
+                final_messages.append(cached_system_msg)
+            final_messages.extend(user_messages)
+
+            # Send start event
+            yield {
+                "event": "start",
+                "data": json.dumps({
+                    "session_id": session.session_id,
+                    "model": model_name,
+                    "provider": "bedrock",
+                    "memory_metadata": memory_metadata.model_dump(mode='json'),
+                    "mcp_tools_count": len(mcp_tools),
+                    "prompt_caching": True,
+                }),
+            }
+
+            # Bind tools to model
+            if mcp_tools:
+                bedrock_model = bedrock_model.bind_tools(mcp_tools)
+
+            # Stream with the model
+            accumulated_content = ""
+            tool_calls_pending = []
+
+            with trace_operation(
+                session_id=session.session_id,
+                user_id=user_id,
+                operation="chat_stream_bedrock_cached",
+                metadata={
+                    "provider": "bedrock",
+                    "model": model_name,
+                    "temperature": request.temperature,
+                    "message_count": len(final_messages),
+                    "mcp_tools_count": len(mcp_tools),
+                    "prompt_caching": True,
+                },
+                tags=["chat", "streaming", "bedrock", "prompt_caching"] + (["mcp"] if mcp_tools else []),
+            ):
+                # Use astream for streaming responses
+                async for chunk in bedrock_model.astream(final_messages):
+                    # Handle content chunks
+                    if chunk.content:
+                        content = chunk.content
+                        if isinstance(content, str):
+                            accumulated_content += content
+                            yield {"event": "token", "data": json.dumps({"content": content})}
+                        elif isinstance(content, list):
+                            text_content = "".join(
+                                c.get("text", "") if isinstance(c, dict) else str(c)
+                                for c in content
+                                if isinstance(c, dict) and c.get("type") == "text" or isinstance(c, str)
+                            )
+                            if text_content:
+                                accumulated_content += text_content
+                                yield {"event": "token", "data": json.dumps({"content": text_content})}
+
+                    # Handle tool calls
+                    if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                        for tool_call in chunk.tool_calls:
+                            tool_name = tool_call.get("name", "unknown")
+                            tool_args = tool_call.get("args", {})
+                            tool_id = tool_call.get("id", "")
+
+                            yield {
+                                "event": "tool_call",
+                                "data": json.dumps({
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                                }),
+                            }
+                            tool_calls_pending.append(tool_call)
+
+                # Execute pending tool calls
+                if tool_calls_pending and mcp_tools:
+                    tools_by_name = {tool.name: tool for tool in mcp_tools}
+                    for tool_call in tool_calls_pending:
+                        tool_name = tool_call.get("name", "")
+                        tool_args = tool_call.get("args", {})
+                        tool_id = tool_call.get("id", "")
+
+                        if tool_name in tools_by_name:
+                            try:
+                                tool = tools_by_name[tool_name]
+                                result = await tool.ainvoke(tool_args)
+                                result_str = str(result)[:1000] if result else ""
+                                yield {
+                                    "event": "tool_result",
+                                    "data": json.dumps({
+                                        "tool_name": tool_name,
+                                        "tool_id": tool_id,
+                                        "result": result_str,
+                                    }),
+                                }
+
+                                # Add tool message and continue conversation
+                                final_messages.append(AIMessage(content="", tool_calls=[tool_call]))
+                                final_messages.append(ToolMessage(content=result_str, tool_call_id=tool_id))
+
+                            except Exception as e:
+                                logger.error(f"Tool execution error: {e}")
+                                yield {
+                                    "event": "tool_result",
+                                    "data": json.dumps({
+                                        "tool_name": tool_name,
+                                        "tool_id": tool_id,
+                                        "result": f"Error: {str(e)}",
+                                    }),
+                                }
+
+                    # Get final response after tool execution
+                    async for chunk in bedrock_model.astream(final_messages):
+                        if chunk.content:
+                            content = chunk.content
+                            if isinstance(content, str):
+                                accumulated_content += content
+                                yield {"event": "token", "data": json.dumps({"content": content})}
+                            elif isinstance(content, list):
+                                text_content = "".join(
+                                    c.get("text", "") if isinstance(c, dict) else str(c)
+                                    for c in content
+                                    if isinstance(c, dict) and c.get("type") == "text" or isinstance(c, str)
+                                )
+                                if text_content:
+                                    accumulated_content += text_content
+                                    yield {"event": "token", "data": json.dumps({"content": text_content})}
+
+            # Update session with response
+            session.messages.append(AIMessage(content=accumulated_content))
+            self.session_service.save(session)
+            self.session_service.update_timestamp(session.session_id)
+
+            # Send done event
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "session_id": session.session_id,
+                    "conversation_length": len(session.messages),
+                    "message": MessageSchema.from_langchain(
+                        AIMessage(content=accumulated_content)
+                    ).model_dump(mode='json'),
+                    "memory_metadata": memory_metadata.model_dump(mode='json'),
+                }),
+            }
+
+        except Exception as e:
+            logger.error(f"Bedrock cached stream error: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+        finally:
+            # Clean up MCP session context
+            if mcp_session_ctx:
+                try:
+                    await mcp_session_ctx.__aexit__(None, None, None)
+                    logger.info("Closed MCP persistent sessions")
+                except Exception as e:
+                    logger.error(f"Error closing MCP sessions: {e}")
+
     def process_message(self, request: ChatRequest, user_id: str = "default") -> ChatResponse:
         """Process a chat message (non-streaming).
 
@@ -300,8 +769,40 @@ class ChatService:
                 logger.error(f"Failed to load MCP tools: {e}")
                 mcp_session_ctx = None
 
+        # Use Anthropic prompt caching when available for better ITPM efficiency
+        # This caches tool definitions and system prompts, reducing token usage by ~80%
+        if request.provider == "anthropic" and mcp_tools:
+            logger.info(f"Using Anthropic prompt caching middleware for {len(mcp_tools)} tools")
+            async for event in self._stream_with_anthropic_caching(
+                request=request,
+                session=session,
+                context_messages=context_messages,
+                memory_metadata=memory_metadata,
+                mcp_tools=mcp_tools,
+                mcp_session_ctx=mcp_session_ctx,
+                user_id=user_id,
+            ):
+                yield event
+            return  # Exit early - Anthropic method handles everything
+
+        # Use Bedrock prompt caching when available for better ITPM efficiency
+        # This caches tool definitions and system prompts using cachePoint markers
+        if request.provider == "bedrock" and mcp_tools:
+            logger.info(f"Using Bedrock prompt caching for {len(mcp_tools)} tools")
+            async for event in self._stream_with_bedrock_caching(
+                request=request,
+                session=session,
+                context_messages=context_messages,
+                memory_metadata=memory_metadata,
+                mcp_tools=mcp_tools,
+                mcp_session_ctx=mcp_session_ctx,
+                user_id=user_id,
+            ):
+                yield event
+            return  # Exit early - Bedrock method handles everything
+
         try:
-            # Bind tools to model if available
+            # Bind tools to model if available (non-cached path)
             if mcp_tools:
                 model = model.bind_tools(mcp_tools)
 

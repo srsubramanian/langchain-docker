@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Loader2, Wrench, Square } from 'lucide-react';
+import { Send, Loader2, Wrench, Square, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,6 +23,7 @@ export function ChatPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [toolActivity, setToolActivity] = useState<{ name: string; status: 'calling' | 'done' } | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
+  const [promptCachingActive, setPromptCachingActive] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -158,6 +159,7 @@ export function ChatPage() {
     setStreaming(true);
     clearStreamingContent();
     setToolActivity(null);
+    setPromptCachingActive(false);
 
     // Get enabled MCP servers
     const mcpServers = getEnabledServers();
@@ -179,6 +181,8 @@ export function ChatPage() {
           if (event.session_id && !sessionId) {
             setSessionId(event.session_id);
           }
+          // Track prompt caching status
+          setPromptCachingActive(event.prompt_caching === true);
         } else if (event.event === 'token') {
           appendStreamingContent(event.content || '');
         } else if (event.event === 'tool_call') {
@@ -213,12 +217,14 @@ export function ChatPage() {
           clearStreamingContent();
           setStreaming(false);
           setToolActivity(null);
+          setPromptCachingActive(false);
           // Refresh thread list to update last message
           loadThreads();
         } else if (event.event === 'error') {
           setError(event.error || 'An error occurred');
           setStreaming(false);
           setToolActivity(null);
+          setPromptCachingActive(false);
         }
       }
     } catch (err) {
@@ -243,6 +249,7 @@ export function ChatPage() {
       abortControllerRef.current = null;
       setStreaming(false);
       setToolActivity(null);
+      setPromptCachingActive(false);
       clearStreamingContent();
       // Add a system message indicating the request was stopped
       addMessage({
@@ -342,6 +349,12 @@ export function ChatPage() {
               {isStreaming && (
                 <div className="flex justify-start">
                   <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2">
+                    {promptCachingActive && (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-2">
+                        <Zap className="h-3 w-3" />
+                        <span>Prompt caching active</span>
+                      </div>
+                    )}
                     {toolActivity && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                         <Wrench className="h-3 w-3" />
