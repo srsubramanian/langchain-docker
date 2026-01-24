@@ -426,8 +426,10 @@ class ChatService:
                 model_name = available_models[0] if available_models else "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
             # Create Bedrock model
+            # provider="anthropic" is required when using model ARNs
             bedrock_model = ChatBedrockConverse(
                 model=model_name,
+                provider="anthropic",
                 temperature=request.temperature,
                 client=create_bedrock_client(),
             )
