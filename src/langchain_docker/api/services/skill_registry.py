@@ -2153,26 +2153,34 @@ class WebPerformanceSkill(Skill):
         else:
             static_content = self._read_md_file("SKILL.md")
 
-        # Add tool availability information
-        tool_info = """## Available Performance Analysis Tools
+        # Add tool availability information - Chrome DevTools MCP only
+        tool_info = """## Chrome DevTools MCP Tools
 
-### Lighthouse CLI Tools (Recommended for Quick Audits)
-These tools provide comprehensive performance metrics in a single call:
-- `lighthouse_audit` - Full performance audit with score, metrics, and recommendations
-- `lighthouse_cwv` - Core Web Vitals focused analysis
-- `lighthouse_opportunities` - Prioritized optimization opportunities with time savings
-- `lighthouse_diagnostics` - Detailed diagnostics (DOM size, long tasks, etc.)
+This skill provides **interactive browser-based performance analysis** using Chrome DevTools MCP.
 
-### Chrome DevTools MCP Tools (For Deep/Live Analysis)
-For real-time browser profiling and header inspection:
-- `mcp__chrome-devtools__tabs_context_mcp` - Get browser context
-- `mcp__chrome-devtools__tabs_create_mcp` - Create new browser tab
-- `mcp__chrome-devtools__performance_start_trace` - Start performance recording
-- `mcp__chrome-devtools__performance_stop_trace` - Stop and get results
-- `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
-- `mcp__chrome-devtools__list_network_requests` - Analyze network calls
-- `mcp__chrome-devtools__get_network_request` - Individual request details
-- `mcp__chrome-devtools__navigate_page` - Page navigation
+### Available MCP Tools
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `mcp__chrome-devtools__list_pages` | List open browser tabs | Get available pages |
+| `mcp__chrome-devtools__select_page` | Select a page for inspection | Focus on target page |
+| `mcp__chrome-devtools__new_page` | Create new browser tab | Navigate to target URL |
+| `mcp__chrome-devtools__navigate_page` | Navigate current page | Load target URL |
+| `mcp__chrome-devtools__performance_start_trace` | Start performance recording | Begin trace capture |
+| `mcp__chrome-devtools__performance_stop_trace` | Stop and get trace results | Get CWV metrics |
+| `mcp__chrome-devtools__performance_analyze_insight` | Analyze specific insight | Deep dive into metrics |
+| `mcp__chrome-devtools__list_network_requests` | List all network requests | Analyze request patterns |
+| `mcp__chrome-devtools__get_network_request` | Get request details + headers | Check caching, timing |
+| `mcp__chrome-devtools__take_screenshot` | Capture page state | Visual verification |
+| `mcp__chrome-devtools__take_snapshot` | Get accessibility tree | DOM structure analysis |
+
+### Quick Start Workflow
+
+1. **Get browser context**: `mcp__chrome-devtools__list_pages()`
+2. **Navigate to URL**: `mcp__chrome-devtools__new_page(url="https://example.com")`
+3. **Start trace**: `mcp__chrome-devtools__performance_start_trace(reload=true, autoStop=true)`
+4. **Analyze results**: `mcp__chrome-devtools__performance_analyze_insight(...)`
+5. **Check network**: `mcp__chrome-devtools__list_network_requests()`
 """
 
         return f"""## Web Performance Analysis Skill Activated
@@ -2194,26 +2202,6 @@ For real-time browser profiling and header inspection:
         if resource == "cwv_thresholds":
             return """## Core Web Vitals Thresholds (2024)
 
-### Performance Score Ranges
-
-| Score Range | Status | Meaning |
-|-------------|--------|---------|
-| 90-100 | Good | Excellent performance |
-| 50-89 | Needs Improvement | Noticeable issues |
-| 0-49 | Poor | Significant problems |
-
-### Lighthouse Score Weights
-
-| Metric | Weight | Description |
-|--------|--------|-------------|
-| TBT (Total Blocking Time) | 30% | Main thread blocking time |
-| LCP (Largest Contentful Paint) | 25% | Largest content render time |
-| CLS (Cumulative Layout Shift) | 25% | Visual stability score |
-| FCP (First Contentful Paint) | 10% | First content render time |
-| Speed Index | 10% | Visual completeness speed |
-
-### Metric Thresholds
-
 | Metric | Good | Needs Improvement | Poor |
 |--------|------|-------------------|------|
 | **LCP** | ≤ 2.5s | 2.5s - 4.0s | > 4.0s |
@@ -2221,7 +2209,7 @@ For real-time browser profiling and header inspection:
 | **CLS** | ≤ 0.1 | 0.1 - 0.25 | > 0.25 |
 | **FCP** | ≤ 1.8s | 1.8s - 3.0s | > 3.0s |
 | **TBT** | ≤ 200ms | 200ms - 600ms | > 600ms |
-| **SI** | ≤ 3.4s | 3.4s - 5.8s | > 5.8s |
+| **Speed Index** | ≤ 3.4s | 3.4s - 5.8s | > 5.8s |
 | **TTFB** | ≤ 0.8s | 0.8s - 1.8s | > 1.8s |
 """
         elif resource == "caching_headers":
@@ -2389,8 +2377,37 @@ For real-time browser profiling and header inspection:
 | 500KB | 100-150KB | 75-125KB |
 | 1MB | 200-300KB | 150-250KB |
 """
+        elif resource == "network_timing":
+            return """## Network Timing Breakdown
+
+### Request Timing Phases
+
+| Phase | Description | Target | Action if Slow |
+|-------|-------------|--------|----------------|
+| **Queuing** | Waiting for network slot | < 10ms | Reduce concurrent requests |
+| **Stalled** | Waiting before request | < 50ms | Check for blocking resources |
+| **DNS** | Domain name resolution | < 50ms | Use DNS prefetch, faster DNS |
+| **Initial Connection** | TCP handshake | < 100ms | Use HTTP/2, connection pooling |
+| **SSL** | TLS negotiation | < 100ms | Use TLS 1.3, session resumption |
+| **TTFB** | Server processing | < 200ms | Optimize backend, use caching |
+| **Content Download** | Transfer bytes | Varies | Compress, use CDN, optimize size |
+
+### Analyzing Network Requests
+
+Use `mcp__chrome-devtools__get_network_request(reqid=N)` to get detailed timing for specific requests.
+
+### Slow Request Indicators
+
+| Symptom | Likely Cause | Solution |
+|---------|--------------|----------|
+| High DNS | Many unique domains | Consolidate domains, DNS prefetch |
+| High Connection | Cold connections | Keep-alive, HTTP/2, preconnect |
+| High SSL | TLS overhead | TLS 1.3, session tickets |
+| High TTFB | Slow backend | Optimize queries, add caching |
+| High Download | Large payload | Compress, paginate, lazy load |
+"""
         else:
-            return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers', 'metric_explanations', 'resource_budgets'"
+            return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers', 'metric_explanations', 'resource_budgets', 'network_timing'"
 
     def analyze_performance(self, url: str) -> str:
         """Provide comprehensive performance analysis guidance for a URL.
@@ -2403,51 +2420,60 @@ For real-time browser profiling and header inspection:
         """
         return f"""## Performance Analysis Plan for {url}
 
-### Recommended Approach: Lighthouse CLI (Fastest)
+### Chrome DevTools MCP Analysis
 
-For a quick, comprehensive audit, use the Lighthouse tools directly:
+This skill uses Chrome DevTools MCP for interactive browser-based performance analysis.
 
-```
-lighthouse_audit(url="{url}", device="mobile")
-```
+**Prerequisites:** Ensure chrome-devtools MCP server is enabled.
 
-This returns performance score, Core Web Vitals, opportunities, and diagnostics in one call.
+### Step-by-Step Workflow
 
-**Other Lighthouse Tools:**
-- `lighthouse_cwv` - Core Web Vitals only with pass/fail status
-- `lighthouse_opportunities` - Prioritized optimization list with time savings
-- `lighthouse_diagnostics` - DOM size, long tasks, and other issues
+1. **Get browser context**:
+   ```
+   mcp__chrome-devtools__list_pages()
+   ```
 
-### Alternative: Chrome DevTools MCP (For Live Analysis)
+2. **Create or select a page**:
+   ```
+   mcp__chrome-devtools__new_page(url="{url}")
+   ```
 
-For real-time profiling with browser interaction:
+3. **Start performance trace**:
+   ```
+   mcp__chrome-devtools__performance_start_trace(reload=true, autoStop=true)
+   ```
 
-1. **Get browser context**: `mcp__chrome-devtools__tabs_context_mcp`
-2. **Create new tab**: `mcp__chrome-devtools__tabs_create_mcp`
-3. **Start trace**: `mcp__chrome-devtools__performance_start_trace(reload=true, autoStop=true)`
-4. **Navigate**: `mcp__chrome-devtools__navigate_page(url="{url}")`
-5. **Analyze**: `mcp__chrome-devtools__performance_analyze_insight`
+4. **Analyze insights** (after trace completes):
+   ```
+   mcp__chrome-devtools__performance_analyze_insight(insightSetId="...", insightName="...")
+   ```
+
+5. **Inspect network requests**:
+   ```
+   mcp__chrome-devtools__list_network_requests()
+   ```
 
 ### Core Web Vitals Reference (2024)
 
-| Metric | Good | Needs Work | Poor | Weight |
-|--------|------|------------|------|--------|
-| **LCP** | ≤2.5s | 2.5-4.0s | >4.0s | 25% |
-| **INP** | ≤200ms | 200-500ms | >500ms | - |
-| **CLS** | ≤0.1 | 0.1-0.25 | >0.25 | 25% |
-| **FCP** | ≤1.8s | 1.8-3.0s | >3.0s | 10% |
-| **TBT** | ≤200ms | 200-600ms | >600ms | 30% |
-| **SI** | ≤3.4s | 3.4-5.8s | >5.8s | 10% |
+| Metric | Good | Needs Work | Poor |
+|--------|------|------------|------|
+| **LCP** | ≤2.5s | 2.5-4.0s | >4.0s |
+| **INP** | ≤200ms | 200-500ms | >500ms |
+| **CLS** | ≤0.1 | 0.1-0.25 | >0.25 |
+| **FCP** | ≤1.8s | 1.8-3.0s | >3.0s |
+| **TTFB** | ≤0.8s | 0.8-1.8s | >1.8s |
 
 ### Key Issues to Look For
 
-1. **Large Images** - #1 cause of slow LCP
-2. **Render-Blocking Resources** - CSS/JS blocking initial render
-3. **Slow Server Response** - High TTFB (>0.8s)
-4. **Layout Shifts** - Missing width/height on images
-5. **Long JavaScript Tasks** - Main thread blocking (>50ms)
+| Issue | Symptom | MCP Tool to Use |
+|-------|---------|-----------------|
+| Large Images | Slow LCP | `list_network_requests` (filter images) |
+| Slow API | High TTFB on XHR | `get_network_request` (timing details) |
+| Missing Caching | Repeat downloads | `get_network_request` (check headers) |
+| Long Tasks | High TBT | `performance_analyze_insight` |
+| Layout Shifts | High CLS | `performance_analyze_insight` |
 
-**NEXT STEP**: Run `lighthouse_audit(url="{url}")` for comprehensive analysis.
+**NOTE**: For automated audits without browser interaction, use the `lighthouse_performance_analyst` agent instead.
 """
 
     def check_caching(self, url: str) -> str:
