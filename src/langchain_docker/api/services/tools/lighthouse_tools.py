@@ -3,10 +3,10 @@
 Uses Lighthouse CLI to get pre-computed performance metrics in a single call,
 significantly reducing token usage compared to multiple Chrome DevTools calls.
 
-Supports:
-- Headless mode (default) for public pages
-- Remote debugging mode for authenticated/internal pages
-- Desktop and mobile device emulation
+Runs in headless mode with desktop and mobile device emulation support.
+
+Chrome path can be configured via LIGHTHOUSE_CHROME_PATH or CHROME_PATH
+environment variables. If not set, Lighthouse will auto-detect Chrome.
 """
 
 import json
@@ -20,6 +20,7 @@ from langchain_docker.api.services.tools.base import (
     ToolTemplate,
     ToolParameter,
 )
+from langchain_docker.core.config import get_lighthouse_chrome_path
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,7 @@ class LighthouseToolProvider(ToolProvider):
     - Opportunities for optimization with estimated savings
     - Diagnostics and recommendations
 
-    Supports two modes:
-    1. Headless (default): For public pages, runs in background
-    2. Remote debugging: For authenticated pages, connects to existing browser
-       - Launch Chrome with: --remote-debugging-port=9222
-       - Use port=9222 parameter to connect
+    Runs in headless mode for public pages with desktop/mobile emulation.
     """
 
     def __init__(self, skill_registry=None):
@@ -68,6 +65,11 @@ class LighthouseToolProvider(ToolProvider):
         if self._use_npx:
             self._npx_path = shutil.which("npx")
             logger.info("Lighthouse CLI not found globally, will use npx")
+
+        # Get Chrome path from config (LIGHTHOUSE_CHROME_PATH or CHROME_PATH)
+        self._chrome_path = get_lighthouse_chrome_path()
+        if self._chrome_path:
+            logger.info(f"Using Chrome at: {self._chrome_path}")
 
     def get_skill_id(self) -> str:
         return "web_performance"
@@ -97,26 +99,6 @@ class LighthouseToolProvider(ToolProvider):
                         required=False,
                         default="mobile",
                     ),
-                    ToolParameter(
-                        name="port",
-                        type="integer",
-                        description=(
-                            "Remote debugging port to connect to existing browser (e.g., 9222). "
-                            "Use for authenticated pages. Launch Chrome with --remote-debugging-port=9222 first."
-                        ),
-                        required=False,
-                        default=None,
-                    ),
-                    ToolParameter(
-                        name="preserve_auth",
-                        type="boolean",
-                        description=(
-                            "Preserve authentication (cookies/localStorage) during audit. "
-                            "Only works with port parameter. Default: True when port is set."
-                        ),
-                        required=False,
-                        default=True,
-                    ),
                 ],
                 factory=self._create_audit_tool,
             ),
@@ -141,13 +123,6 @@ class LighthouseToolProvider(ToolProvider):
                         description="Device: 'mobile' (default) or 'desktop'",
                         required=False,
                         default="mobile",
-                    ),
-                    ToolParameter(
-                        name="port",
-                        type="integer",
-                        description="Remote debugging port for authenticated pages",
-                        required=False,
-                        default=None,
                     ),
                 ],
                 factory=self._create_cwv_tool,
@@ -174,13 +149,6 @@ class LighthouseToolProvider(ToolProvider):
                         required=False,
                         default="mobile",
                     ),
-                    ToolParameter(
-                        name="port",
-                        type="integer",
-                        description="Remote debugging port for authenticated pages",
-                        required=False,
-                        default=None,
-                    ),
                 ],
                 factory=self._create_opportunities_tool,
             ),
@@ -206,13 +174,6 @@ class LighthouseToolProvider(ToolProvider):
                         required=False,
                         default="mobile",
                     ),
-                    ToolParameter(
-                        name="port",
-                        type="integer",
-                        description="Remote debugging port for authenticated pages",
-                        required=False,
-                        default=None,
-                    ),
                 ],
                 factory=self._create_diagnostics_tool,
             ),
@@ -226,16 +187,12 @@ class LighthouseToolProvider(ToolProvider):
         self,
         url: str,
         device: str = "mobile",
-        port: int | None = None,
-        preserve_auth: bool = True,
     ) -> dict:
         """Run Lighthouse audit and return parsed JSON results.
 
         Args:
             url: URL to audit
             device: 'mobile' or 'desktop'
-            port: Remote debugging port (for authenticated pages)
-            preserve_auth: Preserve cookies/localStorage (only with port)
 
         Returns:
             Parsed Lighthouse JSON report
@@ -258,21 +215,17 @@ class LighthouseToolProvider(ToolProvider):
         if device == "desktop":
             cmd.append("--preset=desktop")
 
-        # Handle browser connection mode
-        if port:
-            # Remote debugging mode - connect to existing browser
-            cmd.append(f"--port={port}")
-            if preserve_auth:
-                cmd.append("--disable-storage-reset")
-            logger.info(f"Connecting to existing browser on port {port}")
-        else:
-            # Headless mode - launch new browser
-            cmd.append("--chrome-flags=--headless --no-sandbox --disable-gpu")
+        # Use configured Chrome path if available
+        if self._chrome_path:
+            cmd.append(f"--chrome-path={self._chrome_path}")
+
+        # Headless mode - launch new browser
+        cmd.append("--chrome-flags=--headless --no-sandbox --disable-gpu")
 
         # Performance only for faster audits
         cmd.append("--only-categories=performance")
 
-        logger.info(f"Running Lighthouse audit for {url} ({device}, port={port})")
+        logger.info(f"Running Lighthouse audit for {url} ({device})")
 
         try:
             result = subprocess.run(
@@ -284,12 +237,6 @@ class LighthouseToolProvider(ToolProvider):
 
             if result.returncode != 0:
                 error_msg = result.stderr[:500] if result.stderr else "Unknown error"
-                # Check for common errors
-                if "connect ECONNREFUSED" in error_msg:
-                    raise RuntimeError(
-                        f"Cannot connect to browser on port {port}. "
-                        "Launch Chrome with: --remote-debugging-port=9222"
-                    )
                 raise RuntimeError(f"Lighthouse failed: {error_msg}")
 
             return json.loads(result.stdout)
@@ -687,19 +634,15 @@ class LighthouseToolProvider(ToolProvider):
         def lighthouse_audit(
             url: str,
             device: str = "mobile",
-            port: int | None = None,
-            preserve_auth: bool = True,
         ) -> str:
             """Run comprehensive Lighthouse performance audit.
 
             Args:
                 url: URL to audit
                 device: 'mobile' or 'desktop'
-                port: Remote debugging port for authenticated pages
-                preserve_auth: Keep cookies/localStorage when using port
             """
             try:
-                report = self._run_lighthouse(url, device, port, preserve_auth)
+                report = self._run_lighthouse(url, device)
                 return self._format_audit_summary(report, device)
             except Exception as e:
                 logger.error(f"Lighthouse audit failed: {e}")
@@ -712,11 +655,10 @@ class LighthouseToolProvider(ToolProvider):
         def lighthouse_cwv(
             url: str,
             device: str = "mobile",
-            port: int | None = None,
         ) -> str:
             """Get Core Web Vitals metrics for a URL."""
             try:
-                report = self._run_lighthouse(url, device, port)
+                report = self._run_lighthouse(url, device)
                 return self._format_cwv_summary(report, device)
             except Exception as e:
                 logger.error(f"Lighthouse CWV check failed: {e}")
@@ -729,11 +671,10 @@ class LighthouseToolProvider(ToolProvider):
         def lighthouse_opportunities(
             url: str,
             device: str = "mobile",
-            port: int | None = None,
         ) -> str:
             """Get prioritized optimization opportunities for a URL."""
             try:
-                report = self._run_lighthouse(url, device, port)
+                report = self._run_lighthouse(url, device)
                 return self._format_opportunities(report, device)
             except Exception as e:
                 logger.error(f"Lighthouse opportunities check failed: {e}")
@@ -746,11 +687,10 @@ class LighthouseToolProvider(ToolProvider):
         def lighthouse_diagnostics(
             url: str,
             device: str = "mobile",
-            port: int | None = None,
         ) -> str:
             """Get detailed performance diagnostics for a URL."""
             try:
-                report = self._run_lighthouse(url, device, port)
+                report = self._run_lighthouse(url, device)
                 return self._format_diagnostics(report, device)
             except Exception as e:
                 logger.error(f"Lighthouse diagnostics failed: {e}")

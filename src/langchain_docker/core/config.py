@@ -78,6 +78,8 @@ class Config:
     # Rate limiting settings
     rate_limit_enabled: bool = True
     rate_limit_requests_per_second: float = 0.75  # ~45 RPM, under Anthropic's 50 RPM limit
+    # Lighthouse settings
+    lighthouse_chrome_path: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -114,6 +116,7 @@ class Config:
             neo4j_password=os.getenv("NEO4J_PASSWORD") or None,
             rate_limit_enabled=os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true",
             rate_limit_requests_per_second=float(os.getenv("RATE_LIMIT_REQUESTS_PER_SECOND", "0.75")),
+            lighthouse_chrome_path=os.getenv("LIGHTHOUSE_CHROME_PATH") or os.getenv("CHROME_PATH") or None,
         )
 
 
@@ -663,6 +666,32 @@ def is_rate_limit_enabled() -> bool:
         True if rate limiting is enabled (default: true)
     """
     return os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+
+
+# ============================================================
+# Lighthouse Configuration
+# ============================================================
+
+
+def get_lighthouse_chrome_path() -> str | None:
+    """Get Chrome executable path for Lighthouse.
+
+    Lighthouse uses this to find Chrome/Chromium for running audits.
+    If not set, Lighthouse will auto-detect Chrome on the system.
+
+    Supported values:
+    - macOS: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    - Linux: /usr/bin/chromium or /usr/bin/google-chrome
+    - Windows: C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe
+
+    Environment variables (in order of priority):
+    - LIGHTHOUSE_CHROME_PATH: Specific path for Lighthouse
+    - CHROME_PATH: General Chrome path (also used by other tools)
+
+    Returns:
+        Chrome executable path if configured, None for auto-detection
+    """
+    return os.getenv("LIGHTHOUSE_CHROME_PATH") or os.getenv("CHROME_PATH") or None
 
 
 def get_rate_limit_requests_per_second() -> float:

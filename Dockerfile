@@ -11,12 +11,23 @@ WORKDIR /app
 
 # Install system dependencies
 # libgl1 and libglib2.0-0 are required for Docling PDF processing (OpenCV dependency)
+# nodejs and npm are required for Lighthouse CLI (web performance analysis)
+# chromium is required for Lighthouse to run headless audits
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     libgl1 \
     libglib2.0-0 \
+    nodejs \
+    npm \
+    chromium \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Lighthouse CLI globally for web performance analysis
+RUN npm install -g lighthouse
+
+# Set Chrome path for Lighthouse
+ENV CHROME_PATH=/usr/bin/chromium
 
 # Install uv for faster dependency management
 RUN pip install --no-cache-dir uv

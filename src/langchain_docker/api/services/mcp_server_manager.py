@@ -6,9 +6,12 @@ This manager now focuses on server configuration and status tracking.
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from langchain_docker.core.config import get_lighthouse_chrome_path
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,12 @@ class MCPServerManager:
 
             for server_id, config in data.get("servers", {}).items():
                 args = config.get("args", [])
+                env = config.get("env", {})
+
+                # Inject Chrome path for chrome-devtools server if configured
+                if server_id == "chrome-devtools":
+                    args, env = self._inject_chrome_path(args, env)
+
                 logger.info(f"Loading MCP server '{server_id}': command={config['command']}, args={args}")
                 self._servers[server_id] = MCPServerConfig(
                     id=server_id,
@@ -78,7 +87,7 @@ class MCPServerManager:
                     description=config.get("description", ""),
                     command=config["command"],
                     args=args,
-                    env=config.get("env", {}),
+                    env=env,
                     enabled=config.get("enabled", True),
                     timeout_seconds=config.get("timeout_seconds", 30),
                     is_custom=False,
@@ -92,6 +101,38 @@ class MCPServerManager:
 
         # Load custom servers
         self._load_custom_config()
+
+    def _inject_chrome_path(
+        self, args: list[str], env: dict[str, str]
+    ) -> tuple[list[str], dict[str, str]]:
+        """Inject Chrome executable path into chrome-devtools MCP config.
+
+        Uses LIGHTHOUSE_CHROME_PATH or CHROME_PATH environment variable
+        to configure the Chrome executable for chrome-devtools MCP.
+
+        Args:
+            args: Original command arguments
+            env: Original environment variables
+
+        Returns:
+            Tuple of (updated_args, updated_env)
+        """
+        chrome_path = get_lighthouse_chrome_path()
+        if not chrome_path:
+            return args, env
+
+        # Check if --executablePath is already in args
+        has_executable_path = any(
+            arg.startswith("--executablePath") for arg in args
+        )
+
+        if not has_executable_path:
+            # Add the executable path argument
+            args = args.copy()
+            args.append(f"--executablePath={chrome_path}")
+            logger.info(f"Injected Chrome path for chrome-devtools: {chrome_path}")
+
+        return args, env
 
     def _load_custom_config(self) -> None:
         """Load custom servers from user config file."""
