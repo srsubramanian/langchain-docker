@@ -185,115 +185,229 @@ You help build and maintain a well-organized, searchable knowledge repository.""
         ],
         "prompt": """You are a Web Performance Analyst specialized in analyzing website performance using Chrome DevTools.
 
+IMPORTANT: Execute ONLY what the user explicitly asks for. Do NOT automatically run full analyses or follow multi-step workflows unless specifically requested. Wait for user instructions before proceeding to the next step.
+
 Your capabilities:
 1. **Performance Analysis**: Analyze Core Web Vitals (LCP, INP, CLS, FCP, TTFB)
 2. **Caching Analysis**: Check HTTP caching headers and strategies for static resources
 3. **API Performance**: Analyze XHR/Fetch request timing and identify bottlenecks
 4. **Recommendations**: Provide actionable optimization suggestions
 
-You have access to Chrome DevTools via MCP tools. Your workflow:
-
-## Step 1: Setup
-1. Call `load_web_performance_skill` to get Core Web Vitals thresholds and analysis guidance
-2. Get browser tab context: `mcp__chrome-devtools__tabs_context_mcp`
-3. Create a new tab if needed: `mcp__chrome-devtools__tabs_create_mcp`
-
-## Step 2: Performance Trace
-1. Start trace: `mcp__chrome-devtools__performance_start_trace` with `reload: true, autoStop: true`
-2. Navigate to URL: `mcp__chrome-devtools__navigate_page`
-3. Wait for trace to complete
-4. Analyze insights: `mcp__chrome-devtools__performance_analyze_insight`
-
-## Step 3: Network Analysis
-1. List requests: `mcp__chrome-devtools__list_network_requests`
-2. Get details for slow requests: `mcp__chrome-devtools__get_network_request`
-3. Use `perf_check_caching` for header analysis guidance
-4. Use `perf_analyze_api` for API performance guidance
-
-## Step 4: Recommendations
-1. Use `perf_recommendations` with your findings to get optimization suggestions
-2. Prioritize fixes by impact (Critical, High, Medium, Low)
-
-MCP Tools Available:
-- `mcp__chrome-devtools__tabs_context_mcp` - Get tab context
-- `mcp__chrome-devtools__tabs_create_mcp` - Create new browser tab
-- `mcp__chrome-devtools__navigate_page` - Navigate to URL
+## MCP Tools Available
+- `mcp__chrome-devtools__list_pages` - List open browser pages
+- `mcp__chrome-devtools__select_page` - Select a page to work with
+- `mcp__chrome-devtools__new_page` - Create new page and navigate to URL
+- `mcp__chrome-devtools__navigate_page` - Navigate current page to URL
 - `mcp__chrome-devtools__performance_start_trace` - Start performance recording
-- `mcp__chrome-devtools__performance_stop_trace` - Stop recording
+- `mcp__chrome-devtools__performance_stop_trace` - Stop recording and get results
 - `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
 - `mcp__chrome-devtools__list_network_requests` - List network requests
 - `mcp__chrome-devtools__get_network_request` - Get request details
 - `mcp__chrome-devtools__take_screenshot` - Capture page screenshot
 
-Best practices:
-- Always start by loading the web performance skill
-- Run performance traces with page reload for accurate metrics
-- Check both Core Web Vitals and network waterfall
-- Look for render-blocking resources, slow APIs, and missing cache headers
-- Provide specific, actionable recommendations with code examples when possible
+## Reference Workflow (use ONLY when user requests full analysis)
+When the user asks for a comprehensive performance analysis:
+1. Setup: List pages, select or create a page
+2. Navigate to the target URL
+3. Start performance trace with `reload: true, autoStop: true`
+4. Analyze insights and network requests
+5. Provide recommendations
 
-You help developers understand and improve their website's performance.""",
+## Behavior Guidelines
+- If user says "navigate to X" - ONLY navigate, do not analyze
+- If user says "take a screenshot" - ONLY take screenshot
+- If user says "analyze performance of X" - THEN run the full workflow
+- Always confirm completion of the requested action before doing anything else
+- Ask user what they want to do next rather than assuming
+
+## Output Formatting
+Always use **markdown tables** to present metrics for better readability:
+
+| Metric | Value | Threshold | Status |
+|--------|-------|-----------|--------|
+| LCP | 2.1s | ≤2.5s | Good |
+| CLS | 0.15 | ≤0.1 | Needs Improvement |
+
+For timing breakdowns:
+| Phase | Duration | % of Total |
+|-------|----------|------------|
+| DNS Lookup | 45ms | 3% |
+| TCP Connect | 120ms | 8% |
+
+For resource lists:
+| Resource | Type | Size | Load Time |
+|----------|------|------|-----------|
+| main.js | Script | 245KB | 320ms |
+
+Use color indicators in Status column: Good, Needs Improvement, Poor
+
+You help developers understand and improve their website's performance step by step.""",
         "starter_prompts": [
             {
-                "category": "Static Resources",
-                "icon": "📦",
+                "category": "Getting Started",
+                "icon": "🚀",
                 "prompts": [
                     {
-                        "title": "Count static files",
-                        "prompt": "How many static files (CSS, JS, images, fonts) are loaded to paint {url}?",
+                        "title": "Navigate to page",
+                        "prompt": "Navigate to {url} and take a screenshot. Don't analyze yet.",
+                        "icon": "🌐",
+                    },
+                    {
+                        "title": "List open pages",
+                        "prompt": "List all open browser pages and their URLs.",
+                        "icon": "📋",
+                    },
+                    {
+                        "title": "Take screenshot",
+                        "prompt": "Take a screenshot of the current page.",
+                        "icon": "📸",
+                    },
+                ],
+            },
+            {
+                "category": "Page Load Breakdown",
+                "icon": "⏱️",
+                "prompts": [
+                    {
+                        "title": "Time breakdown",
+                        "prompt": "Break down the page load time for {url} into: DNS lookup, TCP connect, TTFB, and content download. Show each timing separately.",
                         "icon": "📊",
                     },
                     {
-                        "title": "Find render-blocking resources",
-                        "prompt": "What render-blocking resources slow down first paint on {url}?",
-                        "icon": "🚫",
+                        "title": "Server vs Network vs Frontend",
+                        "prompt": "For {url}, show what percentage of load time is spent on: Server processing, Network transfer, and Frontend rendering.",
+                        "icon": "🔄",
                     },
                     {
-                        "title": "Check image optimization",
-                        "prompt": "Are images optimized on {url}? Find oversized or uncompressed images.",
-                        "icon": "🖼️",
+                        "title": "Time to First Byte",
+                        "prompt": "Measure the Time to First Byte (TTFB) for {url}. Is it under 800ms (good) or needs improvement?",
+                        "icon": "⚡",
                     },
                 ],
             },
             {
                 "category": "Core Web Vitals",
-                "icon": "⚡",
+                "icon": "📈",
                 "prompts": [
                     {
-                        "title": "Full CWV analysis",
-                        "prompt": "Analyze Core Web Vitals (LCP, INP, CLS, FCP, TTFB) for {url}",
-                        "icon": "📈",
+                        "title": "LCP analysis",
+                        "prompt": "What is the Largest Contentful Paint (LCP) for {url}? Identify the LCP element and whether it meets the 2.5s threshold.",
+                        "icon": "🎯",
                     },
                     {
-                        "title": "Check layout shifts",
-                        "prompt": "What causes Cumulative Layout Shift (CLS) on {url}?",
+                        "title": "CLS analysis",
+                        "prompt": "Measure Cumulative Layout Shift (CLS) for {url}. What elements are causing layout shifts? Is it under 0.1 (good)?",
                         "icon": "📐",
                     },
                     {
-                        "title": "Measure load times",
-                        "prompt": "Measure Time to First Byte (TTFB) and First Contentful Paint (FCP) for {url}",
-                        "icon": "⏱️",
+                        "title": "FCP analysis",
+                        "prompt": "Measure First Contentful Paint (FCP) for {url}. Is it under 1.8s (good) or needs improvement?",
+                        "icon": "🎨",
                     },
                 ],
             },
             {
-                "category": "Caching & APIs",
-                "icon": "🗄️",
+                "category": "Visual Rendering",
+                "icon": "👁️",
                 "prompts": [
                     {
-                        "title": "Check caching headers",
-                        "prompt": "Check HTTP caching headers for static resources on {url}. Are they properly configured?",
-                        "icon": "💾",
+                        "title": "Visually Complete time",
+                        "prompt": "When does {url} become visually complete (all above-the-fold content loaded)? This is different from full page load.",
+                        "icon": "✅",
                     },
                     {
-                        "title": "Find slow API calls",
-                        "prompt": "Find slow API/XHR calls (>500ms) on {url} and identify bottlenecks.",
+                        "title": "Speed Index",
+                        "prompt": "What is the Speed Index for {url}? Speed Index measures how quickly visible content is painted. Lower is better.",
+                        "icon": "🏎️",
+                    },
+                    {
+                        "title": "Render-blocking resources",
+                        "prompt": "What resources are blocking the first paint on {url}? List CSS and JS files that delay rendering.",
+                        "icon": "🚫",
+                    },
+                ],
+            },
+            {
+                "category": "Network Waterfall",
+                "icon": "🌊",
+                "prompts": [
+                    {
+                        "title": "Resource count",
+                        "prompt": "How many network requests are made to load {url}? Break down by type: HTML, CSS, JS, images, fonts, XHR/fetch.",
+                        "icon": "📊",
+                    },
+                    {
+                        "title": "Largest resources",
+                        "prompt": "What are the 5 largest resources loaded on {url}? Show file sizes and load times.",
+                        "icon": "📦",
+                    },
+                    {
+                        "title": "Third-party scripts",
+                        "prompt": "List all third-party scripts loaded on {url}. How much time do they add to page load?",
+                        "icon": "🔗",
+                    },
+                ],
+            },
+            {
+                "category": "API Performance",
+                "icon": "🔌",
+                "prompts": [
+                    {
+                        "title": "XHR/Fetch calls",
+                        "prompt": "List all XHR and Fetch API calls made by {url}. Show their response times and payload sizes.",
+                        "icon": "📡",
+                    },
+                    {
+                        "title": "Slow API calls",
+                        "prompt": "Find API calls on {url} that take longer than 500ms. What endpoints are slow?",
                         "icon": "🐌",
                     },
                     {
-                        "title": "Auth performance",
-                        "prompt": "Are there authentication or token refresh bottlenecks on {url}?",
-                        "icon": "🔐",
+                        "title": "API waterfall",
+                        "prompt": "Are API calls on {url} sequential or parallel? Identify any waterfall patterns that could be optimized.",
+                        "icon": "⛓️",
+                    },
+                ],
+            },
+            {
+                "category": "Caching Analysis",
+                "icon": "💾",
+                "prompts": [
+                    {
+                        "title": "Cache headers",
+                        "prompt": "Check HTTP caching headers for static resources on {url}. Which resources have Cache-Control set? Which are missing?",
+                        "icon": "🔍",
+                    },
+                    {
+                        "title": "Compression check",
+                        "prompt": "Are resources on {url} being served with gzip or brotli compression? Find uncompressed resources.",
+                        "icon": "🗜️",
+                    },
+                    {
+                        "title": "CDN usage",
+                        "prompt": "Is {url} using a CDN for static assets? Check for CDN headers and edge caching.",
+                        "icon": "🌍",
+                    },
+                ],
+            },
+            {
+                "category": "Full Analysis",
+                "icon": "🔬",
+                "prompts": [
+                    {
+                        "title": "Complete performance audit",
+                        "prompt": "Run a complete performance analysis of {url}: Core Web Vitals, resource loading, caching, and provide prioritized recommendations.",
+                        "icon": "📋",
+                    },
+                    {
+                        "title": "Performance comparison",
+                        "prompt": "Compare the performance of {url} on desktop vs mobile viewport. What differences do you see?",
+                        "icon": "📱",
+                    },
+                    {
+                        "title": "Optimization roadmap",
+                        "prompt": "Based on the performance of {url}, create a prioritized list of optimizations ranked by impact: Critical, High, Medium, Low.",
+                        "icon": "🗺️",
                     },
                 ],
             },
