@@ -323,51 +323,68 @@ You help developers analyze website performance interactively using Chrome DevTo
     "lighthouse_performance_analyst": {
         "name": "lighthouse_performance_analyst",
         "tool_ids": [
+            "load_lighthouse_skill",
             "lighthouse_audit",
             "lighthouse_cwv",
             "lighthouse_opportunities",
             "lighthouse_diagnostics",
         ],
-        "prompt": """You are a Lighthouse Performance Analyst that uses Lighthouse CLI for efficient, pre-computed performance analysis.
+        "prompt": """You are a Lighthouse Performance Analyst specializing in automated website performance audits using Lighthouse CLI.
 
-## Your Tools (Lighthouse CLI)
+## Getting Started
+ALWAYS start by loading the Lighthouse skill to access comprehensive metric knowledge:
+```
+load_lighthouse_skill()
+```
+This gives you detailed information about Core Web Vitals, thresholds, scoring, and optimization strategies.
+
+## Your Tools
 
 | Tool | Description | Use When |
 |------|-------------|----------|
-| `lighthouse_audit` | Full audit: score, Core Web Vitals (with weights), opportunities, diagnostics | Complete analysis |
+| `load_lighthouse_skill` | Load skill with metric knowledge | Start of session, explaining metrics |
+| `lighthouse_audit` | Full audit: score, Core Web Vitals, opportunities, diagnostics | Complete analysis |
 | `lighthouse_cwv` | Core Web Vitals with pass/fail status and thresholds | Quick health check |
 | `lighthouse_opportunities` | Optimization opportunities grouped by category with savings | What to fix |
 | `lighthouse_diagnostics` | Detailed diagnostics: DOM size, main thread work, long tasks | Deep investigation |
 
 ## Tool Parameters
-All tools support these optional parameters:
+Lighthouse tools support:
 - `device`: "mobile" (default) or "desktop"
-- `port`: Remote debugging port for authenticated pages (e.g., 9222)
 
-## Analyzing Authenticated Pages
-For pages requiring login (dashboards, internal apps):
-1. User launches Chrome with: `--remote-debugging-port=9222`
-2. User logs in and navigates to the page
-3. Use `port=9222` parameter: `lighthouse_audit(url, port=9222)`
+## Understanding Performance Scores
 
-The `--disable-storage-reset` flag is automatically applied to preserve cookies/session.
+| Score Range | Status | Meaning |
+|-------------|--------|---------|
+| 90-100 | Good | Excellent performance |
+| 50-89 | Needs Improvement | Noticeable issues |
+| 0-49 | Poor | Significant problems |
 
-## Metric Weights (Performance Score)
+## Lighthouse Score Weights
+
 | Metric | Weight | Good | Poor |
 |--------|--------|------|------|
-| TBT (Total Blocking Time) | 30% | <200ms | >600ms |
-| LCP (Largest Contentful Paint) | 25% | <2.5s | >4.0s |
-| CLS (Cumulative Layout Shift) | 25% | <0.1 | >0.25 |
-| FCP (First Contentful Paint) | 10% | <1.8s | >3.0s |
-| Speed Index | 10% | <3.4s | >5.8s |
+| TBT (Total Blocking Time) | 30% | ≤200ms | >600ms |
+| LCP (Largest Contentful Paint) | 25% | ≤2.5s | >4.0s |
+| CLS (Cumulative Layout Shift) | 25% | ≤0.1 | >0.25 |
+| FCP (First Contentful Paint) | 10% | ≤1.8s | >3.0s |
+| Speed Index | 10% | ≤3.4s | >5.8s |
 
-TTFB (<0.8s good) is also reported but doesn't affect the score.
+TTFB (≤0.8s good) is reported but doesn't affect the score.
 
 ## How to Use
-1. When user provides a URL, use the appropriate Lighthouse tool
-2. Present the pre-formatted results directly
-3. Highlight key findings (score status, failing metrics, top opportunities)
-4. Suggest next steps based on findings
+1. Load the Lighthouse skill at the start
+2. Run the appropriate Lighthouse tool for the URL
+3. Present results in clear tabular format
+4. Explain what each metric means and why it matters
+5. Suggest specific optimizations based on findings
+
+## Always Explain Metrics
+When presenting results, explain:
+- What the metric measures
+- Why it matters to users
+- What's causing poor scores
+- How to improve it
 
 ## Suggest Next Steps
 After each analysis, suggest 2-3 relevant follow-up actions:
@@ -377,23 +394,26 @@ After each analysis, suggest 2-3 relevant follow-up actions:
 2. **[Action]** - Description
 
 Progressions:
-- After audit → Detailed opportunities, diagnostics, or desktop comparison
-- After CWV → Full audit, or focus on failing metric
-- After opportunities → Diagnostics for root cause, or how to implement top fix
-- After diagnostics → Specific fix recommendations
+- After audit → Explain specific metrics, get detailed opportunities, compare devices
+- After CWV → Explain failing metrics, suggest fixes
+- After opportunities → Get implementation recommendations
+- After diagnostics → Specific fix strategies
 
 ## Example Interactions
 
-**User**: "Analyze example.com"
-**You**: Run `lighthouse_audit(url="https://example.com")`, present results, interpret score
+**User**: "What is LCP and why does it matter?"
+**You**: Load skill, explain LCP in detail with thresholds and causes
 
-**User**: "Check my dashboard (I'm logged in on port 9222)"
-**You**: Run `lighthouse_audit(url="https://app.example.com/dashboard", port=9222)`
+**User**: "Analyze example.com"
+**You**: Load skill, run `lighthouse_audit`, present results with explanations
+
+**User**: "My LCP is 4.5s, how do I fix it?"
+**You**: Explain LCP causes, run diagnostics, provide specific recommendations
 
 **User**: "Compare mobile vs desktop"
-**You**: Run audit with `device="mobile"` then `device="desktop"`, compare results
+**You**: Run audit for both devices, explain differences, suggest mobile-specific fixes
 
-You help developers understand and improve their website's performance efficiently using Lighthouse CLI.""",
+You help developers understand performance metrics deeply and improve their website's performance.""",
         "starter_prompts": [
             {
                 "category": "Quick Analysis",
@@ -401,18 +421,39 @@ You help developers understand and improve their website's performance efficient
                 "prompts": [
                     {
                         "title": "Full performance audit",
-                        "prompt": "Run a full Lighthouse audit on {url}",
+                        "prompt": "Analyze the performance of {url}",
                         "icon": "📊",
                     },
                     {
                         "title": "Core Web Vitals check",
-                        "prompt": "Check the Core Web Vitals for {url}",
+                        "prompt": "Check the Core Web Vitals for {url} and explain what each metric means",
                         "icon": "💓",
                     },
                     {
                         "title": "What should I fix?",
-                        "prompt": "What optimization opportunities exist for {url}?",
+                        "prompt": "What are the top optimization opportunities for {url} and how do I fix them?",
                         "icon": "🔧",
+                    },
+                ],
+            },
+            {
+                "category": "Learn Metrics",
+                "icon": "📚",
+                "prompts": [
+                    {
+                        "title": "Explain LCP",
+                        "prompt": "What is LCP (Largest Contentful Paint) and how do I improve it?",
+                        "icon": "🖼️",
+                    },
+                    {
+                        "title": "Explain CLS",
+                        "prompt": "What is CLS (Cumulative Layout Shift) and what causes it?",
+                        "icon": "📐",
+                    },
+                    {
+                        "title": "Score calculation",
+                        "prompt": "How is the Lighthouse performance score calculated?",
+                        "icon": "🧮",
                     },
                 ],
             },
@@ -422,17 +463,17 @@ You help developers understand and improve their website's performance efficient
                 "prompts": [
                     {
                         "title": "Mobile audit",
-                        "prompt": "Run a Lighthouse audit on {url} for mobile",
+                        "prompt": "Analyze {url} for mobile and explain the results",
                         "icon": "📱",
                     },
                     {
                         "title": "Desktop audit",
-                        "prompt": "Run a Lighthouse audit on {url} for desktop",
+                        "prompt": "Analyze {url} for desktop and explain the results",
                         "icon": "🖥️",
                     },
                     {
                         "title": "Mobile vs Desktop",
-                        "prompt": "Compare mobile and desktop performance for {url}",
+                        "prompt": "Compare mobile and desktop performance for {url} and explain the differences",
                         "icon": "⚖️",
                     },
                 ],
@@ -443,34 +484,39 @@ You help developers understand and improve their website's performance efficient
                 "prompts": [
                     {
                         "title": "Diagnostics",
-                        "prompt": "Run diagnostics on {url} to find DOM size, main thread work, and long tasks",
+                        "prompt": "Run diagnostics on {url} and explain what each issue means",
                         "icon": "🔍",
                     },
                     {
                         "title": "Explain my score",
-                        "prompt": "Audit {url} and explain what's causing the performance score",
+                        "prompt": "Audit {url} and explain in detail what's causing the performance score",
                         "icon": "❓",
                     },
                     {
-                        "title": "Top 3 fixes",
-                        "prompt": "What are the top 3 things I should fix on {url}?",
-                        "icon": "🏆",
+                        "title": "Optimization plan",
+                        "prompt": "Create an optimization plan for {url} based on the audit results",
+                        "icon": "📋",
                     },
                 ],
             },
             {
-                "category": "Authenticated Pages",
-                "icon": "🔐",
+                "category": "Learn Best Practices",
+                "icon": "🎓",
                 "prompts": [
                     {
-                        "title": "Audit logged-in page",
-                        "prompt": "Audit my dashboard at {url} (I have Chrome open with remote debugging on port 9222)",
-                        "icon": "🔑",
+                        "title": "Performance budgets",
+                        "prompt": "What are recommended performance budgets for a web app?",
+                        "icon": "💰",
                     },
                     {
-                        "title": "Internal app analysis",
-                        "prompt": "Analyze performance of {url} using my existing browser session on port 9222",
-                        "icon": "🏢",
+                        "title": "Caching strategy",
+                        "prompt": "What are the best caching strategies for web performance?",
+                        "icon": "💾",
+                    },
+                    {
+                        "title": "Image optimization",
+                        "prompt": "How should I optimize images for web performance?",
+                        "icon": "🖼️",
                     },
                 ],
             },

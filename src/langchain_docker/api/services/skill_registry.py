@@ -2153,13 +2153,20 @@ class WebPerformanceSkill(Skill):
         else:
             static_content = self._read_md_file("SKILL.md")
 
-        # Add MCP server status information
-        mcp_status = """### MCP Server Status
-The chrome-devtools MCP server provides browser automation for performance analysis.
+        # Add tool availability information
+        tool_info = """## Available Performance Analysis Tools
 
-**Required MCP Tools:**
+### Lighthouse CLI Tools (Recommended for Quick Audits)
+These tools provide comprehensive performance metrics in a single call:
+- `lighthouse_audit` - Full performance audit with score, metrics, and recommendations
+- `lighthouse_cwv` - Core Web Vitals focused analysis
+- `lighthouse_opportunities` - Prioritized optimization opportunities with time savings
+- `lighthouse_diagnostics` - Detailed diagnostics (DOM size, long tasks, etc.)
+
+### Chrome DevTools MCP Tools (For Deep/Live Analysis)
+For real-time browser profiling and header inspection:
+- `mcp__chrome-devtools__tabs_context_mcp` - Get browser context
 - `mcp__chrome-devtools__tabs_create_mcp` - Create new browser tab
-- `mcp__chrome-devtools__tabs_context_mcp` - Get tab context
 - `mcp__chrome-devtools__performance_start_trace` - Start performance recording
 - `mcp__chrome-devtools__performance_stop_trace` - Stop and get results
 - `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
@@ -2170,7 +2177,7 @@ The chrome-devtools MCP server provides browser automation for performance analy
 
         return f"""## Web Performance Analysis Skill Activated
 
-{mcp_status}
+{tool_info}
 
 {static_content}
 """
@@ -2187,59 +2194,203 @@ The chrome-devtools MCP server provides browser automation for performance analy
         if resource == "cwv_thresholds":
             return """## Core Web Vitals Thresholds (2024)
 
-| Metric | Description | Good | Needs Improvement | Poor |
-|--------|-------------|------|-------------------|------|
-| **LCP** | Largest Contentful Paint | <=2.5s | 2.5s-4.0s | >4.0s |
-| **INP** | Interaction to Next Paint | <=200ms | 200ms-500ms | >500ms |
-| **CLS** | Cumulative Layout Shift | <=0.1 | 0.1-0.25 | >0.25 |
-| **FCP** | First Contentful Paint | <=1.8s | 1.8s-3.0s | >3.0s |
-| **TTFB** | Time to First Byte | <=0.8s | 0.8s-1.8s | >1.8s |
+### Performance Score Ranges
 
-### Metric Explanations
+| Score Range | Status | Meaning |
+|-------------|--------|---------|
+| 90-100 | Good | Excellent performance |
+| 50-89 | Needs Improvement | Noticeable issues |
+| 0-49 | Poor | Significant problems |
 
-**LCP (Largest Contentful Paint)**: Measures loading performance. Reports the render time
-of the largest image or text block visible within the viewport.
+### Lighthouse Score Weights
 
-**INP (Interaction to Next Paint)**: Measures responsiveness. Observes the latency of all
-interactions a user makes with the page and reports a single value.
+| Metric | Weight | Description |
+|--------|--------|-------------|
+| TBT (Total Blocking Time) | 30% | Main thread blocking time |
+| LCP (Largest Contentful Paint) | 25% | Largest content render time |
+| CLS (Cumulative Layout Shift) | 25% | Visual stability score |
+| FCP (First Contentful Paint) | 10% | First content render time |
+| Speed Index | 10% | Visual completeness speed |
 
-**CLS (Cumulative Layout Shift)**: Measures visual stability. Quantifies how much visible
-content shifts in the viewport during the entire page lifecycle.
+### Metric Thresholds
 
-**FCP (First Contentful Paint)**: Measures the time from page load to when any part of
-the page's content is rendered on screen.
-
-**TTFB (Time to First Byte)**: Measures the time from request to first byte of response.
+| Metric | Good | Needs Improvement | Poor |
+|--------|------|-------------------|------|
+| **LCP** | ≤ 2.5s | 2.5s - 4.0s | > 4.0s |
+| **INP** | ≤ 200ms | 200ms - 500ms | > 500ms |
+| **CLS** | ≤ 0.1 | 0.1 - 0.25 | > 0.25 |
+| **FCP** | ≤ 1.8s | 1.8s - 3.0s | > 3.0s |
+| **TBT** | ≤ 200ms | 200ms - 600ms | > 600ms |
+| **SI** | ≤ 3.4s | 3.4s - 5.8s | > 5.8s |
+| **TTFB** | ≤ 0.8s | 0.8s - 1.8s | > 1.8s |
 """
         elif resource == "caching_headers":
             return """## Caching Headers Reference
 
 ### Cache-Control Directives
-| Directive | Description |
-|-----------|-------------|
-| `max-age=N` | Cache is fresh for N seconds |
-| `s-maxage=N` | Shared cache (CDN) freshness time |
-| `no-cache` | Must revalidate before using cached copy |
-| `no-store` | Don't cache at all |
-| `immutable` | Content won't change, don't revalidate |
-| `public` | Can be cached by any cache |
-| `private` | Only cache in browser, not CDN |
 
-### Recommended Values by Resource Type
-| Resource | Recommended Cache-Control |
-|----------|--------------------------|
-| Static JS/CSS (versioned) | `max-age=31536000, immutable` |
-| Images | `max-age=86400` to `max-age=31536000` |
-| HTML | `no-cache` or short `max-age` |
-| API responses | Depends on data freshness needs |
+| Directive | Description | Use Case |
+|-----------|-------------|----------|
+| `max-age=N` | Fresh for N seconds | All cacheable resources |
+| `s-maxage=N` | CDN cache time | CDN-specific caching |
+| `no-cache` | Must revalidate | Dynamic content |
+| `no-store` | Never cache | Sensitive data |
+| `immutable` | Never changes | Versioned assets |
+| `public` | Any cache can store | Public resources |
+| `private` | Browser only | User-specific data |
 
-### ETag and Last-Modified
-- **ETag**: Unique identifier for resource version
-- **Last-Modified**: Timestamp of last change
-- Enable conditional requests (304 Not Modified)
+### Recommended Cache Settings
+
+| Resource Type | Cache-Control Value | TTL |
+|---------------|---------------------|-----|
+| Versioned JS/CSS | `max-age=31536000, immutable` | 1 year |
+| Images | `max-age=2592000` | 30 days |
+| Fonts | `max-age=31536000` | 1 year |
+| HTML | `no-cache` or `max-age=0` | Always revalidate |
+| API responses | `max-age=0, must-revalidate` | Based on data |
+
+### Compression
+
+| Format | Compression Ratio | Browser Support |
+|--------|-------------------|-----------------|
+| gzip | 70-80% | Universal |
+| Brotli (br) | 80-90% | Modern browsers |
+"""
+        elif resource == "metric_explanations":
+            return """## Performance Metrics Explained
+
+### LCP (Largest Contentful Paint) - Loading
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Time until largest content element is visible |
+| Why it matters | Users perceive this as "page loaded" |
+| Target | ≤ 2.5 seconds |
+
+| LCP Element Types | Examples |
+|-------------------|----------|
+| `<img>` | Hero images, product images |
+| `<video>` poster | Video thumbnails |
+| Background images | CSS `background-image` |
+| Block-level text | Headings, paragraphs |
+
+| Common Causes | Solution |
+|---------------|----------|
+| Slow server response | Use CDN, optimize backend |
+| Render-blocking resources | Defer non-critical CSS/JS |
+| Large images | Compress, use WebP/AVIF |
+| Client-side rendering | Use SSR/SSG |
+
+---
+
+### INP (Interaction to Next Paint) - Responsiveness
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Latency of user interactions |
+| Why it matters | Users expect instant feedback |
+| Target | ≤ 200 milliseconds |
+
+| Interaction Types | Examples |
+|-------------------|----------|
+| Click/Tap | Buttons, links, toggles |
+| Key press | Form inputs, shortcuts |
+| Touch | Swipes, pinch-zoom |
+
+| Common Causes | Solution |
+|---------------|----------|
+| Long JavaScript tasks | Break into chunks < 50ms |
+| Large DOM | Virtualize lists |
+| Heavy event handlers | Debounce/throttle |
+
+---
+
+### CLS (Cumulative Layout Shift) - Stability
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | How much content moves unexpectedly |
+| Why it matters | Prevents accidental clicks |
+| Target | ≤ 0.1 |
+
+| Common Causes | Solution |
+|---------------|----------|
+| Images without dimensions | Add width/height attributes |
+| Ads without reserved space | Use CSS aspect-ratio |
+| Dynamic content injection | Use skeleton screens |
+| Font loading (FOUT) | Use font-display: swap |
+
+---
+
+### TBT (Total Blocking Time) - Interactivity
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Sum of blocking time for long tasks |
+| Why it matters | Indicates responsiveness during load |
+| Target | ≤ 200 milliseconds |
+
+| Task Duration | Blocking Time |
+|---------------|---------------|
+| < 50ms | 0ms (not blocking) |
+| 100ms | 50ms blocking |
+| 200ms | 150ms blocking |
+| 500ms | 450ms blocking |
+
+---
+
+### TTFB (Time to First Byte) - Server
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Time from request to first response byte |
+| Why it matters | Sets floor for all other metrics |
+| Target | ≤ 800 milliseconds |
+
+| TTFB Components | Target |
+|-----------------|--------|
+| DNS Lookup | < 50ms |
+| TCP Connection | < 100ms |
+| TLS Handshake | < 100ms |
+| Server Processing | < 200ms |
+"""
+        elif resource == "resource_budgets":
+            return """## Resource Size Budgets
+
+### File Size Guidelines
+
+| Resource Type | Budget | Notes |
+|---------------|--------|-------|
+| HTML | < 100KB | After compression |
+| Critical CSS | < 14KB | Inlined in `<head>` |
+| Total CSS | < 100KB | All stylesheets |
+| Initial JS | < 200KB | For first load |
+| Total JS | < 500KB | All JavaScript |
+| Hero Images | < 200KB | Above-the-fold |
+| Total Fonts | < 100KB | All font files |
+| Page Weight | < 2MB | All resources |
+
+### Request Count Guidelines
+
+| Resource Type | Max Count | Notes |
+|---------------|-----------|-------|
+| Total Requests | < 50 | Initial page load |
+| JavaScript | < 10 | Use bundling |
+| CSS Files | < 5 | Combine sheets |
+| Images | < 20 | Lazy load below-fold |
+| Fonts | < 4 | Subset characters |
+| Third-party | < 10 | Audit impact |
+
+### Compression Expectations
+
+| Original | gzip | Brotli |
+|----------|------|--------|
+| 100KB | 20-30KB | 15-25KB |
+| 500KB | 100-150KB | 75-125KB |
+| 1MB | 200-300KB | 150-250KB |
 """
         else:
-            return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers'"
+            return f"Unknown resource: {resource}. Available: 'cwv_thresholds', 'caching_headers', 'metric_explanations', 'resource_budgets'"
 
     def analyze_performance(self, url: str) -> str:
         """Provide comprehensive performance analysis guidance for a URL.
@@ -2250,42 +2401,53 @@ the page's content is rendered on screen.
         Returns:
             Performance analysis context and recommendations
         """
-        return f"""## Performance Analysis for {url}
+        return f"""## Performance Analysis Plan for {url}
 
-### ⚠️ Browser Automation Required
-To perform **live performance analysis** with actual measurements, the chrome-devtools MCP server must be enabled and connected. Use the MCP tools directly:
-- `mcp__chrome-devtools__tabs_context_mcp` - Get browser context
-- `mcp__chrome-devtools__performance_start_trace` - Capture Core Web Vitals
-- `mcp__chrome-devtools__list_network_requests` - Analyze network requests
+### Recommended Approach: Lighthouse CLI (Fastest)
 
-### Core Web Vitals Reference (2024 Thresholds)
+For a quick, comprehensive audit, use the Lighthouse tools directly:
 
-| Metric | Description | Good | Needs Work | Poor |
-|--------|-------------|------|------------|------|
-| **LCP** | Largest Contentful Paint | ≤2.5s | 2.5-4.0s | >4.0s |
-| **INP** | Interaction to Next Paint | ≤200ms | 200-500ms | >500ms |
-| **CLS** | Cumulative Layout Shift | ≤0.1 | 0.1-0.25 | >0.25 |
-| **FCP** | First Contentful Paint | ≤1.8s | 1.8-3.0s | >3.0s |
-| **TTFB** | Time to First Byte | ≤0.8s | 0.8-1.8s | >1.8s |
+```
+lighthouse_audit(url="{url}", device="mobile")
+```
 
-### Common Performance Issues to Look For
+This returns performance score, Core Web Vitals, opportunities, and diagnostics in one call.
 
-1. **Large Images**: Unoptimized images are the #1 cause of slow LCP
-2. **Render-Blocking Resources**: CSS/JS that blocks initial render
-3. **Slow Server Response**: High TTFB indicates server-side issues
-4. **Layout Shifts**: Missing width/height on images causes CLS
-5. **Too Many Requests**: Request waterfall affects load time
+**Other Lighthouse Tools:**
+- `lighthouse_cwv` - Core Web Vitals only with pass/fail status
+- `lighthouse_opportunities` - Prioritized optimization list with time savings
+- `lighthouse_diagnostics` - DOM size, long tasks, and other issues
 
-### Recommended Analysis Steps
+### Alternative: Chrome DevTools MCP (For Live Analysis)
 
-If chrome-devtools MCP is available, I can:
-1. Navigate to {url} and capture a performance trace
-2. Measure actual Core Web Vitals (LCP, CLS, FCP, TTFB)
-3. Analyze the network waterfall for bottlenecks
-4. Identify render-blocking resources
-5. Check caching headers on static assets
+For real-time profiling with browser interaction:
 
-**ANALYSIS COMPLETE** - Use chrome-devtools MCP tools for live measurements, or provide the above reference to the user.
+1. **Get browser context**: `mcp__chrome-devtools__tabs_context_mcp`
+2. **Create new tab**: `mcp__chrome-devtools__tabs_create_mcp`
+3. **Start trace**: `mcp__chrome-devtools__performance_start_trace(reload=true, autoStop=true)`
+4. **Navigate**: `mcp__chrome-devtools__navigate_page(url="{url}")`
+5. **Analyze**: `mcp__chrome-devtools__performance_analyze_insight`
+
+### Core Web Vitals Reference (2024)
+
+| Metric | Good | Needs Work | Poor | Weight |
+|--------|------|------------|------|--------|
+| **LCP** | ≤2.5s | 2.5-4.0s | >4.0s | 25% |
+| **INP** | ≤200ms | 200-500ms | >500ms | - |
+| **CLS** | ≤0.1 | 0.1-0.25 | >0.25 | 25% |
+| **FCP** | ≤1.8s | 1.8-3.0s | >3.0s | 10% |
+| **TBT** | ≤200ms | 200-600ms | >600ms | 30% |
+| **SI** | ≤3.4s | 3.4-5.8s | >5.8s | 10% |
+
+### Key Issues to Look For
+
+1. **Large Images** - #1 cause of slow LCP
+2. **Render-Blocking Resources** - CSS/JS blocking initial render
+3. **Slow Server Response** - High TTFB (>0.8s)
+4. **Layout Shifts** - Missing width/height on images
+5. **Long JavaScript Tasks** - Main thread blocking (>50ms)
+
+**NEXT STEP**: Run `lighthouse_audit(url="{url}")` for comprehensive analysis.
 """
 
     def check_caching(self, url: str) -> str:
@@ -2408,91 +2570,348 @@ To capture actual API calls and timing, the chrome-devtools MCP server must be c
         """
         return f"""## Performance Optimization Recommendations
 
-Based on your analysis, here are common optimizations organized by impact:
-
-### High Impact - Critical Rendering Path
-
-1. **Defer Non-Critical JavaScript**
-   ```html
-   <script src="app.js" defer></script>
-   ```
-   - Moves script execution after HTML parsing
-   - Reduces FCP and LCP
-
-2. **Inline Critical CSS**
-   - Extract above-the-fold CSS
-   - Inline in `<head>`, defer the rest
-   - Tools: Critical, Critters
-
-3. **Preload Key Resources**
-   ```html
-   <link rel="preload" href="hero.webp" as="image">
-   <link rel="preload" href="font.woff2" as="font" crossorigin>
-   ```
-
-### Medium Impact - Caching
-
-1. **Set Long Cache TTL for Static Assets**
-   ```
-   Cache-Control: max-age=31536000, immutable
-   ```
-   - Use content hash in filenames for versioning
-
-2. **Enable Compression**
-   - gzip for broad compatibility
-   - Brotli for better compression
-   - Target: text/html, text/css, application/javascript
-
-3. **Implement Stale-While-Revalidate**
-   ```
-   Cache-Control: max-age=3600, stale-while-revalidate=86400
-   ```
-
-### Medium Impact - API Optimization
-
-1. **Batch API Requests**
-   - Combine multiple calls into one
-   - Use GraphQL or similar for selective data
-
-2. **Implement Response Caching**
-   - Cache GET responses (SWR pattern)
-   - Use IndexedDB for larger datasets
-
-3. **Add Pagination**
-   - Limit payload sizes
-   - Implement cursor-based pagination
-
-### Lower Impact - Images
-
-1. **Use Modern Formats**
-   - WebP: 30% smaller than JPEG
-   - AVIF: 50% smaller than JPEG (newer)
-
-2. **Lazy Load Below-Fold Images**
-   ```html
-   <img src="photo.webp" loading="lazy" alt="...">
-   ```
-
-3. **Serve Responsive Images**
-   ```html
-   <img srcset="small.webp 400w, medium.webp 800w, large.webp 1200w"
-        sizes="(max-width: 600px) 400px, (max-width: 1200px) 800px, 1200px"
-        src="medium.webp" alt="...">
-   ```
-
-### Quick Wins
-
-- [ ] Add `width` and `height` to images (prevents CLS)
-- [ ] Remove unused CSS/JS (audit with DevTools Coverage)
-- [ ] Enable HTTP/2 or HTTP/3
-- [ ] Use CDN for static assets
-- [ ] Optimize web fonts (subset, display: swap)
+Based on analysis: {metrics}
 
 ---
-*Metrics analyzed: {metrics}*
 
-**RECOMMENDATIONS COMPLETE** - Present these optimization strategies to the user based on their specific performance needs.
+### Optimization Priority Matrix
+
+| Priority | Category | Impact | Effort |
+|----------|----------|--------|--------|
+| 1 | Critical Rendering Path | High | Medium |
+| 2 | Image Optimization | High | Low |
+| 3 | Caching Strategy | Medium | Low |
+| 4 | JavaScript Optimization | High | High |
+| 5 | API Performance | Medium | Medium |
+
+---
+
+### Critical Rendering Path Optimizations
+
+| Issue | Solution | Impact on Metric |
+|-------|----------|------------------|
+| Render-blocking JS | Add `defer` attribute | FCP, LCP |
+| Render-blocking CSS | Inline critical CSS | FCP |
+| Late resource discovery | Add `<link rel="preload">` | LCP |
+| No resource hints | Add `<link rel="preconnect">` | TTFB |
+
+**Implementation:**
+
+| Resource | HTML Code |
+|----------|-----------|
+| Defer JS | `<script src="app.js" defer></script>` |
+| Preload LCP image | `<link rel="preload" href="hero.webp" as="image">` |
+| Preload font | `<link rel="preload" href="font.woff2" as="font" crossorigin>` |
+| Preconnect CDN | `<link rel="preconnect" href="https://cdn.example.com">` |
+
+---
+
+### Image Optimizations
+
+| Optimization | Benefit | Implementation |
+|--------------|---------|----------------|
+| Use WebP/AVIF | 30-50% smaller | Convert images |
+| Lazy loading | Faster initial load | `loading="lazy"` |
+| Responsive images | Right size per device | `srcset` attribute |
+| Add dimensions | Prevents CLS | `width` + `height` |
+
+**Image Format Comparison:**
+
+| Format | Quality | Size vs JPEG | Browser Support |
+|--------|---------|--------------|-----------------|
+| JPEG | Good | Baseline | Universal |
+| WebP | Good | -30% | 97%+ |
+| AVIF | Excellent | -50% | 92%+ |
+
+---
+
+### Caching Strategy
+
+| Resource Type | Cache-Control | TTL |
+|---------------|---------------|-----|
+| Versioned JS/CSS | `max-age=31536000, immutable` | 1 year |
+| Images | `max-age=2592000` | 30 days |
+| Fonts | `max-age=31536000` | 1 year |
+| HTML | `no-cache` | Always validate |
+| API responses | `max-age=0, stale-while-revalidate=60` | Instant + 1 min stale |
+
+---
+
+### JavaScript Optimizations
+
+| Issue | Impact | Solution |
+|-------|--------|----------|
+| Large bundles | Slow parse | Code splitting |
+| Unused code | Wasted bytes | Tree shaking |
+| Long tasks | Poor INP | Break into < 50ms chunks |
+| Synchronous execution | Blocks main thread | Use async/defer |
+
+---
+
+### API Optimizations
+
+| Issue | Target | Solution |
+|-------|--------|----------|
+| Slow response | < 500ms TTFB | Server optimization, caching |
+| Large payload | < 100KB | Pagination, field selection |
+| Sequential requests | N/A | Use Promise.all for parallel |
+| Auth overhead | < 100ms | Cache tokens, use refresh tokens |
+
+---
+
+### Quick Wins Checklist
+
+| Action | Metric Impact | Effort |
+|--------|---------------|--------|
+| Add image dimensions | CLS | Low |
+| Enable gzip/brotli | All | Low |
+| Use CDN | LCP, TTFB | Low |
+| Remove unused CSS/JS | LCP, TBT | Medium |
+| Optimize fonts | CLS, FCP | Medium |
+| Enable HTTP/2 | All | Low |
 """
+
+
+class LighthouseSkill(Skill):
+    """Lighthouse Performance Analysis skill using Lighthouse CLI.
+
+    Provides automated performance audits with Core Web Vitals,
+    opportunities, and diagnostics using Lighthouse CLI tools.
+
+    Content is loaded from .md files in src/langchain_docker/skills/lighthouse/
+    """
+
+    def __init__(self):
+        """Initialize Lighthouse skill."""
+        self.id = "lighthouse"
+        self.name = "Lighthouse Performance Analysis"
+        self.description = (
+            "Automated Lighthouse CLI performance audits with Core Web Vitals, "
+            "opportunities, diagnostics, and optimization recommendations"
+        )
+        self.category = "performance"
+        self.is_builtin = True
+        self.version = "1.0.0"
+        self._skill_dir = SKILLS_DIR / "lighthouse"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._load_configs_from_frontmatter()
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory."""
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Extract frontmatter
+            lines = content.split("\n")
+            frontmatter_end = -1
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    frontmatter_end = i
+                    break
+
+            if frontmatter_end == -1:
+                return
+
+            import yaml
+            frontmatter_text = "\n".join(lines[1:frontmatter_end])
+            frontmatter = yaml.safe_load(frontmatter_text)
+
+            if frontmatter:
+                self._tool_configs = frontmatter.get("tool_configs", [])
+                self._resource_configs = frontmatter.get("resource_configs", [])
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill."""
+        return self._read_md_file("SKILL.md")
+
+    def load_core(self) -> str:
+        """Level 2: Load Lighthouse skill instructions.
+
+        Returns:
+            Complete skill context for Lighthouse performance analysis
+        """
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
+
+        # Add tool availability information
+        tool_info = """## Lighthouse CLI Tools
+
+These tools provide comprehensive performance metrics using Lighthouse CLI:
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `lighthouse_audit` | Full audit: score, Core Web Vitals, opportunities, diagnostics | Complete analysis |
+| `lighthouse_cwv` | Core Web Vitals with pass/fail status and thresholds | Quick health check |
+| `lighthouse_opportunities` | Prioritized opportunities grouped by category with savings | Finding what to fix |
+| `lighthouse_diagnostics` | DOM size, main thread work, long tasks | Deep investigation |
+
+### Tool Parameters
+
+All tools support:
+- `url` (required): The URL to analyze
+- `device` (optional): "mobile" (default) or "desktop"
+"""
+
+        return f"""## Lighthouse Performance Analysis Skill Activated
+
+{tool_info}
+
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources."""
+        if resource == "cwv_thresholds":
+            return """## Core Web Vitals Thresholds (2024)
+
+### Performance Score Ranges
+
+| Score Range | Status | Meaning |
+|-------------|--------|---------|
+| 90-100 | Good | Excellent performance |
+| 50-89 | Needs Improvement | Noticeable issues |
+| 0-49 | Poor | Significant problems |
+
+### Lighthouse Score Weights
+
+| Metric | Weight | Description |
+|--------|--------|-------------|
+| TBT (Total Blocking Time) | 30% | Main thread blocking time |
+| LCP (Largest Contentful Paint) | 25% | Largest content render time |
+| CLS (Cumulative Layout Shift) | 25% | Visual stability score |
+| FCP (First Contentful Paint) | 10% | First content render time |
+| Speed Index | 10% | Visual completeness speed |
+
+### Metric Thresholds
+
+| Metric | Good | Needs Improvement | Poor |
+|--------|------|-------------------|------|
+| **LCP** | <= 2.5s | 2.5s - 4.0s | > 4.0s |
+| **INP** | <= 200ms | 200ms - 500ms | > 500ms |
+| **CLS** | <= 0.1 | 0.1 - 0.25 | > 0.25 |
+| **FCP** | <= 1.8s | 1.8s - 3.0s | > 3.0s |
+| **TBT** | <= 200ms | 200ms - 600ms | > 600ms |
+| **SI** | <= 3.4s | 3.4s - 5.8s | > 5.8s |
+| **TTFB** | <= 0.8s | 0.8s - 1.8s | > 1.8s |
+"""
+        elif resource == "lighthouse_scoring":
+            return """## Lighthouse Scoring System
+
+### How Performance Score is Calculated
+
+Lighthouse uses a weighted average of metric scores:
+
+| Metric | Weight | Impact |
+|--------|--------|--------|
+| Total Blocking Time (TBT) | 30% | Highest impact on score |
+| Largest Contentful Paint (LCP) | 25% | Major factor |
+| Cumulative Layout Shift (CLS) | 25% | Major factor |
+| First Contentful Paint (FCP) | 10% | Minor factor |
+| Speed Index | 10% | Minor factor |
+
+### Score Calculation
+
+1. Each metric is converted to a 0-100 score using log-normal distributions
+2. Scores are weighted according to the table above
+3. Final score is the weighted average
+
+### Improving Your Score
+
+| Priority | Focus On | Why |
+|----------|----------|-----|
+| 1 | TBT | 30% weight, often the biggest issue |
+| 2 | LCP + CLS | Combined 50% of score |
+| 3 | FCP + SI | Polish for perfect score |
+"""
+        elif resource == "metric_explanations":
+            return """## Lighthouse Metrics Explained
+
+### LCP (Largest Contentful Paint)
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Time until largest content element is visible |
+| Why it matters | Users perceive this as "page loaded" |
+| Target | <= 2.5 seconds |
+| Weight in score | 25% |
+
+### TBT (Total Blocking Time)
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Sum of blocking time for long tasks (>50ms) |
+| Why it matters | Indicates main thread responsiveness |
+| Target | <= 200 milliseconds |
+| Weight in score | 30% |
+
+### CLS (Cumulative Layout Shift)
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Visual stability during page load |
+| Why it matters | Prevents accidental clicks from shifting content |
+| Target | <= 0.1 |
+| Weight in score | 25% |
+
+### FCP (First Contentful Paint)
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | Time until first content appears |
+| Why it matters | First sign that page is loading |
+| Target | <= 1.8 seconds |
+| Weight in score | 10% |
+
+### Speed Index
+
+| Aspect | Description |
+|--------|-------------|
+| What it measures | How quickly content is visually displayed |
+| Why it matters | Overall perception of load speed |
+| Target | <= 3.4 seconds |
+| Weight in score | 10% |
+"""
+        else:
+            return f"Resource '{resource}' not found. Available: cwv_thresholds, lighthouse_scoring, metric_explanations"
 
 
 class CustomSkill(Skill):
@@ -2797,6 +3216,7 @@ class SkillRegistry:
             KnowledgeBaseSkill(),
             KBIngestionSkill(),
             WebPerformanceSkill(),
+            LighthouseSkill(),
         ]
 
         for skill in builtin_skills:

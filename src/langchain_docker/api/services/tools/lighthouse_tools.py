@@ -72,10 +72,21 @@ class LighthouseToolProvider(ToolProvider):
             logger.info(f"Using Chrome at: {self._chrome_path}")
 
     def get_skill_id(self) -> str:
-        return "web_performance"
+        return "lighthouse"
 
     def get_templates(self) -> list[ToolTemplate]:
         return [
+            ToolTemplate(
+                id="load_lighthouse_skill",
+                name="Load Lighthouse Skill",
+                description=(
+                    "Load the Lighthouse performance analysis skill with Core Web Vitals "
+                    "thresholds, scoring weights, and metric explanations"
+                ),
+                category="performance",
+                parameters=[],
+                factory=self._create_load_skill_tool,
+            ),
             ToolTemplate(
                 id="lighthouse_audit",
                 name="Lighthouse Performance Audit",
@@ -628,6 +639,21 @@ class LighthouseToolProvider(ToolProvider):
                 lines.append(fix_map[diag["id"]])
 
         return "\n".join(lines)
+
+    def _create_load_skill_tool(self) -> Callable:
+        """Create the load skill tool."""
+        def load_lighthouse_skill() -> str:
+            """Load the Lighthouse performance analysis skill.
+
+            Returns skill context with Core Web Vitals thresholds,
+            scoring weights, and metric explanations.
+            """
+            skill = self.get_skill()
+            if skill:
+                return skill.load_core()
+            return "Error: Lighthouse skill not found in registry"
+
+        return load_lighthouse_skill
 
     def _create_audit_tool(self) -> Callable:
         """Create the full audit tool."""
