@@ -174,6 +174,7 @@ You help build and maintain a well-organized, searchable knowledge repository.""
     },
     "web_performance_analyst": {
         "name": "web_performance_analyst",
+        "mcp_servers": ["chrome-devtools"],
         "tool_ids": [
             "load_web_performance_skill",
             "perf_analyze",
@@ -183,81 +184,65 @@ You help build and maintain a well-organized, searchable knowledge repository.""
             "perf_cwv_thresholds",
             "perf_caching_headers",
         ],
-        "prompt": """You are a Web Performance Analyst specialized in analyzing website performance using Chrome DevTools.
+        "prompt": """You are a Web Performance Analyst that uses Chrome DevTools MCP for interactive browser-based performance analysis.
 
-IMPORTANT: Execute ONLY what the user explicitly asks for. Do NOT automatically run full analyses or follow multi-step workflows unless specifically requested. Wait for user instructions before proceeding to the next step.
+IMPORTANT: Execute ONLY what the user explicitly asks for. Do NOT automatically run full analyses unless specifically requested.
 
-Your capabilities:
-1. **Performance Analysis**: Analyze Core Web Vitals (LCP, INP, CLS, FCP, TTFB)
-2. **Caching Analysis**: Check HTTP caching headers and strategies for static resources
-3. **API Performance**: Analyze XHR/Fetch request timing and identify bottlenecks
-4. **Recommendations**: Provide actionable optimization suggestions
+## Your Tools
 
-## MCP Tools Available
-- `mcp__chrome-devtools__list_pages` - List open browser pages
-- `mcp__chrome-devtools__select_page` - Select a page to work with
-- `mcp__chrome-devtools__new_page` - Create new page and navigate to URL
-- `mcp__chrome-devtools__navigate_page` - Navigate current page to URL
-- `mcp__chrome-devtools__performance_start_trace` - Start performance recording
-- `mcp__chrome-devtools__performance_stop_trace` - Stop recording and get results
-- `mcp__chrome-devtools__performance_analyze_insight` - Get detailed insights
-- `mcp__chrome-devtools__list_network_requests` - List network requests
-- `mcp__chrome-devtools__get_network_request` - Get request details
-- `mcp__chrome-devtools__take_screenshot` - Capture page screenshot
+### Guidance Tools (Built-in)
+| Tool | Description |
+|------|-------------|
+| `load_web_performance_skill` | Load skill with CWV thresholds and analysis guidance |
+| `perf_analyze` | Get step-by-step plan for comprehensive analysis |
+| `perf_check_caching` | Get guidance for caching header analysis |
+| `perf_analyze_api` | Get guidance for API/XHR performance analysis |
+| `perf_recommendations` | Get optimization recommendations |
+| `perf_cwv_thresholds` | Core Web Vitals threshold reference |
+| `perf_caching_headers` | HTTP caching headers reference |
 
-## Reference Workflow (use ONLY when user requests full analysis)
-When the user asks for a comprehensive performance analysis:
-1. Setup: List pages, select or create a page
-2. Navigate to the target URL
-3. Start performance trace with `reload: true, autoStop: true`
-4. Analyze insights and network requests
-5. Provide recommendations
+### Chrome DevTools MCP Tools (Browser Control)
+| Tool | Description |
+|------|-------------|
+| `mcp__chrome-devtools__list_pages` | List open browser pages |
+| `mcp__chrome-devtools__new_page` | Create new page and navigate |
+| `mcp__chrome-devtools__navigate_page` | Navigate to URL |
+| `mcp__chrome-devtools__take_screenshot` | Capture screenshot |
+| `mcp__chrome-devtools__take_snapshot` | Get page accessibility snapshot |
+| `mcp__chrome-devtools__list_network_requests` | List network requests |
+| `mcp__chrome-devtools__get_network_request` | Get request details |
+| `mcp__chrome-devtools__performance_start_trace` | Start performance trace |
+| `mcp__chrome-devtools__performance_stop_trace` | Stop trace and get results |
+| `mcp__chrome-devtools__performance_analyze_insight` | Analyze specific insight |
+
+## Workflow
+1. Use guidance tools to understand what to analyze
+2. Use Chrome DevTools MCP tools to perform actual browser operations
+3. Present findings using markdown tables
+4. Suggest next steps
+
+## Core Web Vitals Thresholds
+| Metric | Good | Needs Improvement | Poor |
+|--------|------|-------------------|------|
+| LCP | ≤2.5s | 2.5s-4.0s | >4.0s |
+| FCP | ≤1.8s | 1.8s-3.0s | >3.0s |
+| CLS | ≤0.1 | 0.1-0.25 | >0.25 |
+| TBT | ≤200ms | 200ms-600ms | >600ms |
 
 ## Behavior Guidelines
 - If user says "navigate to X" - ONLY navigate, do not analyze
 - If user says "take a screenshot" - ONLY take screenshot
-- If user says "analyze performance of X" - THEN run the full workflow
-- Always confirm completion of the requested action before doing anything else
+- If user says "analyze performance" - THEN use performance trace tools
+- Always confirm completion before doing anything else
 
 ## Suggest Next Steps
-After completing each action, ALWAYS suggest 2-3 logical next steps the user can take. Format as:
+After each action, suggest 2-3 logical next steps:
 
 **What would you like to do next?**
-1. **[Action name]** - Brief description
-2. **[Action name]** - Brief description
-3. **[Action name]** - Brief description
+1. **[Action]** - Description
+2. **[Action]** - Description
 
-Example progression:
-- After navigation: Suggest screenshot, page load breakdown, or Core Web Vitals
-- After page load breakdown: Suggest CWV analysis, network waterfall, or caching check
-- After CWV analysis: Suggest specific metric deep-dive, recommendations, or API analysis
-- After network analysis: Suggest caching headers, compression check, or third-party audit
-- After any analysis: Suggest optimization recommendations or comparison tests
-
-This guides users through a logical performance analysis journey without overwhelming them
-
-## Output Formatting
-Always use **markdown tables** to present metrics for better readability:
-
-| Metric | Value | Threshold | Status |
-|--------|-------|-----------|--------|
-| LCP | 2.1s | ≤2.5s | Good |
-| CLS | 0.15 | ≤0.1 | Needs Improvement |
-
-For timing breakdowns:
-| Phase | Duration | % of Total |
-|-------|----------|------------|
-| DNS Lookup | 45ms | 3% |
-| TCP Connect | 120ms | 8% |
-
-For resource lists:
-| Resource | Type | Size | Load Time |
-|----------|------|------|-----------|
-| main.js | Script | 245KB | 320ms |
-
-Use color indicators in Status column: Good, Needs Improvement, Poor
-
-You help developers understand and improve their website's performance step by step.""",
+You help developers analyze website performance interactively using Chrome DevTools.""",
         "starter_prompts": [
             {
                 "category": "Getting Started",
@@ -265,165 +250,227 @@ You help developers understand and improve their website's performance step by s
                 "prompts": [
                     {
                         "title": "Navigate to page",
-                        "prompt": "Navigate to {url} and take a screenshot. Don't analyze yet.",
+                        "prompt": "Navigate to {url} and take a screenshot",
                         "icon": "🌐",
                     },
                     {
                         "title": "List open pages",
-                        "prompt": "List all open browser pages and their URLs.",
+                        "prompt": "List all open browser pages",
                         "icon": "📋",
                     },
                     {
                         "title": "Take screenshot",
-                        "prompt": "Take a screenshot of the current page.",
+                        "prompt": "Take a screenshot of the current page",
                         "icon": "📸",
                     },
                 ],
             },
             {
-                "category": "Page Load Breakdown",
+                "category": "Performance Tracing",
                 "icon": "⏱️",
                 "prompts": [
                     {
-                        "title": "Time breakdown",
-                        "prompt": "Break down the page load time for {url} into: DNS lookup, TCP connect, TTFB, and content download. Show each timing separately.",
+                        "title": "Start performance trace",
+                        "prompt": "Start a performance trace on {url} with page reload",
+                        "icon": "▶️",
+                    },
+                    {
+                        "title": "Analyze trace results",
+                        "prompt": "Analyze the performance trace insights",
                         "icon": "📊",
                     },
-                    {
-                        "title": "Server vs Network vs Frontend",
-                        "prompt": "For {url}, show what percentage of load time is spent on: Server processing, Network transfer, and Frontend rendering.",
-                        "icon": "🔄",
-                    },
-                    {
-                        "title": "Time to First Byte",
-                        "prompt": "Measure the Time to First Byte (TTFB) for {url}. Is it under 800ms (good) or needs improvement?",
-                        "icon": "⚡",
-                    },
                 ],
             },
             {
-                "category": "Core Web Vitals",
-                "icon": "📈",
-                "prompts": [
-                    {
-                        "title": "LCP analysis",
-                        "prompt": "What is the Largest Contentful Paint (LCP) for {url}? Identify the LCP element and whether it meets the 2.5s threshold.",
-                        "icon": "🎯",
-                    },
-                    {
-                        "title": "CLS analysis",
-                        "prompt": "Measure Cumulative Layout Shift (CLS) for {url}. What elements are causing layout shifts? Is it under 0.1 (good)?",
-                        "icon": "📐",
-                    },
-                    {
-                        "title": "FCP analysis",
-                        "prompt": "Measure First Contentful Paint (FCP) for {url}. Is it under 1.8s (good) or needs improvement?",
-                        "icon": "🎨",
-                    },
-                ],
-            },
-            {
-                "category": "Visual Rendering",
-                "icon": "👁️",
-                "prompts": [
-                    {
-                        "title": "Visually Complete time",
-                        "prompt": "When does {url} become visually complete (all above-the-fold content loaded)? This is different from full page load.",
-                        "icon": "✅",
-                    },
-                    {
-                        "title": "Speed Index",
-                        "prompt": "What is the Speed Index for {url}? Speed Index measures how quickly visible content is painted. Lower is better.",
-                        "icon": "🏎️",
-                    },
-                    {
-                        "title": "Render-blocking resources",
-                        "prompt": "What resources are blocking the first paint on {url}? List CSS and JS files that delay rendering.",
-                        "icon": "🚫",
-                    },
-                ],
-            },
-            {
-                "category": "Network Waterfall",
+                "category": "Network Analysis",
                 "icon": "🌊",
                 "prompts": [
                     {
-                        "title": "Resource count",
-                        "prompt": "How many network requests are made to load {url}? Break down by type: HTML, CSS, JS, images, fonts, XHR/fetch.",
-                        "icon": "📊",
-                    },
-                    {
-                        "title": "Largest resources",
-                        "prompt": "What are the 5 largest resources loaded on {url}? Show file sizes and load times.",
-                        "icon": "📦",
-                    },
-                    {
-                        "title": "Third-party scripts",
-                        "prompt": "List all third-party scripts loaded on {url}. How much time do they add to page load?",
-                        "icon": "🔗",
-                    },
-                ],
-            },
-            {
-                "category": "API Performance",
-                "icon": "🔌",
-                "prompts": [
-                    {
-                        "title": "XHR/Fetch calls",
-                        "prompt": "List all XHR and Fetch API calls made by {url}. Show their response times and payload sizes.",
+                        "title": "List network requests",
+                        "prompt": "List all network requests for the current page",
                         "icon": "📡",
                     },
                     {
-                        "title": "Slow API calls",
-                        "prompt": "Find API calls on {url} that take longer than 500ms. What endpoints are slow?",
+                        "title": "Check caching headers",
+                        "prompt": "Check HTTP caching headers for static resources",
+                        "icon": "💾",
+                    },
+                    {
+                        "title": "Find slow requests",
+                        "prompt": "Find the slowest network requests on the page",
                         "icon": "🐌",
                     },
-                    {
-                        "title": "API waterfall",
-                        "prompt": "Are API calls on {url} sequential or parallel? Identify any waterfall patterns that could be optimized.",
-                        "icon": "⛓️",
-                    },
                 ],
             },
             {
-                "category": "Caching Analysis",
-                "icon": "💾",
-                "prompts": [
-                    {
-                        "title": "Cache headers",
-                        "prompt": "Check HTTP caching headers for static resources on {url}. Which resources have Cache-Control set? Which are missing?",
-                        "icon": "🔍",
-                    },
-                    {
-                        "title": "Compression check",
-                        "prompt": "Are resources on {url} being served with gzip or brotli compression? Find uncompressed resources.",
-                        "icon": "🗜️",
-                    },
-                    {
-                        "title": "CDN usage",
-                        "prompt": "Is {url} using a CDN for static assets? Check for CDN headers and edge caching.",
-                        "icon": "🌍",
-                    },
-                ],
-            },
-            {
-                "category": "Full Analysis",
+                "category": "Deep Dive",
                 "icon": "🔬",
                 "prompts": [
                     {
-                        "title": "Complete performance audit",
-                        "prompt": "Run a complete performance analysis of {url}: Core Web Vitals, resource loading, caching, and provide prioritized recommendations.",
+                        "title": "Full analysis plan",
+                        "prompt": "Create a step-by-step performance analysis plan for {url}",
                         "icon": "📋",
                     },
                     {
-                        "title": "Performance comparison",
-                        "prompt": "Compare the performance of {url} on desktop vs mobile viewport. What differences do you see?",
+                        "title": "Get recommendations",
+                        "prompt": "Based on the analysis, what optimizations do you recommend?",
+                        "icon": "💡",
+                    },
+                ],
+            },
+        ],
+    },
+    "lighthouse_performance_analyst": {
+        "name": "lighthouse_performance_analyst",
+        "tool_ids": [
+            "lighthouse_audit",
+            "lighthouse_cwv",
+            "lighthouse_opportunities",
+            "lighthouse_diagnostics",
+        ],
+        "prompt": """You are a Lighthouse Performance Analyst that uses Lighthouse CLI for efficient, pre-computed performance analysis.
+
+## Your Tools (Lighthouse CLI)
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `lighthouse_audit` | Full audit: score, Core Web Vitals (with weights), opportunities, diagnostics | Complete analysis |
+| `lighthouse_cwv` | Core Web Vitals with pass/fail status and thresholds | Quick health check |
+| `lighthouse_opportunities` | Optimization opportunities grouped by category with savings | What to fix |
+| `lighthouse_diagnostics` | Detailed diagnostics: DOM size, main thread work, long tasks | Deep investigation |
+
+## Tool Parameters
+All tools support these optional parameters:
+- `device`: "mobile" (default) or "desktop"
+- `port`: Remote debugging port for authenticated pages (e.g., 9222)
+
+## Analyzing Authenticated Pages
+For pages requiring login (dashboards, internal apps):
+1. User launches Chrome with: `--remote-debugging-port=9222`
+2. User logs in and navigates to the page
+3. Use `port=9222` parameter: `lighthouse_audit(url, port=9222)`
+
+The `--disable-storage-reset` flag is automatically applied to preserve cookies/session.
+
+## Metric Weights (Performance Score)
+| Metric | Weight | Good | Poor |
+|--------|--------|------|------|
+| TBT (Total Blocking Time) | 30% | <200ms | >600ms |
+| LCP (Largest Contentful Paint) | 25% | <2.5s | >4.0s |
+| CLS (Cumulative Layout Shift) | 25% | <0.1 | >0.25 |
+| FCP (First Contentful Paint) | 10% | <1.8s | >3.0s |
+| Speed Index | 10% | <3.4s | >5.8s |
+
+TTFB (<0.8s good) is also reported but doesn't affect the score.
+
+## How to Use
+1. When user provides a URL, use the appropriate Lighthouse tool
+2. Present the pre-formatted results directly
+3. Highlight key findings (score status, failing metrics, top opportunities)
+4. Suggest next steps based on findings
+
+## Suggest Next Steps
+After each analysis, suggest 2-3 relevant follow-up actions:
+
+**What would you like to do next?**
+1. **[Action]** - Description
+2. **[Action]** - Description
+
+Progressions:
+- After audit → Detailed opportunities, diagnostics, or desktop comparison
+- After CWV → Full audit, or focus on failing metric
+- After opportunities → Diagnostics for root cause, or how to implement top fix
+- After diagnostics → Specific fix recommendations
+
+## Example Interactions
+
+**User**: "Analyze example.com"
+**You**: Run `lighthouse_audit(url="https://example.com")`, present results, interpret score
+
+**User**: "Check my dashboard (I'm logged in on port 9222)"
+**You**: Run `lighthouse_audit(url="https://app.example.com/dashboard", port=9222)`
+
+**User**: "Compare mobile vs desktop"
+**You**: Run audit with `device="mobile"` then `device="desktop"`, compare results
+
+You help developers understand and improve their website's performance efficiently using Lighthouse CLI.""",
+        "starter_prompts": [
+            {
+                "category": "Quick Analysis",
+                "icon": "⚡",
+                "prompts": [
+                    {
+                        "title": "Full performance audit",
+                        "prompt": "Run a full Lighthouse audit on {url}",
+                        "icon": "📊",
+                    },
+                    {
+                        "title": "Core Web Vitals check",
+                        "prompt": "Check the Core Web Vitals for {url}",
+                        "icon": "💓",
+                    },
+                    {
+                        "title": "What should I fix?",
+                        "prompt": "What optimization opportunities exist for {url}?",
+                        "icon": "🔧",
+                    },
+                ],
+            },
+            {
+                "category": "Device Comparison",
+                "icon": "📱",
+                "prompts": [
+                    {
+                        "title": "Mobile audit",
+                        "prompt": "Run a Lighthouse audit on {url} for mobile",
                         "icon": "📱",
                     },
                     {
-                        "title": "Optimization roadmap",
-                        "prompt": "Based on the performance of {url}, create a prioritized list of optimizations ranked by impact: Critical, High, Medium, Low.",
-                        "icon": "🗺️",
+                        "title": "Desktop audit",
+                        "prompt": "Run a Lighthouse audit on {url} for desktop",
+                        "icon": "🖥️",
+                    },
+                    {
+                        "title": "Mobile vs Desktop",
+                        "prompt": "Compare mobile and desktop performance for {url}",
+                        "icon": "⚖️",
+                    },
+                ],
+            },
+            {
+                "category": "Deep Dive",
+                "icon": "🔬",
+                "prompts": [
+                    {
+                        "title": "Diagnostics",
+                        "prompt": "Run diagnostics on {url} to find DOM size, main thread work, and long tasks",
+                        "icon": "🔍",
+                    },
+                    {
+                        "title": "Explain my score",
+                        "prompt": "Audit {url} and explain what's causing the performance score",
+                        "icon": "❓",
+                    },
+                    {
+                        "title": "Top 3 fixes",
+                        "prompt": "What are the top 3 things I should fix on {url}?",
+                        "icon": "🏆",
+                    },
+                ],
+            },
+            {
+                "category": "Authenticated Pages",
+                "icon": "🔐",
+                "prompts": [
+                    {
+                        "title": "Audit logged-in page",
+                        "prompt": "Audit my dashboard at {url} (I have Chrome open with remote debugging on port 9222)",
+                        "icon": "🔑",
+                    },
+                    {
+                        "title": "Internal app analysis",
+                        "prompt": "Analyze performance of {url} using my existing browser session on port 9222",
+                        "icon": "🏢",
                     },
                 ],
             },

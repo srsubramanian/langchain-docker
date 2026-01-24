@@ -14,6 +14,7 @@ from langchain_docker.api.services.tools.base import (
 )
 from langchain_docker.api.services.tools.jira_tools import JiraToolProvider
 from langchain_docker.api.services.tools.kb_tools import KBToolProvider, KBIngestToolProvider
+from langchain_docker.api.services.tools.lighthouse_tools import LighthouseToolProvider
 from langchain_docker.api.services.tools.sql_tools import SQLToolProvider
 from langchain_docker.api.services.tools.web_perf_tools import WebPerformanceToolProvider
 
@@ -61,6 +62,7 @@ class ToolRegistry:
             KBToolProvider(skill_registry),
             KBIngestToolProvider(skill_registry),
             WebPerformanceToolProvider(skill_registry),
+            LighthouseToolProvider(skill_registry),
             # Add new providers here as they are created:
             # GithubToolProvider(skill_registry),
             # SlackToolProvider(skill_registry),
