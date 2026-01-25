@@ -70,7 +70,10 @@ src/langchain_docker/
 │   │   │   ├── base.py          # ToolProvider ABC, ToolTemplate, ToolParameter
 │   │   │   ├── sql_tools.py     # SQLToolProvider (5 database tools)
 │   │   │   ├── jira_tools.py    # JiraToolProvider (11 project management tools)
-│   │   │   └── kb_tools.py      # KBToolProvider (5 knowledge base tools)
+│   │   │   ├── kb_tools.py      # KBToolProvider (5 knowledge base tools)
+│   │   │   ├── web_perf_tools.py    # WebPerformanceToolProvider (5 tools)
+│   │   │   ├── lighthouse_tools.py  # LighthouseToolProvider (4 tools)
+│   │   │   └── chrome_perf_tools.py # ChromePerfToolProvider (4 trace analysis tools)
 │   │   ├── embedding_service.py  # OpenAI embeddings for knowledge base
 │   │   ├── opensearch_store.py   # OpenSearch vector store
 │   │   ├── document_processor.py # PDF/MD/TXT parsing and chunking
@@ -79,7 +82,8 @@ src/langchain_docker/
 │   │   ├── graph_rag_service.py  # LlamaIndex GraphRAG with Neo4j
 │   │   ├── memory_service.py     # Conversation summarization + RAG context
 │   │   ├── model_service.py      # Model LRU cache
-│   │   └── scheduler_service.py  # APScheduler for agent scheduling
+│   │   ├── scheduler_service.py  # APScheduler for agent scheduling
+│   │   └── workspace_service.py  # Session workspace file management
 │   └── mcp_servers.json       # MCP server configuration
 ├── core/
 │   ├── config.py              # Environment config, Redis/Bedrock helpers
@@ -90,6 +94,12 @@ src/langchain_docker/
 │   ├── xlsx/                  # XLSX skill
 │   ├── jira/                  # Jira skill (read-only)
 │   ├── knowledge_base/        # Knowledge Base skill (RAG)
+│   ├── web_performance/       # Web Performance skill (Core Web Vitals)
+│   ├── lighthouse/            # Lighthouse skill (audits)
+│   ├── chrome_perf_analyzer/  # Chrome Trace Analyzer skill (Python scripts)
+│   │   ├── SKILL.md          # Skill definition
+│   │   └── scripts/          # Python analysis scripts
+│   │       └── trace_analyzer.py  # TraceAnalyzer class
 │   └── middleware/            # Middleware-based skills system
 │       ├── registry.py        # SkillRegistry, SkillDefinition
 │       ├── middleware.py      # SkillMiddleware for LangChain
@@ -383,6 +393,9 @@ self._providers = [
 | `SQLToolProvider` | database | `load_sql_skill`, `sql_query`, `sql_list_tables`, `sql_get_samples`, `sql_execute` |
 | `JiraToolProvider` | project_management | `load_jira_skill`, `jira_search`, `jira_get_issue`, `jira_list_projects`, `jira_get_sprints`, `jira_get_changelog`, `jira_get_comments`, `jira_get_boards`, `jira_get_worklogs`, `jira_get_sprint_issues`, `jira_jql_reference` |
 | `KBToolProvider` | knowledge | `load_kb_skill`, `kb_search`, `kb_list_documents`, `kb_list_collections`, `kb_get_stats` |
+| `WebPerformanceToolProvider` | performance | `load_web_performance_skill`, `perf_analyze`, `perf_check_caching`, `perf_analyze_api`, `perf_recommendations` |
+| `LighthouseToolProvider` | performance | `load_lighthouse_skill`, `lighthouse_audit`, `lighthouse_accessibility`, `lighthouse_performance`, `lighthouse_seo` |
+| `ChromePerfToolProvider` | performance | `load_chrome_perf_skill`, `trace_summary`, `trace_long_tasks`, `trace_network`, `trace_filter` |
 
 ### 10. Knowledge Base / RAG
 
@@ -588,6 +601,181 @@ GET /api/v1/kb/graph/stats
 
 For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
 
+### 13. Session Workspace
+
+Each chat session has a dedicated workspace folder for file uploads. Files uploaded to the workspace can be accessed by agents with workspace-aware tools.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SESSION WORKSPACE ARCHITECTURE                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Storage Location:                                              │
+│  /sessions/{session_id}/workspace/                              │
+│                                                                  │
+│  UPLOAD FLOW:                                                   │
+│  React UI (WorkspacePanel) → POST /api/v1/workspace/upload      │
+│                            → WorkspaceService.save_file()       │
+│                            → Saved to session folder            │
+│                                                                  │
+│  AGENT ACCESS:                                                  │
+│  Tool (e.g., trace_summary) → _current_session_id ContextVar   │
+│                             → WorkspaceService.get_file_path()  │
+│                             → Full path to workspace file       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Components:**
+- `WorkspaceService` - File upload, download, listing, deletion
+- `WorkspacePanel` - React UI component for file management
+- `_current_session_id` - ContextVar providing session context to tools
+
+**API Endpoints:**
+- `POST /api/v1/workspace/upload` - Upload file to session workspace
+- `GET /api/v1/workspace/files` - List files in workspace
+- `GET /api/v1/workspace/download/{filename}` - Download file
+- `DELETE /api/v1/workspace/files/{filename}` - Delete file
+- `GET /api/v1/workspace/info` - Get storage info (used/limit)
+
+**Configuration:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKSPACE_BASE_DIR` | `/sessions` | Base directory for workspaces |
+| `WORKSPACE_MAX_SIZE_MB` | `500` | Max storage per session (MB) |
+
+**React UI Integration:**
+
+The WorkspacePanel is integrated into MultiAgentPage and shows:
+- File list with upload/download/delete actions
+- Storage usage meter
+- Drag-and-drop upload support
+
+### 14. Chrome Performance Trace Analyzer
+
+A skill for analyzing Chrome DevTools performance traces with Python-based analysis scripts.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CHROME TRACE ANALYZER ARCHITECTURE                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  INPUT:                                                         │
+│  Chrome DevTools → Export trace.json → Upload to workspace      │
+│                                                                  │
+│  ANALYSIS FLOW:                                                 │
+│  Agent calls trace_summary(filename)                            │
+│     ↓                                                            │
+│  ChromePerfToolProvider                                         │
+│     ↓                                                            │
+│  TraceAnalyzer.summary() (Python, direct import)               │
+│     ↓                                                            │
+│  Formatted analysis results                                     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Tools Available:**
+| Tool | Description |
+|------|-------------|
+| `load_chrome_perf_skill` | Load skill with analysis guidance |
+| `trace_summary` | Get overview: duration, events, resource loading |
+| `trace_long_tasks` | Find long tasks (>50ms) blocking main thread |
+| `trace_network` | Analyze network requests and timing |
+| `trace_filter` | Filter events by time range or category |
+
+**Python Analysis Script:**
+
+The `TraceAnalyzer` class (`skills/chrome_perf_analyzer/scripts/trace_analyzer.py`) provides:
+- Chrome trace JSON parsing
+- Long task detection (>50ms threshold)
+- Network request analysis with timing breakdown
+- Event filtering by time range and category
+- Formatted output for LLM consumption
+
+**Built-in Agent:**
+
+A pre-configured agent `chrome_trace_analyst` is available:
+- System prompt optimized for trace analysis
+- Pre-loaded with chrome_perf_analyzer skill
+- Configured with all trace analysis tools
+
+### 15. Python-Based Skills (Script Execution)
+
+Some skills use Python scripts for complex analysis. Unlike external processes, these scripts are **imported and called directly** within the FastAPI process.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  PYTHON SKILL EXECUTION (NO SUBPROCESS)                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Tool Provider imports Python module at startup:                │
+│                                                                  │
+│  from trace_analyzer import TraceAnalyzer  # Direct import      │
+│                                                                  │
+│  Tool factory creates callable:                                 │
+│                                                                  │
+│  def trace_summary(filename: str) -> str:                       │
+│      path = workspace_service.get_file_path(session_id, file)  │
+│      analyzer = TraceAnalyzer(path)  # Instantiate class       │
+│      return analyzer.summary()        # Call method directly    │
+│                                                                  │
+│  NO subprocess, NO shell execution, NO external process         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- Fast execution (no process overhead)
+- Shared memory with FastAPI
+- Easy debugging and tracing
+- Access to services via dependency injection
+
+**Pattern for Adding Python-Based Skills:**
+
+1. Create analysis script in `skills/{skill_name}/scripts/`:
+   ```python
+   # skills/my_skill/scripts/analyzer.py
+   class MyAnalyzer:
+       def __init__(self, file_path: Path):
+           self.data = json.load(open(file_path))
+
+       def analyze(self) -> str:
+           # Analysis logic
+           return formatted_result
+   ```
+
+2. Import in tool provider:
+   ```python
+   # tools/my_tools.py
+   sys.path.insert(0, str(SKILLS_DIR / "my_skill" / "scripts"))
+   from analyzer import MyAnalyzer
+   ```
+
+3. Create tool factory that uses the class:
+   ```python
+   def _create_analyze_tool(self) -> Callable[[str], str]:
+       def analyze(filename: str) -> str:
+           path = self._workspace_service.get_file_path(session_id, filename)
+           analyzer = MyAnalyzer(path)
+           return analyzer.analyze()
+       return analyze
+   ```
+
+### 16. Built-in Agents
+
+Pre-configured agents with specific skills and tools for common tasks.
+
+| Agent ID | Name | Skills | Tools |
+|----------|------|--------|-------|
+| `chrome_trace_analyst` | Chrome Trace Analyst | chrome_perf_analyzer | trace_summary, trace_long_tasks, trace_network, trace_filter |
+
+**Accessing Built-in Agents:**
+- React UI: Navigate to `/agents` → Click on built-in agent
+- API: `GET /api/v1/agents` → Filter by `is_builtin: true`
+
+Built-in agents cannot be modified or deleted. They serve as templates for creating custom agents.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -616,6 +804,11 @@ For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
 | `GET /api/v1/kb/stats` | Get knowledge base statistics |
 | `GET /api/v1/kb/graph/stats` | Get knowledge graph statistics |
 | `GET /api/v1/kb/graph/entity/{entity}` | Get entity context and connections |
+| `POST /api/v1/workspace/upload` | Upload file to session workspace |
+| `GET /api/v1/workspace/files` | List files in session workspace |
+| `GET /api/v1/workspace/download/{filename}` | Download workspace file |
+| `DELETE /api/v1/workspace/files/{filename}` | Delete workspace file |
+| `GET /api/v1/workspace/info` | Get workspace storage info |
 
 ## Environment Variables
 
@@ -659,6 +852,10 @@ For 1000 chunks with GPT-4o-mini: ~$0.50-1.00 one-time ingestion cost.
 - `NEO4J_PASSWORD` - Neo4j password (required if enabled)
 - `GRAPH_RAG_ENTITIES` - Entity types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
 - `GRAPH_RAG_RELATIONS` - Relationship types for extraction (comma-separated, auto-converted to UPPER_SNAKE_CASE)
+
+**Session Workspace:**
+- `WORKSPACE_BASE_DIR` - Base directory for session workspaces (default: `/sessions`)
+- `WORKSPACE_MAX_SIZE_MB` - Max storage per session in MB (default: `500`)
 
 **Rate Limiting:**
 - `RATE_LIMIT_ENABLED` - Enable client-side rate limiting (default: `true`)
@@ -826,11 +1023,17 @@ KEYS checkpoint:*   # LangGraph state
 
 **Routes:**
 - `/chat` - Streaming chat with MCP toggle
-- `/agents` - Custom agent management (NEW)
-- `/multiagent` - Multi-agent workflow with React Flow
+- `/agents` - Custom agent management with built-in agents
+- `/multiagent` - Multi-agent workflow with React Flow + WorkspacePanel
 - `/builder` - Agent builder wizard
 - `/skills` - Skills management
 - `/knowledge-base` - Knowledge base document management (RAG)
+
+**Key Components:**
+- `WorkspacePanel` - Session file manager (upload, download, delete)
+- `AgentCard` - Agent display with built-in/custom indicators
+- `ApprovalCard` - Inline HITL approval UI
+- `ChatMessage` - Message rendering with tool call display
 
 ## Docker Compose Services
 
@@ -859,6 +1062,9 @@ KEYS checkpoint:*   # LangGraph state
 | `mcp_server_manager.py` | 10KB | MCP server configuration (uses langchain-mcp-adapters) |
 | `opensearch_store.py` | 10KB | OpenSearch vector store with k-NN search |
 | `mcp_tool_service.py` | 7KB | MCP tool discovery via MultiServerMCPClient |
+| `workspace_service.py` | 5KB | Session workspace file management |
+| `chrome_perf_tools.py` | 8KB | Chrome trace analysis tool provider |
+| `trace_analyzer.py` | 6KB | Python script for Chrome trace analysis |
 
 ## Provider-Specific Streaming Behavior
 

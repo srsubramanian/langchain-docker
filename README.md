@@ -37,6 +37,10 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Modern Chat Interface**: Dark-themed UI inspired by LangSmith Agent Builder
 - **Real-time Streaming**: SSE-based streaming with token-by-token display
 - **Multi-Agent Workflows**: Visual React Flow diagrams showing agent coordination
+- **Session Workspace**: File panel for uploading files to agent working folders
+  - Upload, download, delete files per session
+  - Storage usage tracking with configurable limits
+  - Files accessible to workspace-aware agent tools
 - **Custom Agent Builder**: Single-page builder with live flow visualization
   - Inline agent name editing with Draft badge
   - Collapsible Instructions and Toolbox sections
@@ -48,7 +52,7 @@ A comprehensive demonstration of LangChain foundational models with examples for
 
 ### Skills System (Progressive Disclosure)
 - **Three-Level Architecture**: Metadata → Core Content → Details loaded on-demand
-- **Built-in Skills**: SQL Query Expert, Jira Query Expert, XLSX Spreadsheet Expert
+- **Built-in Skills**: SQL Query Expert, Jira Query Expert, XLSX Spreadsheet Expert, Web Performance, Lighthouse Audits, Chrome Trace Analyzer
 - **Custom Skills**: Create, version, and manage custom skills via API
 - **Gated Tools**: Domain tools check skill state before execution
 - **Redis Versioning**: Immutable version history with rollback support
@@ -64,6 +68,18 @@ A comprehensive demonstration of LangChain foundational models with examples for
 - **Multi-Provider**: OpenAI or AWS Bedrock for LLM and embeddings
 
 > **Schema Guide**: See [docs/GRAPH_RAG_SCHEMA.md](docs/GRAPH_RAG_SCHEMA.md) for domain-specific schema configuration and evolution strategies.
+
+### Chrome Performance Analysis
+- **Trace Analysis**: Analyze Chrome DevTools performance traces
+- **Long Task Detection**: Find tasks blocking the main thread (>50ms)
+- **Network Analysis**: Detailed network request timing breakdown
+- **Built-in Agent**: Pre-configured `chrome_trace_analyst` agent
+- **Workspace Integration**: Upload trace files to session workspace for analysis
+
+**How to use:**
+1. Export a performance trace from Chrome DevTools (JSON format)
+2. Upload the trace file via the Workspace Panel
+3. Chat with the `chrome_trace_analyst` agent to analyze performance issues
 
 ### Chainlit UI (Legacy)
 - **Interactive Chat Interface**: Web-based chat UI powered by Chainlit
@@ -614,6 +630,39 @@ curl -X POST http://localhost:8000/api/v1/agents/custom \
 curl http://localhost:8000/api/v1/agents/custom
 ```
 
+#### Workspace API Endpoints
+
+**POST /api/v1/workspace/upload** - Upload file to session workspace
+```bash
+curl -X POST http://localhost:8000/api/v1/workspace/upload \
+  -H "X-Session-ID: your-session-id" \
+  -F "file=@trace.json"
+```
+
+**GET /api/v1/workspace/files** - List files in session workspace
+```bash
+curl http://localhost:8000/api/v1/workspace/files \
+  -H "X-Session-ID: your-session-id"
+```
+
+**GET /api/v1/workspace/download/{filename}** - Download file
+```bash
+curl http://localhost:8000/api/v1/workspace/download/trace.json \
+  -H "X-Session-ID: your-session-id" -o trace.json
+```
+
+**DELETE /api/v1/workspace/files/{filename}** - Delete file
+```bash
+curl -X DELETE http://localhost:8000/api/v1/workspace/files/trace.json \
+  -H "X-Session-ID: your-session-id"
+```
+
+**GET /api/v1/workspace/info** - Get workspace storage info
+```bash
+curl http://localhost:8000/api/v1/workspace/info \
+  -H "X-Session-ID: your-session-id"
+```
+
 ### Multi-Agent Workflows
 
 The API supports LangGraph-based multi-agent workflows where a supervisor agent delegates tasks to specialized worker agents.
@@ -645,6 +694,7 @@ The API supports LangGraph-based multi-agent workflows where a supervisor agent 
 | `weather_expert` | Gets weather information | get_current_weather |
 | `research_expert` | Searches for information online | search_web |
 | `finance_expert` | Gets stock prices and financial data | get_stock_price |
+| `chrome_trace_analyst` | Analyzes Chrome DevTools performance traces | trace_summary, trace_long_tasks, trace_network, trace_filter |
 
 #### How It Works
 
