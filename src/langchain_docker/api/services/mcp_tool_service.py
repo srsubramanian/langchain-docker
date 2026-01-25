@@ -216,7 +216,8 @@ class MCPToolService:
     @asynccontextmanager
     async def get_tools_with_session(
         self,
-        server_ids: list[str]
+        server_ids: list[str],
+        tool_filter: dict[str, list[str]] | None = None,
     ) -> AsyncIterator[list[BaseTool]]:
         """Get LangChain tools with persistent MCP sessions.
 
@@ -232,8 +233,18 @@ class MCPToolService:
                     ...
             # Sessions are closed when exiting the context
 
+            # With filtering (only load specific tools):
+            async with mcp_tool_service.get_tools_with_session(
+                ["chrome-devtools"],
+                tool_filter={"chrome-devtools": ["new_page", "navigate_page", "list_network_requests"]}
+            ) as tools:
+                # Only the 3 specified tools are loaded
+                ...
+
         Args:
             server_ids: List of server identifiers to get tools from.
+            tool_filter: Optional dict mapping server_id to list of tool names to include.
+                        If None or server not in dict, all tools from that server are loaded.
 
         Yields:
             List of LangChain BaseTool instances bound to persistent sessions.
@@ -272,6 +283,17 @@ class MCPToolService:
 
                     # Load tools from the persistent session
                     tools = await load_mcp_tools(session)
+
+                    # Apply tool filter if specified
+                    if tool_filter and server_id in tool_filter:
+                        allowed_tools = set(tool_filter[server_id])
+                        original_count = len(tools)
+                        tools = [t for t in tools if t.name in allowed_tools]
+                        logger.info(
+                            f"Filtered tools for '{server_id}': {original_count} -> {len(tools)} "
+                            f"(allowed: {allowed_tools})"
+                        )
+
                     all_tools.extend(tools)
 
                     logger.info(

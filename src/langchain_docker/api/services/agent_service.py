@@ -175,6 +175,7 @@ You help build and maintain a well-organized, searchable knowledge repository.""
     "web_performance_analyst": {
         "name": "web_performance_analyst",
         "mcp_servers": ["chrome-devtools"],
+        "skill_id": "web_performance",  # Used to filter MCP tools via skill's mcp_tool_configs
         "tool_ids": [
             "load_web_performance_skill",
             "perf_analyze",
@@ -2596,7 +2597,10 @@ Always use the tools to interact with the database.""")
         # Cache key for compiled agent - includes provider/model
         # NOTE: Don't cache agents with MCP servers - they need fresh persistent sessions each request
         cache_key = f"unified:{agent_id}:{agent_provider}:{agent_model or 'default'}"
-        use_mcp_sessions = bool(mcp_servers and self._mcp_tool_service)
+
+        # Get MCP servers from parameter OR from agent config
+        effective_mcp_servers = mcp_servers or config.get("mcp_servers", [])
+        use_mcp_sessions = bool(effective_mcp_servers and self._mcp_tool_service)
 
         # MCP session context for persistent sessions (stateful servers like chrome-devtools)
         mcp_session_ctx = None
@@ -2618,10 +2622,32 @@ Always use the tools to interact with the database.""")
                 mcp_tools = []
                 if use_mcp_sessions:
                     try:
+                        # Build tool filter from skill's mcp_tool_configs if skill_id is specified
+                        tool_filter = None
+                        skill_id = config.get("skill_id")
+                        logger.info(f"[Stream Agent] Checking skill_id for MCP filter: skill_id={skill_id}, has_registry={self._skill_registry is not None}")
+                        if skill_id and self._skill_registry:
+                            skill = self._skill_registry.get_skill(skill_id)
+                            logger.info(f"[Stream Agent] Got skill for '{skill_id}': {skill is not None}")
+                            if skill:
+                                mcp_configs = skill.get_mcp_tool_configs()
+                                logger.info(f"[Stream Agent] MCP configs from skill: {mcp_configs}")
+                                if mcp_configs:
+                                    tool_filter = {}
+                                    for mcp_config in mcp_configs:
+                                        server = mcp_config.get("server")
+                                        tools_list = mcp_config.get("tools", [])
+                                        if server and tools_list:
+                                            tool_filter[server] = tools_list
+                                    logger.info(f"[Stream Agent] Built MCP tool filter from skill '{skill_id}': {tool_filter}")
+
                         # Create persistent session context - keeps MCP subprocesses alive
-                        mcp_session_ctx = self._mcp_tool_service.get_tools_with_session(mcp_servers)
+                        mcp_session_ctx = self._mcp_tool_service.get_tools_with_session(
+                            effective_mcp_servers,
+                            tool_filter=tool_filter
+                        )
                         mcp_tools = await mcp_session_ctx.__aenter__()
-                        logger.info(f"[Stream Agent] Loaded {len(mcp_tools)} MCP tools with persistent sessions from {mcp_servers}")
+                        logger.info(f"[Stream Agent] Loaded {len(mcp_tools)} MCP tools with persistent sessions from {effective_mcp_servers}")
                     except Exception as e:
                         logger.warning(f"[Stream Agent] Failed to load MCP tools with sessions: {e}")
                         mcp_session_ctx = None

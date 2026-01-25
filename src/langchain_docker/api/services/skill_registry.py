@@ -81,6 +81,7 @@ class Skill(ABC):
     # Tool and resource configurations (loaded from SKILL.md frontmatter or Redis)
     _tool_configs: list = []
     _resource_configs: list = []
+    _mcp_tool_configs: list = []  # MCP tools to load when skill is activated
 
     def has_custom_content(self) -> bool:
         """Check if skill has Redis-customized content.
@@ -96,6 +97,7 @@ class Skill(ABC):
         resources: Optional[list] = None,
         tool_configs: Optional[list] = None,
         resource_configs: Optional[list] = None,
+        mcp_tool_configs: Optional[list] = None,
     ) -> None:
         """Set custom content from Redis.
 
@@ -104,6 +106,7 @@ class Skill(ABC):
             resources: Optional custom resources
             tool_configs: Optional tool configurations
             resource_configs: Optional resource configurations
+            mcp_tool_configs: Optional MCP tool configurations
         """
         self._custom_content = content
         self._custom_resources = resources or []
@@ -111,6 +114,8 @@ class Skill(ABC):
             self._tool_configs = tool_configs
         if resource_configs is not None:
             self._resource_configs = resource_configs
+        if mcp_tool_configs is not None:
+            self._mcp_tool_configs = mcp_tool_configs
 
     def clear_custom_content(self) -> None:
         """Clear custom content, reverting to file-based defaults."""
@@ -145,6 +150,17 @@ class Skill(ABC):
             List of SkillResourceConfig-like dicts or objects
         """
         return self._resource_configs
+
+    def get_mcp_tool_configs(self) -> list:
+        """Get MCP tool configurations for this skill.
+
+        These specify which MCP tools should be made available when
+        this skill is loaded, enabling progressive disclosure of MCP tools.
+
+        Returns:
+            List of MCPToolConfig-like dicts with 'server' and 'tools' keys
+        """
+        return self._mcp_tool_configs
 
     @abstractmethod
     def load_core(self) -> str:
@@ -194,6 +210,7 @@ class XLSXSkill(Skill):
         self._custom_resources = None
         self._tool_configs = []
         self._resource_configs = []
+        self._mcp_tool_configs = []
         self._load_configs_from_frontmatter()
 
     def _read_md_file(self, filename: str) -> str:
@@ -263,9 +280,21 @@ class XLSXSkill(Skill):
                     for r in resource_configs
                 ] if resource_configs else []
 
+                # Load MCP tool configs (for progressive disclosure of MCP tools)
+                mcp_tool_configs = metadata.get("mcp_tool_configs", [])
+                self._mcp_tool_configs = [
+                    {
+                        "server": m.get("server", ""),
+                        "tools": m.get("tools", []),
+                        "load_all": m.get("load_all", False),
+                    }
+                    for m in mcp_tool_configs
+                ] if mcp_tool_configs else []
+
                 logger.debug(
                     f"Loaded configs for {self.id}: "
-                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources, "
+                    f"{len(self._mcp_tool_configs)} MCP tool configs"
                 )
         except Exception as e:
             logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
@@ -359,6 +388,7 @@ class SQLSkill(Skill):
         self._custom_resources = None
         self._tool_configs = []
         self._resource_configs = []
+        self._mcp_tool_configs = []
         self._load_configs_from_frontmatter()
 
     def _get_db(self) -> SQLDatabase:
@@ -453,9 +483,21 @@ class SQLSkill(Skill):
                     for r in resource_configs
                 ] if resource_configs else []
 
+                # Load MCP tool configs (for progressive disclosure of MCP tools)
+                mcp_tool_configs = metadata.get("mcp_tool_configs", [])
+                self._mcp_tool_configs = [
+                    {
+                        "server": m.get("server", ""),
+                        "tools": m.get("tools", []),
+                        "load_all": m.get("load_all", False),
+                    }
+                    for m in mcp_tool_configs
+                ] if mcp_tool_configs else []
+
                 logger.debug(
                     f"Loaded configs for {self.id}: "
-                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources, "
+                    f"{len(self._mcp_tool_configs)} MCP tool configs"
                 )
         except Exception as e:
             logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
@@ -763,6 +805,7 @@ class JiraSkill(Skill):
         self._custom_resources = None
         self._tool_configs = []
         self._resource_configs = []
+        self._mcp_tool_configs = []
         self._load_configs_from_frontmatter()
 
     def _get_session(self):
@@ -866,9 +909,21 @@ class JiraSkill(Skill):
                     for r in resource_configs
                 ] if resource_configs else []
 
+                # Load MCP tool configs (for progressive disclosure of MCP tools)
+                mcp_tool_configs = metadata.get("mcp_tool_configs", [])
+                self._mcp_tool_configs = [
+                    {
+                        "server": m.get("server", ""),
+                        "tools": m.get("tools", []),
+                        "load_all": m.get("load_all", False),
+                    }
+                    for m in mcp_tool_configs
+                ] if mcp_tool_configs else []
+
                 logger.debug(
                     f"Loaded configs for {self.id}: "
-                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources, "
+                    f"{len(self._mcp_tool_configs)} MCP tool configs"
                 )
         except Exception as e:
             logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
@@ -1471,9 +1526,21 @@ class KnowledgeBaseSkill(Skill):
                     for r in resource_configs
                 ] if resource_configs else []
 
+                # Load MCP tool configs (for progressive disclosure of MCP tools)
+                mcp_tool_configs = metadata.get("mcp_tool_configs", [])
+                self._mcp_tool_configs = [
+                    {
+                        "server": m.get("server", ""),
+                        "tools": m.get("tools", []),
+                        "load_all": m.get("load_all", False),
+                    }
+                    for m in mcp_tool_configs
+                ] if mcp_tool_configs else []
+
                 logger.debug(
                     f"Loaded configs for {self.id}: "
-                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources, "
+                    f"{len(self._mcp_tool_configs)} MCP tool configs"
                 )
         except Exception as e:
             logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
@@ -2067,6 +2134,7 @@ class WebPerformanceSkill(Skill):
         self._custom_resources = None
         self._tool_configs = []
         self._resource_configs = []
+        self._mcp_tool_configs = []
         self._load_configs_from_frontmatter()
 
     def _read_md_file(self, filename: str) -> str:
@@ -2126,9 +2194,20 @@ class WebPerformanceSkill(Skill):
             if frontmatter:
                 self._tool_configs = frontmatter.get("tool_configs", [])
                 self._resource_configs = frontmatter.get("resource_configs", [])
+                # Load MCP tool configs (for progressive disclosure of MCP tools)
+                mcp_tool_configs = frontmatter.get("mcp_tool_configs", [])
+                self._mcp_tool_configs = [
+                    {
+                        "server": m.get("server", ""),
+                        "tools": m.get("tools", []),
+                        "load_all": m.get("load_all", False),
+                    }
+                    for m in mcp_tool_configs
+                ] if mcp_tool_configs else []
                 logger.debug(
                     f"Loaded configs for {self.id}: "
-                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources, "
+                    f"{len(self._mcp_tool_configs)} MCP tool configs"
                 )
         except Exception as e:
             logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
@@ -2723,6 +2802,7 @@ class LighthouseSkill(Skill):
         self._custom_resources = None
         self._tool_configs = []
         self._resource_configs = []
+        self._mcp_tool_configs = []
         self._load_configs_from_frontmatter()
 
     def _read_md_file(self, filename: str) -> str:

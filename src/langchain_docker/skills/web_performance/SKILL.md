@@ -55,6 +55,21 @@ resource_configs:
 
   - name: network_timing
     description: Network timing phases and targets
+
+mcp_tool_configs:
+  - server: chrome-devtools
+    tools:
+      - list_pages
+      - select_page
+      - new_page
+      - navigate_page
+      - performance_start_trace
+      - performance_stop_trace
+      - performance_analyze_insight
+      - list_network_requests
+      - get_network_request
+      - take_screenshot
+      - take_snapshot
 ---
 
 # Web Performance Analysis Skill (Chrome DevTools MCP)

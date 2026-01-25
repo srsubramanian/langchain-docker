@@ -122,6 +122,37 @@ class SkillResourceConfig:
 
 
 @dataclass
+class MCPToolConfig:
+    """Configuration for MCP tools that should be loaded with this skill.
+
+    This enables progressive disclosure for MCP tools - instead of loading
+    all tools from an MCP server upfront, only the tools specified here
+    are made available when the skill is loaded.
+    """
+
+    server: str  # MCP server name (e.g., "chrome-devtools")
+    tools: list[str] = field(default_factory=list)  # Specific tools to load
+    load_all: bool = False  # If true, load all tools from server (not recommended)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "server": self.server,
+            "tools": self.tools,
+            "load_all": self.load_all,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MCPToolConfig":
+        """Create from dictionary representation."""
+        return cls(
+            server=data["server"],
+            tools=data.get("tools", []),
+            load_all=data.get("load_all", False),
+        )
+
+
+@dataclass
 class SkillVersionResource:
     """Resource file bundled with a skill version."""
 
@@ -159,6 +190,7 @@ class SkillVersion:
     scripts: list[SkillVersionScript] = field(default_factory=list)
     tool_configs: list[SkillToolConfig] = field(default_factory=list)
     resource_configs: list[SkillResourceConfig] = field(default_factory=list)
+    mcp_tool_configs: list[MCPToolConfig] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     change_summary: str | None = None  # What changed in this version
 
@@ -187,6 +219,7 @@ class SkillVersion:
             ],
             "tool_configs": [t.to_dict() for t in self.tool_configs],
             "resource_configs": [r.to_dict() for r in self.resource_configs],
+            "mcp_tool_configs": [m.to_dict() for m in self.mcp_tool_configs],
             "created_at": self.created_at.isoformat(),
             "change_summary": self.change_summary,
         }
@@ -217,6 +250,9 @@ class SkillVersion:
         resource_configs = [
             SkillResourceConfig.from_dict(r) for r in data.get("resource_configs", [])
         ]
+        mcp_tool_configs = [
+            MCPToolConfig.from_dict(m) for m in data.get("mcp_tool_configs", [])
+        ]
 
         created_at = data.get("created_at")
         if isinstance(created_at, str):
@@ -236,6 +272,7 @@ class SkillVersion:
             scripts=scripts,
             tool_configs=tool_configs,
             resource_configs=resource_configs,
+            mcp_tool_configs=mcp_tool_configs,
             created_at=created_at,
             change_summary=data.get("change_summary"),
         )
