@@ -18,6 +18,7 @@ from langchain_docker.api.services.tools.kb_tools import KBToolProvider, KBInges
 from langchain_docker.api.services.tools.lighthouse_tools import LighthouseToolProvider
 from langchain_docker.api.services.tools.sql_tools import SQLToolProvider
 from langchain_docker.api.services.tools.web_perf_tools import WebPerformanceToolProvider
+from langchain_docker.api.services.tools.workspace_tools import WorkspaceToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,11 @@ class ToolRegistry:
 
         skill_registry = SkillRegistry()
 
+        # Session ID getter that uses the context variable (set by AgentService)
+        def get_session_id() -> str:
+            from langchain_docker.api.services.agent_service import _current_session_id
+            return _current_session_id.get()
+
         # Register all providers
         self._providers = [
             SQLToolProvider(skill_registry),
@@ -75,10 +81,14 @@ class ToolRegistry:
             LighthouseToolProvider(skill_registry),
             # ChromePerfToolProvider needs workspace_service for file access
             ChromePerfToolProvider(skill_registry, workspace_service=workspace_service),
+            # WorkspaceToolProvider for session file operations
+            WorkspaceToolProvider(workspace_service, get_session_id) if workspace_service else None,
             # Add new providers here as they are created:
             # GithubToolProvider(skill_registry),
             # SlackToolProvider(skill_registry),
         ]
+        # Filter out None providers (when workspace_service is not available)
+        self._providers = [p for p in self._providers if p is not None]
 
         # Load tools from each provider
         for provider in self._providers:

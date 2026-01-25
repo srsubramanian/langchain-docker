@@ -533,9 +533,11 @@ You help developers understand performance metrics deeply and improve their webs
             "trace_long_tasks",
             "trace_slowest",
             "trace_filter",
+            # Workspace tools for file access
+            "workspace_list",
+            "workspace_read",
+            "workspace_info",
         ],
-        # Note: workspace_list, workspace_read, workspace_write are injected at runtime
-        # by the chat service when workspace is enabled
         "prompt": """You are a Chrome Performance Trace Analyst specializing in analyzing Chrome DevTools Performance trace JSON files.
 
 ## Getting Started
