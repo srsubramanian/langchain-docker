@@ -245,7 +245,7 @@ export function MultiAgentPage() {
   // Session store - for syncing sessionId to workspace panel
   const { setSessionId: setGlobalSessionId } = useSessionStore();
   // Workspace store - for the workspace panel
-  const { isOpen: isWorkspaceOpen, setOpen: setWorkspaceOpen } = useWorkspaceStore();
+  const { isOpen: isWorkspaceOpen, setOpen: setWorkspaceOpen, files: workspaceFiles } = useWorkspaceStore();
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
@@ -663,6 +663,11 @@ export function MultiAgentPage() {
                 >
                   <FolderOpen className="h-4 w-4" />
                   <span className="hidden sm:inline">Files</span>
+                  {workspaceFiles.length > 0 && (
+                    <Badge variant="secondary" className="ml-1">
+                      {workspaceFiles.length}
+                    </Badge>
+                  )}
                 </Button>
               )}
             </div>

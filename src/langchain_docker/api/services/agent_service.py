@@ -2889,6 +2889,9 @@ Always use the tools to interact with the database.""")
 
         # MCP session context for persistent sessions (stateful servers like chrome-devtools)
         mcp_session_ctx = None
+        # Initialize mcp_tools and tool_filter before conditional to avoid UnboundLocalError
+        mcp_tools = []
+        tool_filter = None
 
         # Get or create compiled agent
         try:
@@ -2904,8 +2907,6 @@ Always use the tools to interact with the database.""")
                 )
 
                 # Load MCP tools with persistent sessions if specified
-                mcp_tools = []
-                tool_filter = None  # Initialize here so it's always defined
                 if use_mcp_sessions:
                     try:
                         # Build tool filter from skill's mcp_tool_configs if skill_id is specified

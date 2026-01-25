@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { cn } from '@/lib/cn';
@@ -108,24 +107,9 @@ export function WorkspacePanel() {
     }
   }, [sessionId, fetchFiles, fetchInfo]);
 
+  // When closed, render nothing - the toggle button is controlled by the parent page
   if (!isOpen) {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2"
-        title="Open Working Folder"
-      >
-        <FolderOpen className="h-4 w-4" />
-        <span className="hidden sm:inline">Files</span>
-        {files.length > 0 && (
-          <Badge variant="secondary" className="ml-1">
-            {files.length}
-          </Badge>
-        )}
-      </Button>
-    );
+    return null;
   }
 
   return (

@@ -6,6 +6,7 @@ Parses and queries Chrome DevTools Performance trace JSON files.
 Supports filtering by time windows, categories, and finding slow operations.
 """
 
+import gzip
 import json
 import sys
 from pathlib import Path
@@ -54,9 +55,14 @@ class TraceAnalyzer:
         self._load_trace()
 
     def _load_trace(self):
-        """Load and parse the trace file"""
-        with open(self.trace_path, 'r') as f:
-            data = json.load(f)
+        """Load and parse the trace file (supports .json and .json.gz)"""
+        # Handle gzip-compressed files
+        if self.trace_path.suffix == '.gz' or str(self.trace_path).endswith('.json.gz'):
+            with gzip.open(self.trace_path, 'rt', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            with open(self.trace_path, 'r') as f:
+                data = json.load(f)
 
         # Handle both array format and object format
         if isinstance(data, list):
