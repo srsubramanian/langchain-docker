@@ -24,7 +24,7 @@
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@latest"],
       "env": {},
-      "enabled": true,
+      "enabled": false,
       "timeout_seconds": 60
     }
   }

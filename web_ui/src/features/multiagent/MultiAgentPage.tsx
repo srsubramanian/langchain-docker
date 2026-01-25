@@ -11,7 +11,7 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Send, Loader2, ArrowLeft, Check, Wrench, Sparkles, BookOpen, Cpu } from 'lucide-react';
+import { Send, Loader2, ArrowLeft, Check, Wrench, Sparkles, BookOpen, Cpu, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -26,10 +26,12 @@ import { Badge } from '@/components/ui/badge';
 import { agentsApi, type UnifiedAgentInfo } from '@/api';
 import { useSettingsStore } from '@/stores';
 import { useMCPStore } from '@/stores/mcpStore';
+import { useSessionStore } from '@/stores/sessionStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard, StarterPrompts } from '@/components/chat';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard, StarterPrompts, WorkspacePanel } from '@/components/chat';
 import type { ApprovalRequestEvent } from '@/components/chat';
 import { MCPServerToggle } from '@/features/chat/MCPServerToggle';
 import { useImageUpload } from '@/hooks/useImageUpload';
@@ -240,6 +242,10 @@ export function MultiAgentPage() {
   const { provider, model, temperature, agentPreset, setAgentPreset } = useSettingsStore();
   // MCP store - get enabled servers to pass to agent invocations
   const { getEnabledServers } = useMCPStore();
+  // Session store - for syncing sessionId to workspace panel
+  const { setSessionId: setGlobalSessionId } = useSessionStore();
+  // Workspace store - for the workspace panel
+  const { isOpen: isWorkspaceOpen, setOpen: setWorkspaceOpen } = useWorkspaceStore();
 
   // Check if we're in single-agent mode (from ?agent= query param)
   const singleAgentName = searchParams.get('agent');
@@ -361,6 +367,13 @@ export function MultiAgentPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
+
+  // Sync local sessionId to global session store for WorkspacePanel
+  useEffect(() => {
+    if (sessionId) {
+      setGlobalSessionId(sessionId);
+    }
+  }, [sessionId, setGlobalSessionId]);
 
   // Handle starter prompt selection - populate input and auto-submit
   const handleStarterPromptSelect = (prompt: string) => {
@@ -563,14 +576,16 @@ export function MultiAgentPage() {
     }
   };
 
-  // Single-agent mode: Full-width chat UI
+  // Single-agent mode: Full-width chat UI with optional workspace panel
   if (isSingleAgentMode) {
     const agentDisplayName = singleAgentName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     const avatarColor = getAvatarColor(singleAgentName);
     const initials = getInitials(singleAgentName);
 
     return (
-      <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+      <div className="flex h-[calc(100vh-3.5rem)]">
+        {/* Main chat area */}
+        <div className="flex flex-1 flex-col min-w-0">
         {/* Header with agent info */}
         <div className="border-b bg-card px-6 py-4">
           <div className="flex items-center justify-between">
@@ -631,11 +646,26 @@ export function MultiAgentPage() {
               </div>
             </div>
             {/* Settings bar (compact mode) */}
-            <ChatSettingsBar
-              showSettings={showSettings}
-              onToggleSettings={() => setShowSettings(!showSettings)}
-              compact={true}
-            />
+            <div className="flex items-center gap-2">
+              <ChatSettingsBar
+                showSettings={showSettings}
+                onToggleSettings={() => setShowSettings(!showSettings)}
+                compact={true}
+              />
+              {/* Workspace toggle button when closed */}
+              {!isWorkspaceOpen && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setWorkspaceOpen(true)}
+                  className="flex items-center gap-2"
+                  title="Open Working Folder"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  <span className="hidden sm:inline">Files</span>
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -851,6 +881,9 @@ export function MultiAgentPage() {
             </div>
           </div>
         </div>
+        </div>
+        {/* Workspace Panel */}
+        <WorkspacePanel />
       </div>
     );
   }
