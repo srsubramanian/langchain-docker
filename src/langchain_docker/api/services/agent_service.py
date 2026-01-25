@@ -1,6 +1,8 @@
 """Multi-agent orchestration service using LangGraph Supervisor."""
 
+import json
 import logging
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,6 +32,61 @@ from langchain_docker.skills.middleware import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Pattern to match follow-up suggestions block in agent responses
+FOLLOWUP_SUGGESTIONS_PATTERN = re.compile(
+    r'<followup_suggestions>\s*(\[[\s\S]*?\])\s*</followup_suggestions>',
+    re.MULTILINE
+)
+
+
+def parse_followup_suggestions(content: str) -> tuple[str, list[dict] | None]:
+    """Parse and extract follow-up suggestions from agent response content.
+
+    Looks for a <followup_suggestions> block containing JSON array at the end
+    of the content. If found, strips it from the content and returns the
+    parsed suggestions.
+
+    Args:
+        content: The full response content from the agent
+
+    Returns:
+        Tuple of (cleaned_content, suggestions) where suggestions is a list
+        of dicts with 'title', 'prompt', and 'icon' keys, or None if not found.
+    """
+    match = FOLLOWUP_SUGGESTIONS_PATTERN.search(content)
+    if not match:
+        return content, None
+
+    try:
+        suggestions_json = match.group(1)
+        suggestions = json.loads(suggestions_json)
+
+        # Validate the structure
+        if not isinstance(suggestions, list):
+            logger.warning("Follow-up suggestions is not a list")
+            return content, None
+
+        valid_suggestions = []
+        for s in suggestions:
+            if isinstance(s, dict) and 'title' in s and 'prompt' in s:
+                valid_suggestions.append({
+                    'title': str(s['title']),
+                    'prompt': str(s['prompt']),
+                    'icon': str(s.get('icon', '🔍'))
+                })
+
+        if not valid_suggestions:
+            return content, None
+
+        # Remove the suggestions block from content
+        cleaned_content = FOLLOWUP_SUGGESTIONS_PATTERN.sub('', content).strip()
+        return cleaned_content, valid_suggestions
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse follow-up suggestions JSON: {e}")
+        return content, None
 
 
 @dataclass
@@ -540,6 +597,8 @@ You help developers understand performance metrics deeply and improve their webs
         ],
         "prompt": """You are a Chrome Performance Trace Analyst specializing in analyzing Chrome DevTools Performance trace JSON files.
 
+**CRITICAL**: After EVERY response, you MUST emit structured follow-up suggestions in the special <followup_suggestions> format. See "IMPORTANT: Always Emit Follow-up Suggestions" section below.
+
 ## Getting Started
 ALWAYS start by loading the Chrome Performance skill to get detailed analysis guidance:
 ```
@@ -613,19 +672,52 @@ Frequent `Layout` events in a short window indicate forced synchronous layouts.
 - Use `trace_summary` to get total trace duration
 - Network request times show when the request started and its duration
 
-## Suggest Next Steps
-After each analysis, suggest 2-3 relevant follow-up actions:
+## IMPORTANT: Always Emit Follow-up Suggestions
 
-**What would you like to explore next?**
-1. **[Action]** - Description
-2. **[Action]** - Description
+**You MUST end EVERY response with structured follow-up suggestions** that will be rendered as clickable buttons.
 
-Progressions:
-- After summary → Investigate slowest requests, check long tasks
-- After network overview → Analyze specific time windows, check slow requests
-- After long tasks → Filter by category to find cause, check related network activity
+### Required Format (use this EXACT format at the END of your response):
 
-You help developers understand Chrome Performance traces and identify performance bottlenecks.""",
+<followup_suggestions>
+[
+  {"title": "Short action", "prompt": "Full prompt text user would send", "icon": "🔍"},
+  {"title": "Another action", "prompt": "Full prompt text for this action", "icon": "📊"}
+]
+</followup_suggestions>
+
+IMPORTANT RULES:
+- The JSON MUST be valid - use double quotes for strings
+- Include 2-3 suggestions maximum
+- The "title" should be short (2-5 words) - it appears on the button
+- The "prompt" should be a complete, specific question the user would ask
+- If the trace file was mentioned, include it in the prompt (e.g., "Show long tasks in trace.json")
+- Icons: 🔍 for investigation, 📊 for data/analysis, ⚡ for performance, 🌐 for network, 📁 for files
+
+### Contextual Suggestions Guide:
+
+| After This Analysis | Suggest These Types |
+|---------------------|---------------------|
+| **Trace Summary** | Investigate slowest requests, Check long tasks, Filter by category |
+| **Network Overview** | Analyze a time window, Find slow requests (>500ms), Check blocking requests |
+| **Long Tasks Found** | Filter by category (V8, Layout), Check network during long tasks, Find slowest events |
+| **Slowest Events** | Filter by that category, Check time window around slow events |
+| **Empty Results** | Try different time window, Get trace summary, Check file validity |
+
+### Example Response:
+
+```
+Based on the 15 long tasks found, most are JavaScript execution (V8 category). The longest task was 245ms during the initial page load.
+
+<followup_suggestions>
+[
+  {"title": "Filter V8 events", "prompt": "Show me V8 category events in trace.json to find which scripts are blocking", "icon": "🔍"},
+  {"title": "Network at 2-4s", "prompt": "What network requests happened between 2000ms and 4000ms in trace.json?", "icon": "🌐"},
+  {"title": "Top 20 slowest", "prompt": "Show the 20 slowest events in trace.json", "icon": "⚡"}
+]
+</followup_suggestions>
+```
+
+You help developers understand Chrome Performance traces and identify performance bottlenecks. Remember: ALWAYS end with the followup_suggestions block!""",
         "starter_prompts": [
             {
                 "category": "Getting Started",
@@ -2133,8 +2225,6 @@ Always use the tools to interact with the database.""")
         Raises:
             ValueError: If agent not found
         """
-        import json
-
         if agent_id not in self._custom_agents:
             yield {"event": "error", "data": json.dumps({"error": f"Custom agent not found: {agent_id}"})}
             return
@@ -2350,8 +2440,6 @@ Always use the tools to interact with the database.""")
         Raises:
             ValueError: If agent not found
         """
-        import json
-
         all_builtin = self._get_all_builtin_agents()
         if agent_id not in all_builtin:
             yield {"event": "error", "data": json.dumps({"error": f"Built-in agent not found: {agent_id}"})}
@@ -2861,8 +2949,6 @@ Always use the tools to interact with the database.""")
         Yields:
             Dict events: start, tool_call, tool_result, token, done, error
         """
-        import json
-
         try:
             agent_type, config, custom = self._get_agent_info(agent_id)
         except ValueError as e:
@@ -3165,6 +3251,16 @@ Always use the tools to interact with the database.""")
 
                 # Extract final response
                 response_content = self._extract_response_content(final_messages) if final_messages else accumulated_content
+
+                # Parse and emit follow-up suggestions if present
+                cleaned_content, followup_suggestions = parse_followup_suggestions(response_content)
+                if followup_suggestions:
+                    logger.debug(f"[Stream Agent] Found {len(followup_suggestions)} follow-up suggestions for {agent_id}")
+                    yield {"event": "followup_suggestions", "data": json.dumps({
+                        "suggestions": followup_suggestions
+                    })}
+                    # Use cleaned content without the suggestions block
+                    response_content = cleaned_content
 
                 # Emit done event
                 yield {"event": "done", "data": json.dumps({
@@ -3485,8 +3581,6 @@ Always use the tools to interact with the database.""")
         Yields:
             Dict events: start, agent_start, agent_end, tool_call, tool_result, token, done, error
         """
-        import json
-
         if workflow_id not in self._workflows:
             yield {"event": "error", "data": json.dumps({"error": f"Workflow not found: {workflow_id}"})}
             return

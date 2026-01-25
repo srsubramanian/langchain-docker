@@ -31,11 +31,22 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { cn } from '@/lib/cn';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard, StarterPrompts, WorkspacePanel } from '@/components/chat';
+import { ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, ApprovalCard, StarterPrompts, WorkspacePanel, FollowUpSuggestions } from '@/components/chat';
 import type { ApprovalRequestEvent } from '@/components/chat';
 import { MCPServerToggle } from '@/features/chat/MCPServerToggle';
 import { useImageUpload } from '@/hooks/useImageUpload';
-import type { StarterPromptCategory } from '@/types/api';
+import type { StarterPromptCategory, FollowUpSuggestion } from '@/types/api';
+
+// Pattern to strip follow-up suggestions block from displayed content
+const FOLLOWUP_SUGGESTIONS_PATTERN = /<followup_suggestions>[\s\S]*?<\/followup_suggestions>/g;
+
+/**
+ * Strip the <followup_suggestions> block from content for display.
+ * This block is parsed separately and rendered as buttons.
+ */
+function stripFollowUpSuggestions(content: string): string {
+  return content.replace(FOLLOWUP_SUGGESTIONS_PATTERN, '').trim();
+}
 
 // Tool call tracking for skill/tool badges
 interface ToolCallInfo {
@@ -221,6 +232,7 @@ export function MultiAgentPage() {
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestEvent[]>([]);
   const [agentDetails, setAgentDetails] = useState<UnifiedAgentInfo | null>(null);
   const [starterPrompts, setStarterPrompts] = useState<StarterPromptCategory[]>([]);
+  const [followUpSuggestions, setFollowUpSuggestions] = useState<FollowUpSuggestion[]>([]);
 
   // Streaming state for tool call display
   const [streamingContent, setStreamingContent] = useState('');
@@ -403,6 +415,7 @@ export function MultiAgentPage() {
     setStreamingToolCalls([]);
     setActiveAgent(null);
     setAgentsUsedInStream([]);
+    setFollowUpSuggestions([]); // Clear previous suggestions when new message is sent
 
     try {
       // For single-agent mode (built-in or custom), use streaming API to show tool calls
@@ -469,6 +482,9 @@ export function MultiAgentPage() {
               },
             };
             setPendingApprovals((prev) => [...prev, approvalRequest]);
+          } else if (event.event === 'followup_suggestions' && event.suggestions) {
+            // Capture follow-up suggestions
+            setFollowUpSuggestions(event.suggestions);
           } else if (event.event === 'done') {
             // Use response from done event as fallback if no tokens were streamed
             if (!fullContent && event.response) {
@@ -773,7 +789,7 @@ export function MultiAgentPage() {
                         {msg.role === 'assistant' ? (
                           <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.content}
+                              {stripFollowUpSuggestions(msg.content)}
                             </ReactMarkdown>
                           </div>
                         ) : (
@@ -808,7 +824,7 @@ export function MultiAgentPage() {
                         {streamingContent ? (
                           <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {streamingContent}
+                              {stripFollowUpSuggestions(streamingContent)}
                             </ReactMarkdown>
                           </div>
                         ) : (
@@ -843,6 +859,25 @@ export function MultiAgentPage() {
                     />
                   </div>
                 ))}
+
+                {/* Follow-up Suggestions */}
+                {!isLoading && followUpSuggestions.length > 0 && messages.length > 0 && (
+                  <div className="flex gap-3">
+                    <div
+                      className={cn(
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white text-sm font-semibold opacity-0',
+                        avatarColor
+                      )}
+                    >
+                      {initials}
+                    </div>
+                    <FollowUpSuggestions
+                      suggestions={followUpSuggestions}
+                      onSelectSuggestion={handleStarterPromptSelect}
+                      className="max-w-[80%]"
+                    />
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
@@ -1006,7 +1041,7 @@ export function MultiAgentPage() {
                       {msg.role === 'assistant' ? (
                         <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
+                            {stripFollowUpSuggestions(msg.content)}
                           </ReactMarkdown>
                         </div>
                       ) : (
@@ -1058,7 +1093,7 @@ export function MultiAgentPage() {
                     {streamingContent ? (
                       <div className="prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs max-w-none">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {streamingContent}
+                          {stripFollowUpSuggestions(streamingContent)}
                         </ReactMarkdown>
                       </div>
                     ) : (

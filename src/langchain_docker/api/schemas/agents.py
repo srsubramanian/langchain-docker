@@ -24,6 +24,17 @@ class StarterPrompt(BaseModel):
     )
 
 
+# Follow-up Suggestions (emitted by agents after responses)
+
+
+class FollowUpSuggestion(BaseModel):
+    """A single follow-up action suggestion emitted by an agent."""
+
+    title: str = Field(..., description="Short button label (e.g., 'Check network')")
+    prompt: str = Field(..., description="Full prompt to send when clicked")
+    icon: str = Field(default="🔍", description="Emoji icon for the suggestion")
+
+
 class StarterPromptCategory(BaseModel):
     """A category of starter prompts."""
 

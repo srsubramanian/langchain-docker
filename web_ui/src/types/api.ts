@@ -39,7 +39,7 @@ export interface ChatResponse {
 
 // SSE Stream events
 export interface StreamEvent {
-  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'approval_request';
+  event: 'start' | 'token' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'approval_request' | 'followup_suggestions';
   session_id?: string;
   model?: string;
   provider?: string;
@@ -71,6 +71,12 @@ export interface StreamEvent {
     timeout_seconds?: number;
     require_reason_on_reject?: boolean;
   };
+  // Follow-up suggestions fields
+  suggestions?: Array<{
+    title: string;
+    prompt: string;
+    icon: string;
+  }>;
 }
 
 // Session types
@@ -218,6 +224,13 @@ export interface StarterPromptsResponse {
   agent_id: string;
   agent_name: string;
   categories: StarterPromptCategory[];
+}
+
+// Follow-up suggestions (emitted by agents after responses)
+export interface FollowUpSuggestion {
+  title: string;
+  prompt: string;
+  icon: string;
 }
 
 // Workflow types
