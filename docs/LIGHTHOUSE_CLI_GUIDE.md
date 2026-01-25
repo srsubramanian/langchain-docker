@@ -13,6 +13,7 @@ A comprehensive guide to using Lighthouse CLI for performance analysis.
 5. [Additional Audits](#additional-audits)
 6. [CLI Commands Reference](#cli-commands-reference)
 7. [Extracting Key Metrics](#extracting-key-metrics)
+8. [Programmatic Usage with Puppeteer](#programmatic-usage-with-puppeteer)
 
 ---
 
@@ -347,6 +348,82 @@ cat report.json | jq '{
 | `--chrome-flags="--headless"` | Headless mode |
 | `--list-all-audits` | List all available audit IDs |
 | `--extra-headers` | Add custom headers (for auth) |
+
+---
+
+## Programmatic Usage with Puppeteer
+
+For more control over the authentication flow, use Puppeteer to launch the browser and run Lighthouse programmatically.
+
+### auth-lighthouse.js
+
+```javascript
+// auth-lighthouse.js
+const puppeteer = require('puppeteer');
+const lighthouse = require('lighthouse');
+const readline = require('readline');
+
+async function waitForEnter(message) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise(resolve => {
+    rl.question(message, () => {
+      rl.close();
+      resolve();
+    });
+  });
+}
+
+async function run() {
+  const browser = await puppeteer.launch({
+    headless: false,
+    executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    args: ['--remote-debugging-port=9222']
+  });
+
+  const page = await browser.newPage();
+  await page.goto('https://your-app.com/login');
+
+  // Wait for you to log in manually
+  await waitForEnter('\n>>> Log in manually, then press ENTER to continue...\n');
+
+  // Run Lighthouse
+  const result = await lighthouse(page.url(), {
+    port: 9222,
+    disableStorageReset: true,
+    output: 'html',
+    onlyCategories: ['performance']
+  });
+
+  require('fs').writeFileSync('report.html', result.report);
+  console.log('Report saved to report.html');
+
+  await browser.close();
+}
+
+run();
+```
+
+### Usage
+
+1. Install dependencies:
+   ```bash
+   npm install puppeteer lighthouse
+   ```
+
+2. Update the `executablePath` for your browser:
+   - **Chrome (Mac)**: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+   - **Chrome (Windows)**: `C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe`
+   - **Edge (Windows)**: `C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe`
+
+3. Run the script:
+   ```bash
+   node auth-lighthouse.js
+   ```
+
+4. Log in manually when the browser opens, then press ENTER to run the audit.
 
 ---
 
