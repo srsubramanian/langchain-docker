@@ -648,3 +648,63 @@ export interface KBContextResponse {
   context: string;
   has_context: boolean;
 }
+
+// Workspace types (Session Working Folder)
+export interface WorkspaceFileInfo {
+  filename: string;
+  path: string;
+  size: number;
+  size_human: string;
+  modified_at: string | null;
+  uploaded_at: string | null;
+}
+
+export interface WorkspaceInfo {
+  session_id: string;
+  path: string;
+  file_count: number;
+  total_size: number;
+  total_size_human: string;
+  max_file_size: number;
+  max_workspace_size: number;
+  ttl_hours: number;
+}
+
+export interface WorkspaceFileListResponse {
+  session_id: string;
+  files: WorkspaceFileInfo[];
+  total_count: number;
+  total_size: number;
+  total_size_human: string;
+}
+
+export interface WorkspaceFileUploadResponse {
+  success: boolean;
+  file: WorkspaceFileInfo;
+}
+
+export interface WorkspaceFileContentResponse {
+  filename: string;
+  content: string;
+  size: number;
+  size_human: string;
+  truncated: boolean;
+  truncated_at: number | null;
+}
+
+export interface WorkspaceFileDeleteResponse {
+  success: boolean;
+  filename: string;
+  message: string;
+}
+
+export interface WorkspaceDeleteResponse {
+  success: boolean;
+  session_id: string;
+  message: string;
+}
+
+export interface WorkspaceWriteFileRequest {
+  filename: string;
+  content: string;
+}

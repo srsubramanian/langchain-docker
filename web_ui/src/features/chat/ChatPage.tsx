@@ -10,9 +10,10 @@ import type { Message, SessionSummary } from '@/types/api';
 import { cn } from '@/lib/cn';
 import { ThreadList } from './ThreadList';
 import { MCPServerToggle } from './MCPServerToggle';
-import { ApprovalCard, ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid } from '@/components/chat';
+import { ApprovalCard, ChatSettingsBar, ChatSettingsPanel, ImageUpload, ImagePreviewGrid, WorkspacePanel } from '@/components/chat';
 import type { ApprovalRequestEvent } from '@/components/chat';
 import { useImageUpload } from '@/hooks/useImageUpload';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 export function ChatPage() {
   const [input, setInput] = useState('');
@@ -39,6 +40,9 @@ export function ChatPage() {
 
   // MCP store
   const { getEnabledServers } = useMCPStore();
+
+  // Workspace store
+  const { isOpen: isWorkspaceOpen } = useWorkspaceStore();
 
   const {
     sessionId,
@@ -277,11 +281,15 @@ export function ChatPage() {
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 flex flex-col p-4 overflow-hidden">
           {/* Settings Bar */}
-          <div className="mb-4 shrink-0">
-            <ChatSettingsBar
-              showSettings={showSettings}
-              onToggleSettings={() => setShowSettings(!showSettings)}
-            />
+          <div className="mb-4 shrink-0 flex items-center gap-2">
+            <div className="flex-1">
+              <ChatSettingsBar
+                showSettings={showSettings}
+                onToggleSettings={() => setShowSettings(!showSettings)}
+              />
+            </div>
+            {/* Workspace toggle button (when panel is closed) */}
+            {!isWorkspaceOpen && <WorkspacePanel />}
           </div>
 
           {/* Settings Panel */}
@@ -455,6 +463,9 @@ export function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Workspace Panel (Right Sidebar) */}
+      {isWorkspaceOpen && <WorkspacePanel />}
     </div>
   );
 }

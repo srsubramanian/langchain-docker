@@ -7,3 +7,4 @@ export { agentsApi, type UnifiedAgentInfo } from './agents';
 export { skillsApi } from './skills';
 export { capabilitiesApi } from './capabilities';
 export { mcpApi } from './mcp';
+export { workspaceApi } from './workspace';
