@@ -2620,10 +2620,10 @@ Always use the tools to interact with the database.""")
 
                 # Load MCP tools with persistent sessions if specified
                 mcp_tools = []
+                tool_filter = None  # Initialize here so it's always defined
                 if use_mcp_sessions:
                     try:
                         # Build tool filter from skill's mcp_tool_configs if skill_id is specified
-                        tool_filter = None
                         skill_id = config.get("skill_id")
                         logger.info(f"[Stream Agent] Checking skill_id for MCP filter: skill_id={skill_id}, has_registry={self._skill_registry is not None}")
                         if skill_id and self._skill_registry:
@@ -2700,6 +2700,8 @@ Always use the tools to interact with the database.""")
             "agent_type": agent_type,
             "provider": agent_provider,
             "model": agent_model,
+            "mcp_tools_count": len(mcp_tools) if mcp_tools else 0,
+            "tool_filter_applied": tool_filter is not None,
         })}
 
         # Session management
