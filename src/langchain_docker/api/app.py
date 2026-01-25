@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from langchain_docker.api.middleware import register_exception_handlers
-from langchain_docker.api.routers import agents, approvals, capabilities, chat, knowledge_base, mcp, models, sessions, skills
+from langchain_docker.api.routers import agents, approvals, capabilities, chat, knowledge_base, mcp, models, sessions, skills, workspace
 from langchain_docker.core.config import load_environment
 from langchain_docker.core.tracing import setup_tracing
 
@@ -59,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp.router, prefix="/api/v1")
     app.include_router(approvals.router, prefix="/api/v1")
     app.include_router(knowledge_base.router, prefix="/api/v1")
+    app.include_router(workspace.router, prefix="/api/v1")
 
     # Health check endpoint
     @app.get("/health")

@@ -20,6 +20,7 @@ from langchain_docker.api.services.opensearch_store import OpenSearchStore
 from langchain_docker.api.services.session_service import SessionService
 from langchain_docker.api.services.capability_registry import CapabilityRegistry
 from langchain_docker.api.services.skill_registry import SkillRegistry
+from langchain_docker.api.services.workspace_service import WorkspaceService
 from langchain_docker.core.config import (
     Config,
     get_redis_url,
@@ -448,3 +449,24 @@ def get_knowledge_base_service() -> KnowledgeBaseService:
                 graph_rag_service=graph_rag,
             )
     return _knowledge_base_service
+
+
+# Singleton for workspace service
+_workspace_service: WorkspaceService | None = None
+
+
+def get_workspace_service() -> WorkspaceService:
+    """Get singleton workspace service instance.
+
+    The WorkspaceService provides session-specific working folders
+    for file uploads, generated outputs, and temporary data.
+    Similar to Claude Cowork's "Working Folder" feature.
+
+    Returns:
+        WorkspaceService instance
+    """
+    global _workspace_service
+    if _workspace_service is None:
+        _workspace_service = WorkspaceService()
+        logger.info(f"WorkspaceService initialized with base_path={_workspace_service.base_path}")
+    return _workspace_service
