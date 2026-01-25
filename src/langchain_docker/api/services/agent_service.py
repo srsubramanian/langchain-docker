@@ -523,6 +523,194 @@ You help developers understand performance metrics deeply and improve their webs
             },
         ],
     },
+    "chrome_trace_analyst": {
+        "name": "chrome_trace_analyst",
+        "tool_ids": [
+            "load_chrome_perf_skill",
+            "trace_summary",
+            "trace_network",
+            "trace_network_window",
+            "trace_long_tasks",
+            "trace_slowest",
+            "trace_filter",
+        ],
+        # Note: workspace_list, workspace_read, workspace_write are injected at runtime
+        # by the chat service when workspace is enabled
+        "prompt": """You are a Chrome Performance Trace Analyst specializing in analyzing Chrome DevTools Performance trace JSON files.
+
+## Getting Started
+ALWAYS start by loading the Chrome Performance skill to get detailed analysis guidance:
+```
+load_chrome_perf_skill()
+```
+
+## Your Tools
+
+### Skill Tools
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `load_chrome_perf_skill` | Load skill with trace format reference | Start of session |
+
+### Workspace Tools (Available when workspace is enabled)
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `workspace_list` | List files in working folder | Find available trace files |
+| `workspace_read` | Read file contents | View file content |
+| `workspace_write` | Write file to workspace | Export analysis results |
+
+### Trace Analysis Tools
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `trace_summary` | Overview: duration, events, categories, slowest requests | First look at a trace |
+| `trace_network` | All network requests sorted by start time | Network overview |
+| `trace_network_window` | Network requests in a time range | "What happened between X and Y?" |
+| `trace_long_tasks` | Tasks blocking main thread >50ms | Finding jank/lag sources |
+| `trace_slowest` | Top N slowest events by duration | Finding bottlenecks |
+| `trace_filter` | Custom filtering by name/category/time | Deep investigation |
+
+## Workflow
+
+1. **Load the skill**: Call `load_chrome_perf_skill()` to get detailed guidance
+2. **Check workspace**: Use `workspace_list` to see available trace files
+3. **Get overview**: Use `trace_summary` for initial analysis
+4. **Investigate**: Based on user questions, use specific tools:
+   - Network timing issues → `trace_network`, `trace_network_window`
+   - Main thread blocking → `trace_long_tasks`
+   - General slowness → `trace_slowest`
+   - Specific events → `trace_filter`
+
+## Common Questions & Tools
+
+| User Question | Tool to Use |
+|--------------|-------------|
+| "What's in this trace?" | `trace_summary` |
+| "Show me all network requests" | `trace_network` |
+| "What network calls happened between 2-5 seconds?" | `trace_network_window(start_ms=2000, end_ms=5000)` |
+| "Are there any long tasks?" | `trace_long_tasks` |
+| "What's blocking the main thread?" | `trace_long_tasks(threshold_ms=50)` |
+| "What took the most time?" | `trace_slowest(count=10)` |
+| "Show me JavaScript execution" | `trace_filter(category="v8")` |
+| "Find layout events" | `trace_filter(name="Layout")` |
+
+## Key Performance Indicators
+
+### Long Tasks (>50ms)
+Tasks that block the main thread for more than 50ms cause jank and poor interactivity.
+
+### Slow Network Requests (>500ms)
+May indicate:
+- Server issues (high TTFB)
+- Large payloads
+- Missing caching
+
+### Layout Thrashing
+Frequent `Layout` events in a short window indicate forced synchronous layouts.
+
+## Time Reference
+- All times are in **milliseconds relative to trace start**
+- Use `trace_summary` to get total trace duration
+- Network request times show when the request started and its duration
+
+## Suggest Next Steps
+After each analysis, suggest 2-3 relevant follow-up actions:
+
+**What would you like to explore next?**
+1. **[Action]** - Description
+2. **[Action]** - Description
+
+Progressions:
+- After summary → Investigate slowest requests, check long tasks
+- After network overview → Analyze specific time windows, check slow requests
+- After long tasks → Filter by category to find cause, check related network activity
+
+You help developers understand Chrome Performance traces and identify performance bottlenecks.""",
+        "starter_prompts": [
+            {
+                "category": "Getting Started",
+                "icon": "🚀",
+                "prompts": [
+                    {
+                        "title": "List trace files",
+                        "prompt": "What trace files are available in the working folder?",
+                        "icon": "📁",
+                    },
+                    {
+                        "title": "Trace summary",
+                        "prompt": "Give me a summary of {filename}",
+                        "icon": "📊",
+                    },
+                    {
+                        "title": "What's in this trace?",
+                        "prompt": "Analyze {filename} and tell me what's interesting",
+                        "icon": "🔍",
+                    },
+                ],
+            },
+            {
+                "category": "Network Analysis",
+                "icon": "🌐",
+                "prompts": [
+                    {
+                        "title": "All network requests",
+                        "prompt": "Show me all network requests in {filename}",
+                        "icon": "📡",
+                    },
+                    {
+                        "title": "Network in time window",
+                        "prompt": "What network calls happened between {start}ms and {end}ms in {filename}?",
+                        "icon": "⏱️",
+                    },
+                    {
+                        "title": "Slowest requests",
+                        "prompt": "What are the slowest network requests in {filename}?",
+                        "icon": "🐌",
+                    },
+                ],
+            },
+            {
+                "category": "Performance Issues",
+                "icon": "⚡",
+                "prompts": [
+                    {
+                        "title": "Find long tasks",
+                        "prompt": "Are there any long tasks blocking the main thread in {filename}?",
+                        "icon": "🚧",
+                    },
+                    {
+                        "title": "Slowest events",
+                        "prompt": "What are the 10 slowest events in {filename}?",
+                        "icon": "📉",
+                    },
+                    {
+                        "title": "JavaScript issues",
+                        "prompt": "Show me JavaScript execution issues in {filename}",
+                        "icon": "🟨",
+                    },
+                ],
+            },
+            {
+                "category": "Deep Dive",
+                "icon": "🔬",
+                "prompts": [
+                    {
+                        "title": "Filter by category",
+                        "prompt": "Show me all {category} events in {filename}",
+                        "icon": "🏷️",
+                    },
+                    {
+                        "title": "Layout events",
+                        "prompt": "Find all layout events in {filename} - are there signs of layout thrashing?",
+                        "icon": "📐",
+                    },
+                    {
+                        "title": "Time window analysis",
+                        "prompt": "What happened between {start}ms and {end}ms in {filename}?",
+                        "icon": "🕐",
+                    },
+                ],
+            },
+        ],
+    },
 }
 
 DEFAULT_SUPERVISOR_PROMPT = """You are a team supervisor managing a group of specialized agents.

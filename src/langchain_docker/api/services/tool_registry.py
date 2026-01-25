@@ -12,6 +12,7 @@ from langchain_docker.api.services.tools.base import (
     ToolParameter,
     ToolTemplate,
 )
+from langchain_docker.api.services.tools.chrome_perf_tools import ChromePerfToolProvider
 from langchain_docker.api.services.tools.jira_tools import JiraToolProvider
 from langchain_docker.api.services.tools.kb_tools import KBToolProvider, KBIngestToolProvider
 from langchain_docker.api.services.tools.lighthouse_tools import LighthouseToolProvider
@@ -63,6 +64,7 @@ class ToolRegistry:
             KBIngestToolProvider(skill_registry),
             WebPerformanceToolProvider(skill_registry),
             LighthouseToolProvider(skill_registry),
+            ChromePerfToolProvider(skill_registry),
             # Add new providers here as they are created:
             # GithubToolProvider(skill_registry),
             # SlackToolProvider(skill_registry),

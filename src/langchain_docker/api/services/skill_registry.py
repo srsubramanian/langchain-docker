@@ -3020,6 +3020,147 @@ Lighthouse uses a weighted average of metric scores:
             return f"Resource '{resource}' not found. Available: cwv_thresholds, lighthouse_scoring, metric_explanations"
 
 
+class ChromePerfAnalyzerSkill(Skill):
+    """Chrome Performance Trace Analyzer skill.
+
+    Analyzes Chrome DevTools Performance trace JSON files to answer questions
+    about network requests, timing, and performance bottlenecks.
+
+    Content is loaded from .md files in src/langchain_docker/skills/chrome_perf_analyzer/
+    """
+
+    def __init__(self):
+        """Initialize Chrome Performance Analyzer skill."""
+        self.id = "chrome_perf_analyzer"
+        self.name = "Chrome Performance Trace Analyzer"
+        self.description = (
+            "Analyze Chrome DevTools Performance trace JSON files. Use when the user "
+            "uploads a Chrome Performance trace (.json) and asks questions like "
+            "'what network calls happened between X and Y', 'what took the most time', "
+            "'show me long tasks', 'what was slow', or any query about timing, network "
+            "requests, or performance bottlenecks in the trace."
+        )
+        self.category = "performance"
+        self.is_builtin = True
+        self.version = "1.0.0"
+        self._skill_dir = SKILLS_DIR / "chrome_perf_analyzer"
+        self._custom_content = None
+        self._custom_resources = None
+        self._tool_configs = []
+        self._resource_configs = []
+        self._mcp_tool_configs = []
+        self._load_configs_from_frontmatter()
+
+    def _read_md_file(self, filename: str) -> str:
+        """Read content from a markdown file in the skill directory."""
+        file_path = self._skill_dir / filename
+        try:
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                # Strip YAML frontmatter if present
+                if content.startswith("---"):
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == "---":
+                            content = "\n".join(lines[i + 1 :]).strip()
+                            break
+                return content
+            else:
+                logger.warning(f"Skill file not found: {file_path}")
+                return f"Error: File {filename} not found in skill directory"
+        except Exception as e:
+            logger.error(f"Error reading skill file {filename}: {e}")
+            return f"Error reading {filename}: {str(e)}"
+
+    def _load_configs_from_frontmatter(self) -> None:
+        """Parse SKILL.md frontmatter to load tool and resource configs."""
+        try:
+            file_path = self._skill_dir / "SKILL.md"
+            if not file_path.exists():
+                return
+
+            content = file_path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                return
+
+            # Extract frontmatter
+            lines = content.split("\n")
+            frontmatter_end = -1
+            for i, line in enumerate(lines[1:], 1):
+                if line.strip() == "---":
+                    frontmatter_end = i
+                    break
+
+            if frontmatter_end == -1:
+                return
+
+            import yaml
+            frontmatter_text = "\n".join(lines[1:frontmatter_end])
+            frontmatter = yaml.safe_load(frontmatter_text)
+
+            if frontmatter:
+                self._tool_configs = frontmatter.get("tool_configs", [])
+                self._resource_configs = frontmatter.get("resource_configs", [])
+                logger.debug(
+                    f"Loaded configs for {self.id}: "
+                    f"{len(self._tool_configs)} tools, {len(self._resource_configs)} resources"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load configs from frontmatter for {self.id}: {e}")
+
+    def get_file_content(self) -> str:
+        """Get the original file-based content for this skill."""
+        return self._read_md_file("SKILL.md")
+
+    def load_core(self) -> str:
+        """Level 2: Load Chrome Performance Analyzer skill instructions.
+
+        Returns:
+            Complete skill context for trace analysis
+        """
+        # Static content: prefer Redis custom content, fallback to file
+        if self._custom_content is not None:
+            static_content = self._custom_content
+        else:
+            static_content = self._read_md_file("SKILL.md")
+
+        # Add tool availability information
+        tool_info = """## Trace Analysis Tools
+
+These tools analyze Chrome DevTools Performance trace files from the Working Folder:
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `trace_summary` | Overview: duration, event counts, slowest requests | First look at a trace |
+| `trace_network` | All network requests sorted by start time | Network overview |
+| `trace_network_window` | Network requests in a time range | "What happened between X and Y?" |
+| `trace_long_tasks` | Tasks blocking main thread >50ms | Finding jank sources |
+| `trace_slowest` | Top N slowest events by duration | Finding bottlenecks |
+| `trace_filter` | Custom filtering by name/category/time | Deep investigation |
+
+### Workflow
+
+1. User uploads a Chrome Performance trace (.json) to the **Working Folder**
+2. Use `workspace_list` to see available trace files
+3. Use `trace_summary` to get an overview
+4. Use specific tools to investigate based on user questions
+"""
+
+        return f"""## Chrome Performance Trace Analyzer Skill Activated
+
+{tool_info}
+
+{static_content}
+"""
+
+    def load_details(self, resource: str) -> str:
+        """Level 3: Load detailed resources."""
+        if resource == "trace_format":
+            return self._read_md_file("references/trace_format.md")
+        else:
+            return f"Resource '{resource}' not found. Available: trace_format"
+
+
 class CustomSkill(Skill):
     """User-created skill following SKILL.md format.
 
@@ -3323,6 +3464,7 @@ class SkillRegistry:
             KBIngestionSkill(),
             WebPerformanceSkill(),
             LighthouseSkill(),
+            ChromePerfAnalyzerSkill(),
         ]
 
         for skill in builtin_skills:
