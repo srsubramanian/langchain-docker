@@ -43,14 +43,23 @@ class ToolRegistry:
         tool = registry.create_tool_instance("sql_query")
     """
 
-    def __init__(self):
-        """Initialize tool registry and load tools from providers."""
+    def __init__(self, workspace_service=None):
+        """Initialize tool registry and load tools from providers.
+
+        Args:
+            workspace_service: Optional WorkspaceService for providers that need file access
+        """
         self._tools: dict[str, ToolTemplate] = {}
         self._providers = []
-        self._load_providers()
+        self._workspace_service = workspace_service
+        self._load_providers(workspace_service=workspace_service)
 
-    def _load_providers(self) -> None:
-        """Load all tool providers and register their tools."""
+    def _load_providers(self, workspace_service=None) -> None:
+        """Load all tool providers and register their tools.
+
+        Args:
+            workspace_service: Optional WorkspaceService for providers that need file access
+        """
         # Lazy import to avoid circular dependency
         from langchain_docker.api.services.skill_registry import SkillRegistry
 
@@ -64,7 +73,8 @@ class ToolRegistry:
             KBIngestToolProvider(skill_registry),
             WebPerformanceToolProvider(skill_registry),
             LighthouseToolProvider(skill_registry),
-            ChromePerfToolProvider(skill_registry),
+            # ChromePerfToolProvider needs workspace_service for file access
+            ChromePerfToolProvider(skill_registry, workspace_service=workspace_service),
             # Add new providers here as they are created:
             # GithubToolProvider(skill_registry),
             # SlackToolProvider(skill_registry),

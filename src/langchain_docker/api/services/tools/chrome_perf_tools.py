@@ -223,12 +223,27 @@ class ChromePerfToolProvider(ToolProvider):
         ]
 
     def _get_trace_path(self, filename: str) -> Optional[Path]:
-        """Get the full path to a trace file in the workspace."""
-        if not self._workspace_service or not self._get_session_id:
+        """Get the full path to a trace file in the workspace.
+
+        Uses the session context variable set by AgentService during invocation
+        if no explicit session_id_getter was provided.
+        """
+        if not self._workspace_service:
+            logger.debug("No workspace_service available for trace path resolution")
             return None
 
-        session_id = self._get_session_id()
+        # Try explicit getter first, then fall back to context variable
+        session_id = None
+        if self._get_session_id:
+            session_id = self._get_session_id()
+
         if not session_id:
+            # Import context variable at runtime to avoid circular imports
+            from langchain_docker.api.services.agent_service import _current_session_id
+            session_id = _current_session_id.get()
+
+        if not session_id:
+            logger.debug("No session ID available for trace path resolution")
             return None
 
         return self._workspace_service.get_file_path(session_id, filename)

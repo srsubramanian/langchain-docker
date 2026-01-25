@@ -261,6 +261,27 @@ def get_capability_registry() -> CapabilityRegistry:
     return _capability_registry
 
 
+# Singleton for workspace service (must be before agent service)
+_workspace_service: WorkspaceService | None = None
+
+
+def get_workspace_service() -> WorkspaceService:
+    """Get singleton workspace service instance.
+
+    The WorkspaceService provides session-specific working folders
+    for file uploads, generated outputs, and temporary data.
+    Similar to Claude Cowork's "Working Folder" feature.
+
+    Returns:
+        WorkspaceService instance
+    """
+    global _workspace_service
+    if _workspace_service is None:
+        _workspace_service = WorkspaceService()
+        logger.info(f"WorkspaceService initialized with base_path={_workspace_service.base_path}")
+    return _workspace_service
+
+
 # Singleton for agent service
 _agent_service: AgentService | None = None
 
@@ -272,6 +293,7 @@ def get_agent_service(
     skill_registry: SkillRegistry = Depends(get_skill_registry),
     approval_service: ApprovalService = Depends(get_approval_service),
     mcp_tool_service: MCPToolService = Depends(get_mcp_tool_service),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
 ) -> AgentService:
     """Get agent service instance.
 
@@ -282,6 +304,7 @@ def get_agent_service(
         skill_registry: Skill registry (injected)
         approval_service: Approval service for HITL tool approval (injected)
         mcp_tool_service: MCP tool service for MCP tool integration (injected)
+        workspace_service: Workspace service for file operations (injected)
 
     Returns:
         AgentService instance
@@ -299,6 +322,7 @@ def get_agent_service(
             redis_url=redis_url,
             approval_service=approval_service,
             mcp_tool_service=mcp_tool_service,
+            workspace_service=workspace_service,
         )
     return _agent_service
 
@@ -449,24 +473,3 @@ def get_knowledge_base_service() -> KnowledgeBaseService:
                 graph_rag_service=graph_rag,
             )
     return _knowledge_base_service
-
-
-# Singleton for workspace service
-_workspace_service: WorkspaceService | None = None
-
-
-def get_workspace_service() -> WorkspaceService:
-    """Get singleton workspace service instance.
-
-    The WorkspaceService provides session-specific working folders
-    for file uploads, generated outputs, and temporary data.
-    Similar to Claude Cowork's "Working Folder" feature.
-
-    Returns:
-        WorkspaceService instance
-    """
-    global _workspace_service
-    if _workspace_service is None:
-        _workspace_service = WorkspaceService()
-        logger.info(f"WorkspaceService initialized with base_path={_workspace_service.base_path}")
-    return _workspace_service

@@ -743,6 +743,7 @@ class AgentService:
         redis_url: Optional[str] = None,  # Redis URL for persistent agent storage
         approval_service=None,  # Type: ApprovalService (optional for HITL support)
         mcp_tool_service=None,  # Type: MCPToolService (optional for MCP integration)
+        workspace_service=None,  # Type: WorkspaceService (optional for workspace tools)
     ):
         """Initialize agent service.
 
@@ -756,6 +757,7 @@ class AgentService:
             redis_url: Redis URL for persistent custom agent storage (optional)
             approval_service: Approval service for HITL tool approval (optional)
             mcp_tool_service: MCP tool service for MCP tool integration (optional)
+            workspace_service: Workspace service for file operations (optional)
         """
         self.model_service = model_service
         self.session_service = session_service
@@ -763,10 +765,12 @@ class AgentService:
         self._checkpointer = checkpointer
         self._approval_service = approval_service
         self._mcp_tool_service = mcp_tool_service
+        self._workspace_service = workspace_service
         self._workflows: dict[str, Any] = {}
         self._custom_agents: dict[str, CustomAgent] = {}
         self._direct_sessions: dict[str, dict] = {}  # Legacy: For backward compatibility
-        self._tool_registry = ToolRegistry()
+        # Pass workspace_service to ToolRegistry so ChromePerfToolProvider can access files
+        self._tool_registry = ToolRegistry(workspace_service=workspace_service)
         self._capability_registry = CapabilityRegistry()
 
         # Initialize Redis agent store if URL provided
@@ -812,6 +816,81 @@ class AgentService:
         """
         count = self._middleware_skill_registry.load_from_legacy(self._skill_registry)
         logger.info(f"Initialized {count} middleware skills: {[s.id for s in self._middleware_skill_registry.list_skills()]}")
+
+    def _create_workspace_tools(self, session_id: str) -> list:
+        """Create workspace tools bound to a specific session.
+
+        Args:
+            session_id: The session ID to bind workspace tools to
+
+        Returns:
+            List of LangChain tools for workspace operations
+        """
+        if not self._workspace_service:
+            return []
+
+        from langchain_core.tools import tool
+
+        workspace_service = self._workspace_service
+
+        @tool
+        def workspace_list() -> str:
+            """List all files in the session's working folder."""
+            try:
+                files = workspace_service.list_files(session_id)
+                if not files:
+                    return "Working folder is empty. Upload files to get started."
+
+                result = "## Working Folder Contents\n\n"
+                result += "| Filename | Size | Modified |\n"
+                result += "|----------|------|----------|\n"
+                for f in files:
+                    result += f"| {f['filename']} | {f['size_human']} | {f.get('modified_at', 'N/A')} |\n"
+
+                total_size = sum(f["size"] for f in files)
+                result += f"\n**Total:** {len(files)} files, {workspace_service._human_readable_size(total_size)}"
+                return result
+            except Exception as e:
+                return f"Error listing files: {str(e)}"
+
+        @tool
+        def workspace_read(filename: str, max_bytes: int = 50000) -> str:
+            """Read content from a file in the working folder.
+
+            Args:
+                filename: Name of the file to read
+                max_bytes: Maximum bytes to read (default: 50000)
+            """
+            try:
+                result = workspace_service.read_file(session_id, filename, max_bytes=max_bytes)
+                content = result["content"]
+
+                if result["truncated"]:
+                    content += f"\n\n[Truncated at {result['truncated_at']} bytes. Total size: {result['size_human']}]"
+
+                return content
+            except FileNotFoundError:
+                return f"Error: File not found: {filename}"
+            except Exception as e:
+                return f"Error reading file: {str(e)}"
+
+        @tool
+        def workspace_write(filename: str, content: str) -> str:
+            """Write content to a file in the working folder.
+
+            Args:
+                filename: Name of the file to create/overwrite
+                content: Content to write to the file
+            """
+            try:
+                result = workspace_service.write_file(session_id, filename, content)
+                return f"Created file: {result['filename']} ({result['size_human']})"
+            except ValueError as e:
+                return f"Error: {str(e)}"
+            except Exception as e:
+                return f"Error writing file: {str(e)}"
+
+        return [workspace_list, workspace_read, workspace_write]
 
     def _load_agents_from_redis(self) -> None:
         """Load all custom agents from Redis into memory cache.
@@ -2613,7 +2692,11 @@ Always use the tools to interact with the database.""")
         memory_metadata = None
 
         # Cache key for compiled agent
-        cache_key = f"unified:{agent_id}"
+        # Include session_id if workspace service is available since workspace tools are session-bound
+        if self._workspace_service:
+            cache_key = f"unified:{agent_id}:{sess_key}"
+        else:
+            cache_key = f"unified:{agent_id}"
 
         # Get or create compiled agent
         if cache_key not in self._direct_sessions:
@@ -2632,6 +2715,13 @@ Always use the tools to interact with the database.""")
                     tools = [self._create_tool_with_hitl_check(tid) for tid in config["tool_ids"]]
                 else:
                     tools = config.get("tools", [])
+
+                # Inject workspace tools if workspace service is available
+                # This allows agents to access files in the session's working folder
+                workspace_tools = self._create_workspace_tools(sess_key)
+                if workspace_tools:
+                    tools = tools + workspace_tools
+                    logger.debug(f"Added {len(workspace_tools)} workspace tools to agent {agent_id}")
 
                 if use_middleware:
                     agent = self.create_middleware_enabled_agent(
@@ -2684,28 +2774,33 @@ Always use the tools to interact with the database.""")
             context_messages = history
 
         # Invoke agent with tracing
-        with trace_operation(
-            session_id=sess_key,
-            user_id=user_id,
-            operation="invoke_agent",
-            metadata={
-                "agent_id": agent_id,
-                "agent_type": agent_type,
-                "agent_name": config.get("name", agent_id),
-                "provider": agent_provider,
-                "model": agent_model,
-                "message_count": len(context_messages),
-            },
-            tags=["agent", agent_type, agent_provider],
-        ):
-            result = app.invoke(
-                {"messages": context_messages},
-                config={
-                    "configurable": {"thread_id": sess_key},
-                    "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
-                    "recursion_limit": 50,
+        # Set session context for tools that need session_id (e.g., ChromePerfToolProvider)
+        token = _current_session_id.set(sess_key)
+        try:
+            with trace_operation(
+                session_id=sess_key,
+                user_id=user_id,
+                operation="invoke_agent",
+                metadata={
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "agent_name": config.get("name", agent_id),
+                    "provider": agent_provider,
+                    "model": agent_model,
+                    "message_count": len(context_messages),
                 },
-            )
+                tags=["agent", agent_type, agent_provider],
+            ):
+                result = app.invoke(
+                    {"messages": context_messages},
+                    config={
+                        "configurable": {"thread_id": sess_key},
+                        "metadata": {"session_id": sess_key, "agent_id": agent_id, "user_id": user_id},
+                        "recursion_limit": 50,
+                    },
+                )
+        finally:
+            _current_session_id.reset(token)
 
         # Update session
         messages = result.get("messages", [])
